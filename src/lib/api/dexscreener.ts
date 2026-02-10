@@ -96,3 +96,10 @@ export async function getTrendingTokens(
   const data = await fetchDexScreener<DexScreenerPair[]>(path);
   return data ?? [];
 }
+
+export async function getLatestTokenProfiles(): Promise<DexScreenerPair[]> {
+  const data = await fetchDexScreener<DexScreenerPair[]>(
+    `/token-profiles/latest/v1`
+  );
+  return data ?? [];
+}

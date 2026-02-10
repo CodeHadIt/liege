@@ -4,11 +4,14 @@ import { use } from "react";
 import { useTokenData } from "@/features/token-analyzer/hooks/use-token-data";
 import { TokenHeader } from "@/features/token-analyzer/components/token-header";
 import { TokenStatsGrid } from "@/features/token-analyzer/components/token-stats-grid";
-import { PriceChart } from "@/features/token-analyzer/components/price-chart";
+import { CandlestickChart } from "@/features/token-analyzer/components/candlestick-chart";
 import { ContractSafety } from "@/features/token-analyzer/components/contract-safety";
 import { LiquidityPools } from "@/features/token-analyzer/components/liquidity-pools";
+import { TopHolders } from "@/features/token-analyzer/components/top-holders";
+import { RecentTransactions } from "@/features/token-analyzer/components/recent-transactions";
+import { DDScoreCard } from "@/features/token-analyzer/components/dd-score-card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertTriangle, Scan } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import type { ChainId } from "@/types/chain";
 
 export default function TokenPage({
@@ -45,7 +48,7 @@ export default function TokenPage({
           ))}
         </div>
         {/* Chart skeleton */}
-        <Skeleton className="h-[360px] w-full rounded-xl shimmer" />
+        <Skeleton className="h-[420px] w-full rounded-xl shimmer" />
       </div>
     );
   }
@@ -75,20 +78,36 @@ export default function TokenPage({
 
       <TokenStatsGrid token={token} />
 
+      {/* Main content: chart + sidebar */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Chart — 2 cols */}
         <div className="lg:col-span-2">
-          <PriceChart chain={token.chain} address={token.address} />
+          <CandlestickChart chain={token.chain} address={token.address} />
         </div>
 
         {/* Sidebar panels — 1 col */}
         <div className="space-y-6">
+          {token.ddScore && (
+            <DDScoreCard score={token.ddScore} />
+          )}
           {token.safetySignals && (
             <ContractSafety signals={token.safetySignals} />
           )}
+        </div>
+      </div>
+
+      {/* Bottom row: holders + liquidity + transactions */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-1">
+          <TopHolders chain={token.chain} address={token.address} />
+        </div>
+        <div className="lg:col-span-1">
           {token.liquidity && (
             <LiquidityPools liquidity={token.liquidity} />
           )}
+        </div>
+        <div className="lg:col-span-1">
+          <RecentTransactions chain={token.chain} address={token.address} />
         </div>
       </div>
     </div>

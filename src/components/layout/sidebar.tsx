@@ -8,12 +8,15 @@ import {
   Shield,
   Crown,
   Activity,
+  Wallet,
+  Scan,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/trending", label: "Trending", icon: TrendingUp, shortcut: "T" },
   { href: "/search", label: "Search", icon: Search, shortcut: "S" },
+  { href: "/wallet", label: "Wallet Tracker", icon: Wallet, shortcut: "W" },
 ];
 
 export function Sidebar() {

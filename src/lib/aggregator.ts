@@ -2,6 +2,7 @@ import type { ChainId } from "@/types/chain";
 import type { UnifiedTokenData } from "@/types/token";
 import { getChainProvider } from "./chains/registry";
 import { serverCache, CACHE_TTL } from "./cache";
+import { calculateDDScore } from "./scoring";
 
 export async function aggregateTokenData(
   chain: ChainId,
@@ -13,16 +14,18 @@ export async function aggregateTokenData(
 
   const provider = getChainProvider(chain);
 
-  const [pairData, tokenMeta, safetySignals] = await Promise.allSettled([
+  const [pairData, tokenMeta, safetySignals, holders] = await Promise.allSettled([
     provider.getPairData(address),
     provider.getTokenMetadata(address),
     provider.getSafetySignals(address),
+    provider.getTopHolders(address, 20),
   ]);
 
   const pair = pairData.status === "fulfilled" ? pairData.value : null;
   const meta = tokenMeta.status === "fulfilled" ? tokenMeta.value : null;
   const safety =
     safetySignals.status === "fulfilled" ? safetySignals.value : null;
+  const holderList = holders.status === "fulfilled" ? holders.value : [];
 
   // If we have no data at all, the token likely doesn't exist
   if (!pair && !meta) return null;
@@ -68,11 +71,14 @@ export async function aggregateTokenData(
     description: meta?.description ?? null,
 
     safetySignals: safety ?? null,
-    ddScore: null, // Computed in Phase 2
+    ddScore: null,
 
     primaryPair: pair?.primaryPair ?? null,
     allPairs: pair?.pairs ?? [],
   };
+
+  // Calculate DD Score
+  result.ddScore = calculateDDScore(result, holderList);
 
   serverCache.set(cacheKey, result, CACHE_TTL.PRICE);
   return result;

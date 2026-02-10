@@ -1,11 +1,21 @@
 import type { ChainId, ChainConfig } from "@/types/chain";
 import type { ChainProvider } from "./types";
 import { SolanaChainProvider } from "./solana/provider";
+import { EvmChainProvider } from "./evm/provider";
 import { CHAIN_CONFIGS } from "@/config/chains";
 
 const providers: Record<string, ChainProvider> = {
   solana: new SolanaChainProvider(),
-  // base and bsc will be added in Phase 4
+  base: new EvmChainProvider("base", {
+    apiUrl: "https://api.basescan.org/api",
+    apiKey: process.env.BASESCAN_API_KEY || "",
+    rateLimiterKey: "basescan",
+  }),
+  bsc: new EvmChainProvider("bsc", {
+    apiUrl: "https://api.bscscan.com/api",
+    apiKey: process.env.BSCSCAN_API_KEY || "",
+    rateLimiterKey: "bscscan",
+  }),
 };
 
 export function getChainProvider(chainId: ChainId): ChainProvider {
@@ -27,12 +37,13 @@ export function getAllSupportedChains(): ChainConfig[] {
 }
 
 export function detectChainFromAddress(address: string): ChainId | null {
-  for (const [id, config] of Object.entries(CHAIN_CONFIGS)) {
-    if (config.addressPattern.test(address)) {
-      // For EVM addresses, default to base if chain not specified
-      if (config.isEvm) return "base" as ChainId;
-      return id as ChainId;
-    }
+  // Solana addresses: base58, 32-44 chars
+  if (CHAIN_CONFIGS.solana.addressPattern.test(address)) {
+    return "solana";
+  }
+  // EVM addresses: 0x prefix, 40 hex chars — default to base
+  if (CHAIN_CONFIGS.base.addressPattern.test(address)) {
+    return "base";
   }
   return null;
 }

@@ -3,12 +3,10 @@
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ChainBadge } from "@/components/shared/chain-badge";
-import { PriceChange } from "@/components/shared/price-change";
 import { formatUsd, shortenAddress } from "@/lib/utils";
-import { Search } from "lucide-react";
+import { Search, ArrowRight, Scan } from "lucide-react";
 import type { TokenSearchResult } from "@/types/token";
 import type { ChainId } from "@/types/chain";
 
@@ -31,83 +29,107 @@ export default function SearchPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-          <Search className="h-6 w-6 text-primary" />
-          Search Results
-        </h1>
-        {query && (
-          <p className="text-muted-foreground mt-1">
-            Results for &ldquo;{query}&rdquo;
-          </p>
-        )}
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <div className="h-10 w-10 rounded-xl bg-[#00F0FF]/10 border border-[#00F0FF]/20 flex items-center justify-center">
+          <Search className="h-5 w-5 text-[#00F0FF]" />
+        </div>
+        <div>
+          <h1 className="text-lg font-bold text-[#E8E8ED] tracking-tight">
+            Search Results
+          </h1>
+          {query && (
+            <p className="text-xs font-mono text-[#6B6B80]">
+              Showing results for &ldquo;<span className="text-[#00F0FF]">{query}</span>&rdquo;
+            </p>
+          )}
+        </div>
       </div>
 
       {isLoading ? (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {Array.from({ length: 5 }).map((_, i) => (
-            <Card key={i}>
-              <CardContent className="p-4">
-                <div className="flex items-center gap-4">
-                  <Skeleton className="h-10 w-10 rounded-full" />
-                  <div className="flex-1 space-y-2">
-                    <Skeleton className="h-4 w-32" />
-                    <Skeleton className="h-3 w-48" />
-                  </div>
-                  <Skeleton className="h-5 w-20" />
+            <div key={i} className="glow-card rounded-xl p-4">
+              <div className="flex items-center gap-4">
+                <Skeleton className="h-10 w-10 rounded-xl shimmer" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-4 w-32 shimmer" />
+                  <Skeleton className="h-3 w-48 shimmer" />
                 </div>
-              </CardContent>
-            </Card>
+                <Skeleton className="h-5 w-20 shimmer" />
+              </div>
+            </div>
           ))}
         </div>
       ) : !results || results.length === 0 ? (
-        <div className="text-center py-16 text-muted-foreground">
-          {query ? "No tokens found matching your search." : "Enter a search term to find tokens."}
+        <div className="flex flex-col items-center justify-center py-24 text-[#6B6B80]">
+          <div className="h-16 w-16 rounded-2xl bg-white/[0.02] border border-white/[0.06] flex items-center justify-center mb-6">
+            <Scan className="h-7 w-7 opacity-30" />
+          </div>
+          <h2 className="text-lg font-bold text-[#E8E8ED] mb-2">
+            {query ? "No Tokens Found" : "Search for Tokens"}
+          </h2>
+          <p className="text-xs text-center max-w-md">
+            {query
+              ? <>No tokens matching &ldquo;<span className="font-mono text-[#00F0FF]">{query}</span>&rdquo;. Try a different symbol, name, or paste a contract address.</>
+              : "Enter a token symbol, name, or contract address to search."}
+          </p>
         </div>
       ) : (
         <div className="space-y-2">
-          {results.map((token) => (
+          {results.map((token, i) => (
             <Link
               key={`${token.chain}:${token.address}`}
               href={`/token/${token.chain}/${token.address}`}
+              className={`group block animate-fade-up stagger-${Math.min(i + 1, 6)}`}
             >
-              <Card className="hover:bg-muted/50 transition-colors cursor-pointer">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-4">
-                    {token.logoUrl ? (
-                      <img
-                        src={token.logoUrl}
-                        alt={token.symbol}
-                        className="h-10 w-10 rounded-full"
-                      />
-                    ) : (
-                      <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center text-sm font-bold">
+              <div className="glow-card rounded-xl p-4 table-row-hover transition-all">
+                <div className="flex items-center gap-4">
+                  {/* Token avatar */}
+                  {token.logoUrl ? (
+                    <img
+                      src={token.logoUrl}
+                      alt={token.symbol}
+                      className="h-10 w-10 rounded-xl border border-white/[0.06]"
+                    />
+                  ) : (
+                    <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#00F0FF]/20 to-[#00FF88]/20 border border-white/[0.06] flex items-center justify-center">
+                      <span className="text-sm font-bold font-mono text-[#E8E8ED]">
                         {token.symbol.slice(0, 2)}
-                      </div>
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{token.symbol}</span>
-                        <span className="text-sm text-muted-foreground truncate">
-                          {token.name}
-                        </span>
-                        <ChainBadge chain={token.chain as ChainId} />
-                      </div>
-                      <span className="text-xs text-muted-foreground font-mono">
-                        {shortenAddress(token.address)}
                       </span>
                     </div>
-                    <div className="text-right">
-                      <div className="font-medium">
-                        {formatUsd(token.priceUsd)}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        Vol {formatUsd(token.volume24h)}
-                      </div>
+                  )}
+
+                  {/* Token info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-[#E8E8ED]">
+                        {token.symbol}
+                      </span>
+                      <span className="text-xs text-[#6B6B80] truncate">
+                        {token.name}
+                      </span>
+                      <ChainBadge chain={token.chain as ChainId} />
+                    </div>
+                    <span className="text-[11px] font-mono text-[#6B6B80]">
+                      {shortenAddress(token.address)}
+                    </span>
+                  </div>
+
+                  {/* Price + volume */}
+                  <div className="text-right">
+                    <div className="text-sm font-mono font-bold text-[#E8E8ED]">
+                      {formatUsd(token.priceUsd)}
+                    </div>
+                    <div className="text-[11px] font-mono text-[#6B6B80]">
+                      Vol {formatUsd(token.volume24h)}
                     </div>
                   </div>
-                </CardContent>
-              </Card>
+
+                  {/* Arrow */}
+                  <ArrowRight className="h-4 w-4 text-[#6B6B80] opacity-0 group-hover:opacity-100 group-hover:text-[#00F0FF] transition-all -translate-x-1 group-hover:translate-x-0" />
+                </div>
+              </div>
             </Link>
           ))}
         </div>

@@ -116,3 +116,13 @@ export async function searchPools(
   );
   return data?.data ?? [];
 }
+
+export async function getNewPools(
+  network?: string
+): Promise<GeckoPool[]> {
+  const path = network
+    ? `/networks/${network}/new_pools`
+    : `/networks/new_pools`;
+  const data = await fetchGecko<{ data: GeckoPool[] }>(path);
+  return data?.data ?? [];
+}
