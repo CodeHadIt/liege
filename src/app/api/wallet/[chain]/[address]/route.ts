@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getChainProvider, isChainSupported } from "@/lib/chains/registry";
 import { serverCache, CACHE_TTL } from "@/lib/cache";
+import { resolveTokenImages } from "@/lib/token-image";
 import type { ChainId } from "@/types/chain";
 import type { ApiError } from "@/types/api";
 import type { WalletData } from "@/types/wallet";
@@ -49,6 +50,17 @@ export async function GET(
       deployedTokens: deployed,
       deployerScore,
     };
+
+    // Resolve missing token images
+    const tokensWithoutImages = data.tokens.filter((t) => !t.logoUrl);
+    if (tokensWithoutImages.length > 0) {
+      const addresses = tokensWithoutImages.map((t) => t.tokenAddress);
+      const images = await resolveTokenImages(chain as ChainId, addresses);
+      for (const token of tokensWithoutImages) {
+        const img = images.get(token.tokenAddress);
+        if (img) token.logoUrl = img;
+      }
+    }
 
     serverCache.set(cacheKey, data, CACHE_TTL.TOKEN_META);
 

@@ -3,6 +3,7 @@ import type { UnifiedTokenData } from "@/types/token";
 import { getChainProvider } from "./chains/registry";
 import { serverCache, CACHE_TTL } from "./cache";
 import { calculateDDScore } from "./scoring";
+import { resolveTokenImage } from "./token-image";
 
 export async function aggregateTokenData(
   chain: ChainId,
@@ -79,6 +80,11 @@ export async function aggregateTokenData(
 
   // Calculate DD Score
   result.ddScore = calculateDDScore(result, holderList);
+
+  // Resolve image if missing
+  if (!result.logoUrl) {
+    result.logoUrl = await resolveTokenImage(chain, address);
+  }
 
   serverCache.set(cacheKey, result, CACHE_TTL.PRICE);
   return result;

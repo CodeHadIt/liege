@@ -27,6 +27,7 @@ interface NewLaunchToken {
   chain: ChainId;
   name: string;
   symbol: string;
+  logoUrl: string | null;
   priceUsd: number | null;
   volume24h: number | null;
   liquidity: number | null;
@@ -404,9 +405,17 @@ function NewLaunchesTable({
                           href={`/token/${token.chain}/${token.address}`}
                           className="flex items-center gap-3"
                         >
-                          <div className="h-8 w-8 rounded-full bg-gradient-to-br from-[#FFB800]/15 to-[#FF3B5C]/15 flex items-center justify-center text-[10px] font-bold text-[#FFB800] ring-1 ring-white/[0.06]">
-                            {token.symbol.slice(0, 2)}
-                          </div>
+                          {token.logoUrl ? (
+                            <img
+                              src={token.logoUrl}
+                              alt={token.symbol}
+                              className="h-8 w-8 rounded-full ring-1 ring-white/[0.06]"
+                            />
+                          ) : (
+                            <div className="h-8 w-8 rounded-full bg-gradient-to-br from-[#FFB800]/15 to-[#FF3B5C]/15 flex items-center justify-center text-[10px] font-bold text-[#FFB800] ring-1 ring-white/[0.06]">
+                              {token.symbol.slice(0, 2)}
+                            </div>
+                          )}
                           <div>
                             <span className="font-semibold text-sm text-[#E8E8ED] group-hover:text-[#00F0FF] transition-colors">
                               {token.symbol}

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import * as dexscreener from "@/lib/api/dexscreener";
 import * as geckoterminal from "@/lib/api/geckoterminal";
 import { serverCache, CACHE_TTL } from "@/lib/cache";
+import { resolveTokenImages } from "@/lib/token-image";
 import type { TrendingToken } from "@/types/token";
 import type { ChainId } from "@/types/chain";
 
@@ -16,10 +17,8 @@ export async function GET(request: Request) {
   }
 
   try {
-    // Fetch from both sources in parallel
-    const geckoNetwork =
-      chain && chain !== "all" ? chain : undefined;
-    const [dsPairs, gtPools] = await Promise.allSettled([
+    const geckoNetwork = chain && chain !== "all" ? chain : undefined;
+    const [dsBoosts, gtPools] = await Promise.allSettled([
       dexscreener.getTrendingTokens(
         chain && chain !== "all" ? chain : undefined
       ),
@@ -29,36 +28,46 @@ export async function GET(request: Request) {
     const results: TrendingToken[] = [];
     const seen = new Set<string>();
 
-    // DexScreener results
-    if (dsPairs.status === "fulfilled") {
-      for (const pair of dsPairs.value.slice(0, 30)) {
-        const key = `${pair.chainId}:${pair.baseToken.address}`;
+    // DexScreener boosted tokens — enrich with pair data for price/volume
+    if (dsBoosts.status === "fulfilled") {
+      const boosts = dsBoosts.value.slice(0, 20);
+      // Batch enrich: fetch pair data for each boost in parallel
+      const enriched = await Promise.allSettled(
+        boosts.map((boost) => dexscreener.enrichTokenBoost(boost))
+      );
+
+      for (let i = 0; i < boosts.length; i++) {
+        const boost = boosts[i];
+        const pair =
+          enriched[i].status === "fulfilled" ? enriched[i].value : null;
+
+        const key = `${boost.chainId}:${boost.tokenAddress}`;
         if (seen.has(key)) continue;
         seen.add(key);
+
         results.push({
           rank: results.length + 1,
-          address: pair.baseToken.address,
-          chain: pair.chainId as ChainId,
-          name: pair.baseToken.name,
-          symbol: pair.baseToken.symbol,
-          logoUrl: pair.info?.imageUrl ?? null,
-          priceUsd: parseFloat(pair.priceUsd) || null,
-          volume24h: pair.volume?.h24 ?? null,
-          liquidity: pair.liquidity?.usd ?? null,
-          priceChange24h: pair.priceChange?.h24 ?? null,
-          txns24h: pair.txns?.h24
+          address: boost.tokenAddress,
+          chain: boost.chainId as ChainId,
+          name: pair?.baseToken.name ?? boost.header ?? "Unknown",
+          symbol: pair?.baseToken.symbol ?? "???",
+          logoUrl: pair?.info?.imageUrl ?? boost.icon ?? null,
+          priceUsd: pair ? parseFloat(pair.priceUsd) || null : null,
+          volume24h: pair?.volume?.h24 ?? null,
+          liquidity: pair?.liquidity?.usd ?? null,
+          priceChange24h: pair?.priceChange?.h24 ?? null,
+          txns24h: pair?.txns?.h24
             ? pair.txns.h24.buys + pair.txns.h24.sells
             : null,
-          pairUrl: pair.url,
+          pairUrl: pair?.url ?? boost.url ?? "",
         });
       }
     }
 
-    // GeckoTerminal results (fill in gaps)
+    // GeckoTerminal trending pools (fill in gaps)
     if (gtPools.status === "fulfilled") {
       for (const pool of gtPools.value.slice(0, 20)) {
         const attr = pool.attributes;
-        // Extract chain from pool ID (format: "network_address")
         const poolChain = pool.id.split("_")[0] || "solana";
         const address = attr.address;
         const key = `${poolChain}:${address}`;
@@ -74,7 +83,8 @@ export async function GET(request: Request) {
           priceUsd: parseFloat(attr.base_token_price_usd) || null,
           volume24h: parseFloat(attr.volume_usd.h24) || null,
           liquidity: parseFloat(attr.reserve_in_usd) || null,
-          priceChange24h: parseFloat(attr.price_change_percentage.h24) || null,
+          priceChange24h:
+            parseFloat(attr.price_change_percentage.h24) || null,
           txns24h: attr.transactions?.h24
             ? attr.transactions.h24.buys + attr.transactions.h24.sells
             : null,
@@ -85,6 +95,32 @@ export async function GET(request: Request) {
 
     // Re-rank
     results.forEach((r, i) => (r.rank = i + 1));
+
+    // Resolve remaining missing images in batch
+    const missingImages = results.filter((r) => !r.logoUrl);
+    if (missingImages.length > 0) {
+      const byChain = new Map<ChainId, string[]>();
+      for (const token of missingImages) {
+        const addrs = byChain.get(token.chain) || [];
+        addrs.push(token.address);
+        byChain.set(token.chain, addrs);
+      }
+
+      const imageResults = new Map<string, string | null>();
+      await Promise.allSettled(
+        Array.from(byChain.entries()).map(async ([chainId, addresses]) => {
+          const images = await resolveTokenImages(chainId, addresses);
+          images.forEach((url, addr) =>
+            imageResults.set(`${chainId}:${addr}`, url)
+          );
+        })
+      );
+
+      for (const token of missingImages) {
+        const img = imageResults.get(`${token.chain}:${token.address}`);
+        if (img) token.logoUrl = img;
+      }
+    }
 
     serverCache.set(cacheKey, results, CACHE_TTL.TRENDING);
     return NextResponse.json({ data: results });
