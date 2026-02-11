@@ -247,6 +247,7 @@ export class EvmChainProvider implements ChainProvider {
     );
     if (pools.length > 0) {
       const tfMap: Record<string, { tf: string; agg: number }> = {
+        "1m": { tf: "minute", agg: 1 },
         "5m": { tf: "minute", agg: 5 },
         "15m": { tf: "minute", agg: 15 },
         "1h": { tf: "hour", agg: 1 },

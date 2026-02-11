@@ -3,7 +3,7 @@ import { getChainProvider, isChainSupported } from "@/lib/chains/registry";
 import { serverCache, CACHE_TTL } from "@/lib/cache";
 import type { Timeframe, OHLCVBar } from "@/types/token";
 
-const VALID_TIMEFRAMES = new Set(["5m", "15m", "1h", "4h", "1d"]);
+const VALID_TIMEFRAMES = new Set(["1m", "5m", "15m", "1h", "4h", "1d"]);
 
 export async function GET(
   request: Request,

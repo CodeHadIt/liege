@@ -1,9 +1,9 @@
 import { rateLimit } from "@/lib/rate-limiter";
 
 function getRpcUrl(): string {
-  return (
-    process.env.HELIUS_RPC_URL || "https://api.mainnet-beta.solana.com"
-  );
+  const url = process.env.HELIUS_RPC_URL;
+  if (url && !url.endsWith("api-key=")) return url;
+  return "https://api.mainnet-beta.solana.com";
 }
 
 function getApiKey(): string {

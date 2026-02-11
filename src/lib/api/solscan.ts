@@ -57,10 +57,12 @@ export async function getTokenHolders(
   limit = 20,
   offset = 0
 ): Promise<SolscanHolder[]> {
-  const data = await fetchSolscan<{ items: SolscanHolder[] }>(
+  const data = await fetchSolscan<{ items: SolscanHolder[] } | SolscanHolder[]>(
     `/token/holders?address=${tokenAddress}&page_size=${limit}&page=${offset + 1}`
   );
-  return data?.items ?? [];
+  if (!data) return [];
+  if (Array.isArray(data)) return data;
+  return data.items ?? [];
 }
 
 export async function getTokenTransactions(

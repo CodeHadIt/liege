@@ -7,6 +7,7 @@ import {
   CandlestickSeries,
   HistogramSeries,
   AreaSeries,
+  LineSeries,
 } from "lightweight-charts";
 import type { IChartApi, Time } from "lightweight-charts";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -23,11 +24,14 @@ import type { Timeframe } from "@/types/token";
 interface CandlestickChartProps {
   chain: ChainId;
   address: string;
+  marketCap?: number | null;
+  priceUsd?: number | null;
 }
 
 type ChartMode = "candle" | "line";
 
 const timeframes: { value: Timeframe; label: string }[] = [
+  { value: "1m", label: "1M" },
   { value: "5m", label: "5M" },
   { value: "15m", label: "15M" },
   { value: "1h", label: "1H" },
@@ -35,7 +39,14 @@ const timeframes: { value: Timeframe; label: string }[] = [
   { value: "1d", label: "1D" },
 ];
 
-export function CandlestickChart({ chain, address }: CandlestickChartProps) {
+function formatMcap(num: number): string {
+  if (num >= 1_000_000_000) return `$${(num / 1_000_000_000).toFixed(2)}B`;
+  if (num >= 1_000_000) return `$${(num / 1_000_000).toFixed(2)}M`;
+  if (num >= 1_000) return `$${(num / 1_000).toFixed(2)}K`;
+  return `$${num.toFixed(2)}`;
+}
+
+export function CandlestickChart({ chain, address, marketCap, priceUsd }: CandlestickChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const [timeframe, setTimeframe] = useState<Timeframe>("1h");
@@ -53,6 +64,10 @@ export function CandlestickChart({ chain, address }: CandlestickChartProps) {
       chartRef.current.remove();
       chartRef.current = null;
     }
+
+    // Derive supply from marketCap / currentPrice for the mcap axis
+    const supply =
+      marketCap && priceUsd && priceUsd > 0 ? marketCap / priceUsd : null;
 
     const chart = createChart(container, {
       width: container.clientWidth,
@@ -87,6 +102,10 @@ export function CandlestickChart({ chain, address }: CandlestickChartProps) {
         secondsVisible: false,
       },
       rightPriceScale: {
+        borderColor: "rgba(255,255,255,0.04)",
+      },
+      leftPriceScale: {
+        visible: !!supply,
         borderColor: "rgba(255,255,255,0.04)",
       },
       handleScroll: { mouseWheel: true, pressedMouseMove: true },
@@ -159,6 +178,28 @@ export function CandlestickChart({ chain, address }: CandlestickChartProps) {
       );
     }
 
+    // Market cap axis (left side) — invisible line series that drives the scale
+    if (supply) {
+      const mcapSeries = chart.addSeries(LineSeries, {
+        priceScaleId: "left",
+        color: "transparent",
+        lineWidth: 1,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+        priceFormat: {
+          type: "custom",
+          formatter: (val: number) => formatMcap(val),
+        },
+      });
+
+      mcapSeries.setData(
+        sorted.map((bar) => ({
+          time: bar.timestamp as Time,
+          value: bar.close * supply,
+        }))
+      );
+    }
+
     chart.timeScale().fitContent();
 
     // Resize observer
@@ -176,7 +217,7 @@ export function CandlestickChart({ chain, address }: CandlestickChartProps) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [bars, hasData, chartMode]);
+  }, [bars, hasData, chartMode, marketCap, priceUsd]);
 
   useEffect(() => {
     const cleanup = buildChart();

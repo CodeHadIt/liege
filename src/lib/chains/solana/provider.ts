@@ -151,9 +151,17 @@ export class SolanaChainProvider implements ChainProvider {
     const holders = await solscan.getTokenHolders(tokenAddress, limit);
     // Get total supply for % calculation
     const mintInfo = await helius.getMintInfo(tokenAddress);
-    const totalSupply = mintInfo
+    let totalSupply = mintInfo
       ? parseInt(mintInfo.supply) / Math.pow(10, mintInfo.decimals)
       : 0;
+
+    // Fallback: use Solscan token meta for supply when Helius fails
+    if (totalSupply === 0) {
+      const meta = await solscan.getTokenMeta(tokenAddress);
+      if (meta?.supply) {
+        totalSupply = parseFloat(meta.supply) / Math.pow(10, meta.decimals);
+      }
+    }
 
     return holders.map((h) => {
       const balance = h.amount / Math.pow(10, h.decimals);
@@ -237,6 +245,7 @@ export class SolanaChainProvider implements ChainProvider {
     const pools = await geckoterminal.getTokenPools("solana", tokenAddress);
     if (pools.length > 0) {
       const tfMap: Record<string, { tf: string; agg: number }> = {
+        "1m": { tf: "minute", agg: 1 },
         "5m": { tf: "minute", agg: 5 },
         "15m": { tf: "minute", agg: 15 },
         "1h": { tf: "hour", agg: 1 },

@@ -22,6 +22,7 @@ interface PriceChartProps {
 }
 
 const timeframes: { value: Timeframe; label: string }[] = [
+  { value: "1m", label: "1M" },
   { value: "5m", label: "5M" },
   { value: "15m", label: "15M" },
   { value: "1h", label: "1H" },

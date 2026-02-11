@@ -7,6 +7,7 @@ import { TokenSearch } from "@/components/shared/token-search";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Sidebar } from "./sidebar";
+import { ClipboardIndicator } from "./clipboard-indicator";
 
 export function Topbar() {
   return (
@@ -43,6 +44,9 @@ export function Topbar() {
       <div className="flex-1 max-w-xl">
         <TokenSearch />
       </div>
+
+      {/* Clipboard detection */}
+      <ClipboardIndicator />
 
       {/* Right side */}
       <div className="flex items-center gap-2">
