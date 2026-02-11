@@ -146,33 +146,51 @@ export class SolanaChainProvider implements ChainProvider {
 
   async getTopHolders(
     tokenAddress: string,
-    limit = 20
+    _limit = 50
   ): Promise<HolderEntry[]> {
-    const holders = await solscan.getTokenHolders(tokenAddress, limit);
-    // Get total supply for % calculation
-    const mintInfo = await helius.getMintInfo(tokenAddress);
-    let totalSupply = mintInfo
+    // Primary: Solana RPC getTokenLargestAccounts (up to 20, works with Helius key)
+    const [largestAccounts, mintInfo] = await Promise.all([
+      helius.getTokenLargestAccounts(tokenAddress),
+      helius.getMintInfo(tokenAddress),
+    ]);
+
+    const totalSupply = mintInfo
       ? parseInt(mintInfo.supply) / Math.pow(10, mintInfo.decimals)
       : 0;
 
-    // Fallback: use Solscan token meta for supply when Helius fails
-    if (totalSupply === 0) {
-      const meta = await solscan.getTokenMeta(tokenAddress);
-      if (meta?.supply) {
-        totalSupply = parseFloat(meta.supply) / Math.pow(10, meta.decimals);
-      }
-    }
-
-    return holders.map((h) => {
-      const balance = h.amount / Math.pow(10, h.decimals);
-      return {
-        address: h.owner,
-        balance,
-        percentage: totalSupply > 0 ? (balance / totalSupply) * 100 : 0,
+    if (largestAccounts.length > 0) {
+      return largestAccounts.map((acct) => ({
+        address: acct.address,
+        balance: acct.uiAmount,
+        percentage: totalSupply > 0 ? (acct.uiAmount / totalSupply) * 100 : 0,
         isContract: null,
         label: null,
-      };
-    });
+      }));
+    }
+
+    // Fallback: Solscan (for users with upgraded API plan)
+    const holders = await solscan.getTokenHolders(tokenAddress, _limit);
+    if (holders.length > 0) {
+      let supply = totalSupply;
+      if (supply === 0) {
+        const meta = await solscan.getTokenMeta(tokenAddress);
+        if (meta?.supply) {
+          supply = parseFloat(meta.supply) / Math.pow(10, meta.decimals);
+        }
+      }
+      return holders.map((h) => {
+        const balance = h.amount / Math.pow(10, h.decimals);
+        return {
+          address: h.owner,
+          balance,
+          percentage: supply > 0 ? (balance / supply) * 100 : 0,
+          isContract: null,
+          label: null,
+        };
+      });
+    }
+
+    return [];
   }
 
   async getSafetySignals(tokenAddress: string): Promise<SafetySignals> {

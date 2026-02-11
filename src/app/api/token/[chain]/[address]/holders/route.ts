@@ -25,7 +25,7 @@ export async function GET(
     }
 
     const provider = getChainProvider(chain as ChainId);
-    const holders = await provider.getTopHolders(address, 20);
+    const holders = await provider.getTopHolders(address, 50);
 
     serverCache.set(cacheKey, holders, CACHE_TTL.TOKEN_META);
 

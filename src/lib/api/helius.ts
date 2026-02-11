@@ -3,6 +3,9 @@ import { rateLimit } from "@/lib/rate-limiter";
 function getRpcUrl(): string {
   const url = process.env.HELIUS_RPC_URL;
   if (url && !url.endsWith("api-key=")) return url;
+  // Build Helius RPC URL from API key if available
+  const key = process.env.HELIUS_API_KEY;
+  if (key) return `https://mainnet.helius-rpc.com/?api-key=${key}`;
   return "https://api.mainnet-beta.solana.com";
 }
 
@@ -69,6 +72,26 @@ export async function getMintInfo(
   ]);
   if (!result?.value?.data?.parsed?.info) return null;
   return result.value.data.parsed.info;
+}
+
+export interface LargestAccount {
+  address: string;
+  amount: string;
+  decimals: number;
+  uiAmount: number;
+  uiAmountString: string;
+}
+
+export async function getTokenLargestAccounts(
+  mintAddress: string
+): Promise<LargestAccount[]> {
+  interface LargestResult {
+    value: LargestAccount[];
+  }
+  const result = await rpcCall<LargestResult>("getTokenLargestAccounts", [
+    mintAddress,
+  ]);
+  return result?.value ?? [];
 }
 
 export interface HeliusAsset {

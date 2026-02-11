@@ -9,7 +9,9 @@ export const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     nativeCurrency: { name: "SOL", symbol: "SOL", decimals: 9 },
     rpcUrl: (process.env.HELIUS_RPC_URL && !process.env.HELIUS_RPC_URL.endsWith("api-key="))
       ? process.env.HELIUS_RPC_URL
-      : "https://api.mainnet-beta.solana.com",
+      : process.env.HELIUS_API_KEY
+        ? `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}`
+        : "https://api.mainnet-beta.solana.com",
     explorerUrl: "https://solscan.io",
     explorerApiUrl: "https://pro-api.solscan.io/v2.0",
     dexScreenerChainId: "solana",

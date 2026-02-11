@@ -87,6 +87,7 @@ export default function TokenPage({
 
         {/* Sidebar panels — 1 col */}
         <div className="space-y-6">
+          <TopHolders chain={token.chain} address={token.address} priceUsd={token.priceUsd} liquidityUsd={token.liquidity?.totalUsd ?? null} />
           {token.ddScore && (
             <DDScoreCard score={token.ddScore} />
           )}
@@ -96,17 +97,14 @@ export default function TokenPage({
         </div>
       </div>
 
-      {/* Bottom row: holders + liquidity + transactions */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-1">
-          <TopHolders chain={token.chain} address={token.address} />
-        </div>
-        <div className="lg:col-span-1">
+      {/* Bottom row: liquidity + transactions */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div>
           {token.liquidity && (
             <LiquidityPools liquidity={token.liquidity} />
           )}
         </div>
-        <div className="lg:col-span-1">
+        <div>
           <RecentTransactions chain={token.chain} address={token.address} />
         </div>
       </div>

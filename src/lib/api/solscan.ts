@@ -57,12 +57,38 @@ export async function getTokenHolders(
   limit = 20,
   offset = 0
 ): Promise<SolscanHolder[]> {
-  const data = await fetchSolscan<{ items: SolscanHolder[] } | SolscanHolder[]>(
-    `/token/holders?address=${tokenAddress}&page_size=${limit}&page=${offset + 1}`
-  );
-  if (!data) return [];
-  if (Array.isArray(data)) return data;
-  return data.items ?? [];
+  // Solscan Pro API v2.0 caps page_size at 40, so paginate if needed
+  const pageSize = Math.min(limit, 40);
+  const pages = Math.ceil(limit / pageSize);
+  const allHolders: SolscanHolder[] = [];
+
+  for (let page = 0; page < pages; page++) {
+    const currentPageSize = Math.min(pageSize, limit - allHolders.length);
+    const data = await fetchSolscan<
+      | { items: SolscanHolder[] }
+      | { result: SolscanHolder[] }
+      | SolscanHolder[]
+    >(
+      `/token/holders?address=${tokenAddress}&page_size=${currentPageSize}&page=${offset + page + 1}`
+    );
+    if (!data) break;
+
+    let holders: SolscanHolder[];
+    if (Array.isArray(data)) {
+      holders = data;
+    } else if ("items" in data && Array.isArray(data.items)) {
+      holders = data.items;
+    } else if ("result" in data && Array.isArray(data.result)) {
+      holders = data.result;
+    } else {
+      break;
+    }
+
+    allHolders.push(...holders);
+    if (holders.length < currentPageSize) break; // no more pages
+  }
+
+  return allHolders;
 }
 
 export async function getTokenTransactions(
