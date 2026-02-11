@@ -128,6 +128,7 @@ export interface TokenSearchResult {
 
 export interface TrendingToken extends TokenSearchResult {
   rank: number;
+  marketCap: number | null;
   priceChange24h: number | null;
   txns24h: number | null;
   pairUrl: string;

@@ -29,6 +29,7 @@ interface NewLaunchToken {
   symbol: string;
   logoUrl: string | null;
   priceUsd: number | null;
+  marketCap: number | null;
   volume24h: number | null;
   liquidity: number | null;
   priceChange24h: number | null;
@@ -205,12 +206,12 @@ function TrendingTable({
         <table className="w-full">
           <thead>
             <tr className="border-b border-white/[0.04]">
-              {["#", "Token", "Chain", "Price", "24h", "Volume", "Liquidity", ""].map(
+              {["#", "Token", "Chain", "Mcap", "24h", "Volume", "Liquidity", ""].map(
                 (h) => (
                   <th
                     key={h}
                     className={`text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80] px-5 py-3 ${
-                      ["Price", "24h", "Volume", "Liquidity", ""].includes(h)
+                      ["Mcap", "24h", "Volume", "Liquidity", ""].includes(h)
                         ? "text-right"
                         : "text-left"
                     }`}
@@ -291,7 +292,7 @@ function TrendingTable({
                     </td>
                     <td className="px-5 py-3.5 text-right">
                       <span className="text-sm font-mono font-medium text-[#E8E8ED]">
-                        {formatUsd(token.priceUsd)}
+                        {formatUsd(token.marketCap)}
                       </span>
                     </td>
                     <td className="px-5 py-3.5 text-right">
@@ -353,12 +354,12 @@ function NewLaunchesTable({
         <table className="w-full">
           <thead>
             <tr className="border-b border-white/[0.04]">
-              {["Token", "Chain", "Price", "24h", "Volume", "Liquidity", "Age", ""].map(
+              {["Token", "Chain", "Mcap", "24h", "Volume", "Liquidity", "Age", ""].map(
                 (h) => (
                   <th
                     key={h}
                     className={`text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80] px-5 py-3 ${
-                      ["Price", "24h", "Volume", "Liquidity", "Age", ""].includes(h)
+                      ["Mcap", "24h", "Volume", "Liquidity", "Age", ""].includes(h)
                         ? "text-right"
                         : "text-left"
                     }`}
@@ -431,7 +432,7 @@ function NewLaunchesTable({
                       </td>
                       <td className="px-5 py-3.5 text-right">
                         <span className="text-sm font-mono font-medium text-[#E8E8ED]">
-                          {formatUsd(token.priceUsd)}
+                          {formatUsd(token.marketCap)}
                         </span>
                       </td>
                       <td className="px-5 py-3.5 text-right">

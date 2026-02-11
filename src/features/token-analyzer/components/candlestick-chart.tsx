@@ -1,12 +1,22 @@
 "use client";
 
-import { useRef, useEffect, useState } from "react";
-import { createChart, ColorType } from "lightweight-charts";
-import type { IChartApi, ISeriesApi, CandlestickData, Time } from "lightweight-charts";
+import { useRef, useEffect, useState, useCallback } from "react";
+import {
+  createChart,
+  ColorType,
+  CandlestickSeries,
+  HistogramSeries,
+  AreaSeries,
+} from "lightweight-charts";
+import type { IChartApi, Time } from "lightweight-charts";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTokenChart } from "@/features/token-analyzer/hooks/use-token-chart";
 import { cn } from "@/lib/utils";
-import { BarChart3, CandlestickChart as CandleIcon } from "lucide-react";
+import {
+  BarChart3,
+  CandlestickChart as CandleIcon,
+  LineChart as LineIcon,
+} from "lucide-react";
 import type { ChainId } from "@/types/chain";
 import type { Timeframe } from "@/types/token";
 
@@ -14,6 +24,8 @@ interface CandlestickChartProps {
   chain: ChainId;
   address: string;
 }
+
+type ChartMode = "candle" | "line";
 
 const timeframes: { value: Timeframe; label: string }[] = [
   { value: "5m", label: "5M" },
@@ -26,15 +38,25 @@ const timeframes: { value: Timeframe; label: string }[] = [
 export function CandlestickChart({ chain, address }: CandlestickChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const [timeframe, setTimeframe] = useState<Timeframe>("1h");
+  const [chartMode, setChartMode] = useState<ChartMode>("candle");
   const { data: bars, isLoading } = useTokenChart(chain, address, timeframe);
 
-  useEffect(() => {
-    if (!chartContainerRef.current) return;
+  const hasData = bars && bars.length > 0;
 
-    const chart = createChart(chartContainerRef.current, {
+  const buildChart = useCallback(() => {
+    const container = chartContainerRef.current;
+    if (!container || !hasData) return;
+
+    // Clean up previous chart
+    if (chartRef.current) {
+      chartRef.current.remove();
+      chartRef.current = null;
+    }
+
+    const chart = createChart(container, {
+      width: container.clientWidth,
+      height: 360,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
         textColor: "#6B6B80",
@@ -71,63 +93,22 @@ export function CandlestickChart({ chain, address }: CandlestickChartProps) {
       handleScale: { mouseWheel: true, pinch: true },
     });
 
-    const candleSeries = chart.addCandlestickSeries({
-      upColor: "#00FF88",
-      downColor: "#FF3B5C",
-      borderUpColor: "#00FF88",
-      borderDownColor: "#FF3B5C",
-      wickUpColor: "#00FF88",
-      wickDownColor: "#FF3B5C",
-    });
+    chartRef.current = chart;
 
-    const volumeSeries = chart.addHistogramSeries({
+    // Sort bars ascending by timestamp
+    const sorted = [...bars].sort((a, b) => a.timestamp - b.timestamp);
+
+    // Volume series (shared between both modes)
+    const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
       priceScaleId: "volume",
     });
 
     chart.priceScale("volume").applyOptions({
-      scaleMargins: {
-        top: 0.8,
-        bottom: 0,
-      },
+      scaleMargins: { top: 0.8, bottom: 0 },
     });
 
-    chartRef.current = chart;
-    seriesRef.current = candleSeries;
-    volumeSeriesRef.current = volumeSeries;
-
-    const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({
-          width: chartContainerRef.current.clientWidth,
-        });
-      }
-    };
-
-    const observer = new ResizeObserver(handleResize);
-    observer.observe(chartContainerRef.current);
-
-    return () => {
-      observer.disconnect();
-      chart.remove();
-      chartRef.current = null;
-      seriesRef.current = null;
-      volumeSeriesRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!seriesRef.current || !volumeSeriesRef.current || !bars) return;
-
-    const candleData: CandlestickData<Time>[] = bars.map((bar) => ({
-      time: bar.timestamp as Time,
-      open: bar.open,
-      high: bar.high,
-      low: bar.low,
-      close: bar.close,
-    }));
-
-    const volumeData = bars.map((bar) => ({
+    const volumeData = sorted.map((bar) => ({
       time: bar.timestamp as Time,
       value: bar.volume,
       color:
@@ -136,13 +117,71 @@ export function CandlestickChart({ chain, address }: CandlestickChartProps) {
           : "rgba(255, 59, 92, 0.15)",
     }));
 
-    seriesRef.current.setData(candleData);
-    volumeSeriesRef.current.setData(volumeData);
+    volumeSeries.setData(volumeData);
 
-    if (chartRef.current) {
-      chartRef.current.timeScale().fitContent();
+    if (chartMode === "candle") {
+      const candleSeries = chart.addSeries(CandlestickSeries, {
+        upColor: "#00FF88",
+        downColor: "#FF3B5C",
+        borderUpColor: "#00FF88",
+        borderDownColor: "#FF3B5C",
+        wickUpColor: "#00FF88",
+        wickDownColor: "#FF3B5C",
+      });
+
+      candleSeries.setData(
+        sorted.map((bar) => ({
+          time: bar.timestamp as Time,
+          open: bar.open,
+          high: bar.high,
+          low: bar.low,
+          close: bar.close,
+        }))
+      );
+    } else {
+      const isPositive = sorted[sorted.length - 1].close >= sorted[0].close;
+      const color = isPositive ? "#00FF88" : "#FF3B5C";
+
+      const areaSeries = chart.addSeries(AreaSeries, {
+        lineColor: color,
+        topColor: isPositive
+          ? "rgba(0, 255, 136, 0.15)"
+          : "rgba(255, 59, 92, 0.15)",
+        bottomColor: "transparent",
+        lineWidth: 2,
+      });
+
+      areaSeries.setData(
+        sorted.map((bar) => ({
+          time: bar.timestamp as Time,
+          value: bar.close,
+        }))
+      );
     }
-  }, [bars]);
+
+    chart.timeScale().fitContent();
+
+    // Resize observer
+    const handleResize = () => {
+      if (container) {
+        chart.applyOptions({ width: container.clientWidth });
+      }
+    };
+
+    const observer = new ResizeObserver(handleResize);
+    observer.observe(container);
+
+    return () => {
+      observer.disconnect();
+      chart.remove();
+      chartRef.current = null;
+    };
+  }, [bars, hasData, chartMode]);
+
+  useEffect(() => {
+    const cleanup = buildChart();
+    return () => cleanup?.();
+  }, [buildChart]);
 
   return (
     <div className="glow-card rounded-xl overflow-hidden">
@@ -154,21 +193,53 @@ export function CandlestickChart({ chain, address }: CandlestickChartProps) {
             Price Chart
           </span>
         </div>
-        <div className="flex gap-0.5 bg-white/[0.03] rounded-lg p-0.5">
-          {timeframes.map((tf) => (
+
+        <div className="flex items-center gap-2">
+          {/* Chart mode toggle */}
+          <div className="flex gap-0.5 bg-white/[0.03] rounded-lg p-0.5">
             <button
-              key={tf.value}
               className={cn(
-                "px-2.5 py-1 text-[10px] font-mono font-semibold rounded-md transition-all",
-                timeframe === tf.value
+                "p-1.5 rounded-md transition-all",
+                chartMode === "candle"
                   ? "bg-[#00F0FF]/10 text-[#00F0FF] shadow-[0_0_10px_rgba(0,240,255,0.1)]"
                   : "text-[#6B6B80] hover:text-[#E8E8ED]"
               )}
-              onClick={() => setTimeframe(tf.value)}
+              onClick={() => setChartMode("candle")}
+              title="Candlestick"
             >
-              {tf.label}
+              <CandleIcon className="h-3.5 w-3.5" />
             </button>
-          ))}
+            <button
+              className={cn(
+                "p-1.5 rounded-md transition-all",
+                chartMode === "line"
+                  ? "bg-[#00F0FF]/10 text-[#00F0FF] shadow-[0_0_10px_rgba(0,240,255,0.1)]"
+                  : "text-[#6B6B80] hover:text-[#E8E8ED]"
+              )}
+              onClick={() => setChartMode("line")}
+              title="Line"
+            >
+              <LineIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          {/* Timeframe selector */}
+          <div className="flex gap-0.5 bg-white/[0.03] rounded-lg p-0.5">
+            {timeframes.map((tf) => (
+              <button
+                key={tf.value}
+                className={cn(
+                  "px-2.5 py-1 text-[10px] font-mono font-semibold rounded-md transition-all",
+                  timeframe === tf.value
+                    ? "bg-[#00F0FF]/10 text-[#00F0FF] shadow-[0_0_10px_rgba(0,240,255,0.1)]"
+                    : "text-[#6B6B80] hover:text-[#E8E8ED]"
+                )}
+                onClick={() => setTimeframe(tf.value)}
+              >
+                {tf.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -176,7 +247,7 @@ export function CandlestickChart({ chain, address }: CandlestickChartProps) {
       <div className="p-4">
         {isLoading ? (
           <Skeleton className="h-[360px] w-full shimmer rounded-lg" />
-        ) : !bars || bars.length === 0 ? (
+        ) : !hasData ? (
           <div className="h-[360px] flex flex-col items-center justify-center text-[#6B6B80]">
             <BarChart3 className="h-8 w-8 mb-3 opacity-20" />
             <span className="text-sm">No chart data available</span>

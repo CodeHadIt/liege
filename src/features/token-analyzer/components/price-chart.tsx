@@ -127,8 +127,8 @@ export function PriceChart({ chain, address }: PriceChartProps) {
                 labelFormatter={(val) =>
                   new Date(val * 1000).toLocaleString()
                 }
-                formatter={(val: number) => [
-                  `$${val < 1 ? val.toPrecision(4) : val.toFixed(4)}`,
+                formatter={(val: number | undefined) => [
+                  val != null ? `$${val < 1 ? val.toPrecision(4) : val.toFixed(4)}` : "—",
                   "Price",
                 ]}
               />

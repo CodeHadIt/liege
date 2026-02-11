@@ -101,7 +101,7 @@ export function TopHolders({ chain, address }: TopHoldersProps) {
                       fontFamily: "var(--font-jetbrains)",
                       boxShadow: "0 10px 40px -10px rgba(0,0,0,0.5)",
                     }}
-                    formatter={(val: number) => [`${val.toFixed(2)}%`, "Share"]}
+                    formatter={(val: number | undefined) => [val != null ? `${val.toFixed(2)}%` : "—", "Share"]}
                   />
                 </PieChart>
               </ResponsiveContainer>
