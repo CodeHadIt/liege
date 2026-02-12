@@ -10,6 +10,7 @@ import {
   Activity,
   Wallet,
   Scan,
+  GitCompareArrows,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -17,6 +18,7 @@ const navItems = [
   { href: "/trending", label: "Trending", icon: TrendingUp, shortcut: "T" },
   { href: "/search", label: "Search", icon: Search, shortcut: "S" },
   { href: "/wallet", label: "Wallet Tracker", icon: Wallet, shortcut: "W" },
+  { href: "/traders", label: "Common Traders", icon: GitCompareArrows, shortcut: "C" },
 ];
 
 export function Sidebar() {

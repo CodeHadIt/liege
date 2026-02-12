@@ -157,6 +157,48 @@ export interface HeliusTransaction {
   }[];
 }
 
+/**
+ * Resolve token account PDAs to their owner wallet addresses.
+ * Batches in groups of 100 (Solana RPC limit for getMultipleAccounts).
+ */
+export async function getMultipleAccountOwners(
+  tokenAccounts: string[]
+): Promise<Map<string, string>> {
+  const ownerMap = new Map<string, string>();
+  if (tokenAccounts.length === 0) return ownerMap;
+
+  const BATCH_SIZE = 100;
+  for (let i = 0; i < tokenAccounts.length; i += BATCH_SIZE) {
+    const batch = tokenAccounts.slice(i, i + BATCH_SIZE);
+    interface MultiAccountResult {
+      value: (
+        | {
+            data: {
+              parsed: {
+                info: { owner: string };
+              };
+            };
+          }
+        | null
+      )[];
+    }
+    const result = await rpcCall<MultiAccountResult>("getMultipleAccounts", [
+      batch,
+      { encoding: "jsonParsed" },
+    ]);
+    if (result?.value) {
+      result.value.forEach((account, idx) => {
+        const owner = account?.data?.parsed?.info?.owner;
+        if (owner) {
+          ownerMap.set(batch[idx], owner);
+        }
+      });
+    }
+  }
+
+  return ownerMap;
+}
+
 export async function getTransactionHistory(
   address: string,
   limit = 50

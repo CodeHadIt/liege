@@ -125,6 +125,24 @@ export function createEtherscanClient(config: EtherscanConfig) {
       });
     },
 
+    async getTokenTxListForContract(
+      address: string,
+      contractAddress: string,
+      limit = 100
+    ): Promise<EtherscanTokenTx[] | null> {
+      return fetchEtherscan<EtherscanTokenTx[]>(config, {
+        module: "account",
+        action: "tokentx",
+        address,
+        contractaddress: contractAddress,
+        startblock: "0",
+        endblock: "99999999",
+        page: "1",
+        offset: limit.toString(),
+        sort: "desc",
+      });
+    },
+
     async getBalance(address: string): Promise<string | null> {
       return fetchEtherscan<string>(config, {
         module: "account",

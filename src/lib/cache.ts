@@ -56,4 +56,5 @@ export const CACHE_TTL = {
   TRENDING: 60_000,
   WALLET: 120_000,
   SEARCH: 30_000,
+  TRADE_HISTORY: 120_000,
 } as const;
