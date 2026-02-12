@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Search, ArrowRight } from "lucide-react";
-import { detectChainFromAddress, formatUsd, shortenAddress } from "@/lib/utils";
+import { CopyAddress } from "@/components/shared/copy-address";
+import { detectChainFromAddress, formatUsd, chainLabel } from "@/lib/utils";
 import type { TokenSearchResult } from "@/types/token";
 
 export function TokenSearch() {
@@ -111,11 +112,9 @@ export function TokenSearch() {
                 </div>
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className="text-[10px] font-mono uppercase tracking-wider text-[#00F0FF]/60">
-                    {result.chain}
+                    {chainLabel(result.chain)}
                   </span>
-                  <span className="text-[10px] font-mono text-[#6B6B80]/60">
-                    {shortenAddress(result.address)}
-                  </span>
+                  <CopyAddress address={result.address} className="opacity-60 hover:opacity-100" />
                 </div>
               </div>
               <div className="text-right">

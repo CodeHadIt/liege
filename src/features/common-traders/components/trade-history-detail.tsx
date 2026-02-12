@@ -8,6 +8,7 @@ import {
   ArrowUpRight,
   Loader2,
 } from "lucide-react";
+import { chainLabel } from "@/lib/utils";
 import type { TokenTradeHistory } from "@/types/traders";
 
 export type DisplayCurrency = "token" | "usd";
@@ -68,6 +69,14 @@ function formatDate(timestamp: number): string {
   });
 }
 
+function formatDateShort(timestamp: number): string {
+  return new Date(timestamp * 1000).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "2-digit",
+  });
+}
+
 function TokenTradeSection({
   history,
   displayCurrency,
@@ -85,6 +94,12 @@ function TokenTradeSection({
   const buys = tranches.filter((t) => t.side === "buy");
   const sells = tranches.filter((t) => t.side === "sell");
 
+  // Date ranges
+  const firstBuyDate = buys.length > 0 ? buys[0].timestamp : null;
+  const lastBuyDate = buys.length > 0 ? buys[buys.length - 1].timestamp : null;
+  const firstSellDate = sells.length > 0 ? sells[0].timestamp : null;
+  const lastSellDate = sells.length > 0 ? sells[sells.length - 1].timestamp : null;
+
   return (
     <div className="space-y-2">
       {/* Summary row */}
@@ -94,12 +109,26 @@ function TokenTradeSection({
           <span className="text-[#00C48C] font-semibold">
             {formatAmount(totalBought, displayCurrency, priceUsd, symbol)}
           </span>
+          {firstBuyDate && (
+            <span className="text-[#6B6B80]/60 block text-[9px] mt-0.5">
+              {firstBuyDate === lastBuyDate
+                ? formatDateShort(firstBuyDate)
+                : `${formatDateShort(firstBuyDate)} - ${formatDateShort(lastBuyDate!)}`}
+            </span>
+          )}
         </div>
         <div>
           <span className="text-[#6B6B80] block mb-0.5">Sold</span>
           <span className="text-[#FF3B5C] font-semibold">
             {formatAmount(totalSold, displayCurrency, priceUsd, symbol)}
           </span>
+          {firstSellDate && (
+            <span className="text-[#6B6B80]/60 block text-[9px] mt-0.5">
+              {firstSellDate === lastSellDate
+                ? formatDateShort(firstSellDate)
+                : `${formatDateShort(firstSellDate)} - ${formatDateShort(lastSellDate!)}`}
+            </span>
+          )}
         </div>
         <div>
           <span className="text-[#6B6B80] block mb-0.5">Balance</span>
@@ -218,7 +247,7 @@ export function TradeHistoryDetail({
               {history.symbol}
             </span>
             <span className="text-[9px] font-mono uppercase text-[#00F0FF]/60">
-              {history.chain}
+              {chainLabel(history.chain)}
             </span>
           </div>
           <TokenTradeSection

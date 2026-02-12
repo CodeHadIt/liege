@@ -5,6 +5,7 @@ import type { CommonTradersResponse } from "@/types/traders";
 interface TokenInput {
   chain: ChainId;
   address: string;
+  symbol?: string;
 }
 
 async function fetchCommonTraders(

@@ -3,6 +3,8 @@ import { Outfit, JetBrains_Mono } from "next/font/google";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { QueryProvider } from "@/providers/query-provider";
 import { ChainProvider } from "@/providers/chain-provider";
+import { WalletDialogProvider } from "@/providers/wallet-dialog-provider";
+import { WalletDialog } from "@/components/shared/wallet-dialog";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
@@ -37,7 +39,12 @@ export default function RootLayout({
         <ThemeProvider>
           <QueryProvider>
             <ChainProvider>
-              <TooltipProvider>{children}</TooltipProvider>
+              <WalletDialogProvider>
+                <TooltipProvider>
+                  {children}
+                  <WalletDialog />
+                </TooltipProvider>
+              </WalletDialogProvider>
             </ChainProvider>
           </QueryProvider>
         </ThemeProvider>

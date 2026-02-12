@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Copy, Check, ExternalLink } from "lucide-react";
 import { shortenAddress } from "@/lib/utils";
+import { useWalletDialog } from "@/providers/wallet-dialog-provider";
 import { getExplorerAddressUrl } from "@/config/chains";
 import type { ChainId } from "@/types/chain";
 
@@ -11,6 +12,7 @@ interface AddressDisplayProps {
   chain: ChainId;
   chars?: number;
   showExplorer?: boolean;
+  clickable?: boolean;
 }
 
 export function AddressDisplay({
@@ -18,8 +20,10 @@ export function AddressDisplay({
   chain,
   chars = 4,
   showExplorer = true,
+  clickable = true,
 }: AddressDisplayProps) {
   const [copied, setCopied] = useState(false);
+  const { openWalletDialog } = useWalletDialog();
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(address);
@@ -29,9 +33,18 @@ export function AddressDisplay({
 
   return (
     <span className="inline-flex items-center gap-1.5">
-      <span className="font-mono text-xs text-[#6B6B80]">
-        {shortenAddress(address, chars)}
-      </span>
+      {clickable ? (
+        <button
+          onClick={() => openWalletDialog(address, chain)}
+          className="font-mono text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors"
+        >
+          {shortenAddress(address, chars)}
+        </button>
+      ) : (
+        <span className="font-mono text-xs text-[#6B6B80]">
+          {shortenAddress(address, chars)}
+        </span>
+      )}
       <button
         onClick={handleCopy}
         className="text-[#6B6B80] hover:text-[#00F0FF] transition-colors"

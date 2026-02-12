@@ -10,8 +10,9 @@ import {
   DollarSign,
   Coins,
 } from "lucide-react";
-import { shortenAddress } from "@/lib/utils";
+import { shortenAddress, chainLabel } from "@/lib/utils";
 import { getExplorerAddressUrl } from "@/config/chains";
+import { useWalletDialog } from "@/providers/wallet-dialog-provider";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   useTradeHistory,
@@ -66,6 +67,7 @@ function TraderRow({
   displayCurrency: DisplayCurrency;
 }) {
   const chain = getWalletChain(trader);
+  const { openWalletDialog } = useWalletDialog();
 
   // Build trade history input only when expanded
   const historyInput: TradeHistoryInput | null = isExpanded
@@ -102,16 +104,24 @@ function TraderRow({
           {index + 1}
         </span>
         <div className="flex items-center gap-2 min-w-0">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              openWalletDialog(trader.walletAddress, chain);
+            }}
+            className="text-[11px] font-mono text-[#E8E8ED] hover:text-[#00F0FF] transition-colors truncate"
+          >
+            {shortenAddress(trader.walletAddress, 6)}
+          </button>
           <a
             href={getExplorerAddressUrl(chain, trader.walletAddress)}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-[11px] font-mono text-[#E8E8ED] hover:text-[#00F0FF] transition-colors truncate"
             onClick={(e) => e.stopPropagation()}
+            className="text-[#6B6B80] opacity-0 group-hover:opacity-50 transition-opacity shrink-0"
           >
-            {shortenAddress(trader.walletAddress, 6)}
+            <ExternalLink className="h-3 w-3" />
           </a>
-          <ExternalLink className="h-3 w-3 text-[#6B6B80] opacity-0 group-hover:opacity-50 transition-opacity shrink-0" />
         </div>
         <div className="flex items-center justify-center gap-1">
           <span className="text-[11px] font-mono font-bold text-[#00F0FF]">
@@ -151,7 +161,7 @@ function TraderRow({
                       {t.symbol}
                     </span>
                     <span className="text-[10px] font-mono uppercase tracking-wider text-[#00F0FF]/60">
-                      {t.chain}
+                      {chainLabel(t.chain)}
                     </span>
                   </div>
                   <div className="flex items-center gap-4">

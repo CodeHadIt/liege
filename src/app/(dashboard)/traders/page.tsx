@@ -26,7 +26,7 @@ export default function TradersPage() {
   const handleSearch = () => {
     if (tokens.length < 2) return;
     mutate(
-      tokens.map((t) => ({ chain: t.chain, address: t.address }))
+      tokens.map((t) => ({ chain: t.chain, address: t.address, symbol: t.symbol }))
     );
   };
 
@@ -50,13 +50,13 @@ export default function TradersPage() {
       </div>
 
       {/* Input card */}
-      <div className="glow-card rounded-xl overflow-hidden">
-        <div className="px-5 py-3 border-b border-white/[0.04]">
+      <div className="glow-card rounded-xl overflow-visible">
+        <div className="px-5 py-3 border-b border-white/[0.04] rounded-t-xl">
           <span className="text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80]">
             Select Tokens
           </span>
         </div>
-        <div className="p-5 space-y-4">
+        <div className="p-5 space-y-4 relative">
           <TokenMultiInput
             tokens={tokens}
             onAdd={handleAdd}

@@ -283,6 +283,52 @@ export class SolanaChainProvider implements ChainProvider {
   }
 
   async getWalletBalance(walletAddress: string): Promise<WalletBalance> {
+    const data = await helius.getWalletBalances(walletAddress);
+
+    if (!data) {
+      // Fallback to getAssetsByOwner if v1 endpoint fails
+      return this.getWalletBalanceFallback(walletAddress);
+    }
+
+    const tokens: WalletTokenHolding[] = [];
+    let nativeBalance = 0;
+    let nativeBalanceUsd = 0;
+
+    const SOL_MINT = "So11111111111111111111111111111111111111111";
+
+    for (const item of data.balances) {
+      if (item.mint === SOL_MINT) {
+        nativeBalance = item.balance;
+        nativeBalanceUsd = item.usdValue ?? 0;
+        continue;
+      }
+
+      tokens.push({
+        tokenAddress: item.mint,
+        symbol: item.symbol || "???",
+        name: item.name || "Unknown",
+        balance: item.balance,
+        balanceUsd: item.usdValue ?? null,
+        priceUsd: item.pricePerToken ?? null,
+        priceChange24h: null,
+        logoUrl: item.logoUri ?? null,
+      });
+    }
+
+    // Sort by USD value desc
+    tokens.sort((a, b) => (b.balanceUsd ?? 0) - (a.balanceUsd ?? 0));
+
+    return {
+      nativeBalance,
+      nativeBalanceUsd,
+      tokens,
+      totalPortfolioUsd: data.totalUsdValue ?? 0,
+    };
+  }
+
+  private async getWalletBalanceFallback(
+    walletAddress: string
+  ): Promise<WalletBalance> {
     const assets = await helius.getAssetsByOwner(walletAddress);
     const tokens: WalletTokenHolding[] = [];
     let totalPortfolioUsd = 0;
@@ -307,11 +353,10 @@ export class SolanaChainProvider implements ChainProvider {
       });
     }
 
-    // Sort by USD value desc
     tokens.sort((a, b) => (b.balanceUsd ?? 0) - (a.balanceUsd ?? 0));
 
     return {
-      nativeBalance: 0, // TODO: fetch SOL balance separately
+      nativeBalance: 0,
       nativeBalanceUsd: 0,
       tokens,
       totalPortfolioUsd,
@@ -326,6 +371,16 @@ export class SolanaChainProvider implements ChainProvider {
       walletAddress,
       options?.limit ?? 50
     );
+
+    // Collect all unique mints to resolve names
+    const mintSet = new Set<string>();
+    for (const tx of txns) {
+      for (const tt of tx.tokenTransfers ?? []) {
+        if (tt.mint) mintSet.add(tt.mint);
+      }
+    }
+    const assetMap = await helius.getAssetBatch([...mintSet]);
+
     return txns.map((tx) => ({
       hash: tx.signature,
       blockNumber: 0,
@@ -338,8 +393,8 @@ export class SolanaChainProvider implements ChainProvider {
       token: tx.tokenTransfers?.[0]
         ? {
             address: tx.tokenTransfers[0].mint,
-            symbol: "",
-            name: "",
+            symbol: assetMap.get(tx.tokenTransfers[0].mint)?.symbol ?? "",
+            name: assetMap.get(tx.tokenTransfers[0].mint)?.name ?? "",
           }
         : null,
       fee: tx.fee,

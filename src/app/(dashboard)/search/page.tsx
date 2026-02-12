@@ -5,7 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ChainBadge } from "@/components/shared/chain-badge";
-import { formatUsd, shortenAddress } from "@/lib/utils";
+import { formatUsd } from "@/lib/utils";
+import { CopyAddress } from "@/components/shared/copy-address";
 import { Search, ArrowRight, Scan } from "lucide-react";
 import type { TokenSearchResult } from "@/types/token";
 import type { ChainId } from "@/types/chain";
@@ -111,8 +112,8 @@ export default function SearchPage() {
                       </span>
                       <ChainBadge chain={token.chain as ChainId} />
                     </div>
-                    <span className="text-[11px] font-mono text-[#6B6B80]">
-                      {shortenAddress(token.address)}
+                    <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-[#6B6B80]">
+                      <CopyAddress address={token.address} />
                     </span>
                   </div>
 

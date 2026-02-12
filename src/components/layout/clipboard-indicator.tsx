@@ -3,6 +3,7 @@
 import { Coins, Loader2, Wallet, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useClipboardAddress } from "@/hooks/use-clipboard-address";
+import { chainLabel as getChainLabel } from "@/lib/utils";
 
 export function ClipboardIndicator() {
   const { detected, loading, dismiss } = useClipboardAddress();
@@ -23,10 +24,10 @@ export function ClipboardIndicator() {
 
   const isToken = detected.type === "token";
   const iconColor = isToken ? "#00F0FF" : "#A855F7";
-  const chainLabel = detected.chain === "solana" ? "solana" : "evm";
+  const chainRoute = detected.chain === "solana" ? "solana" : "base";
   const href = isToken
-    ? `/token/${chainLabel}/${detected.address}`
-    : `/wallet/${chainLabel}/${detected.address}`;
+    ? `/token/${chainRoute}/${detected.address}`
+    : `/wallet/${chainRoute}/${detected.address}`;
 
   return (
     <div className="hidden sm:flex items-center gap-1.5 max-w-[180px]">
@@ -43,7 +44,7 @@ export function ClipboardIndicator() {
           {detected.label}
         </span>
         <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-white/[0.06] text-[#6B6B80] shrink-0">
-          {chainLabel}
+          {getChainLabel(detected.chain)}
         </span>
       </button>
       <button

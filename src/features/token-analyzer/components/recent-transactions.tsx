@@ -10,8 +10,9 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CopyAddress } from "@/components/shared/copy-address";
 import { shortenAddress, formatTimeAgo } from "@/lib/utils";
-import { getExplorerTxUrl, getExplorerAddressUrl } from "@/config/chains";
+import { getExplorerTxUrl } from "@/config/chains";
 import type { ChainId } from "@/types/chain";
 import type { Transaction } from "@/types/wallet";
 
@@ -39,11 +40,11 @@ export function RecentTransactions({
     queryKey: ["token-txns", chain, address],
     queryFn: async () => {
       const res = await fetch(
-        `/api/token/${chain}/${address}/holders`
+        `/api/token/${chain}/${address}/transactions`
       );
-      // For now we use mock data since we don't have a token-specific txns endpoint yet
-      // This will be replaced with real transaction data
-      return [];
+      if (!res.ok) return [];
+      const json = await res.json();
+      return json.data ?? [];
     },
     enabled: !!chain && !!address,
     staleTime: 30_000,
@@ -113,7 +114,15 @@ export function RecentTransactions({
                       >
                         {config.label}
                       </span>
-                      <span className="text-[11px] font-mono text-[#6B6B80] truncate">
+                      {tx.token && (
+                        <span className="inline-flex items-center gap-1">
+                          <span className="text-[11px] font-mono font-semibold text-[#E8E8ED] truncate">
+                            {tx.token.symbol || tx.token.name || "Unknown"}
+                          </span>
+                          <CopyAddress address={tx.token.address} />
+                        </span>
+                      )}
+                      <span className="text-[10px] font-mono text-[#6B6B80] truncate">
                         {shortenAddress(tx.from, 4)}
                       </span>
                     </div>

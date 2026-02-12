@@ -10,6 +10,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CopyAddress } from "@/components/shared/copy-address";
 import { useWalletTransactions } from "@/features/wallet-tracker/hooks/use-wallet-transactions";
 import { shortenAddress, formatTimeAgo } from "@/lib/utils";
 import { getExplorerTxUrl, getExplorerAddressUrl } from "@/config/chains";
@@ -139,8 +140,9 @@ export function TransactionHistory({ chain, address }: TransactionHistoryProps) 
                       </a>
                     </div>
                     {tx.token && (
-                      <span className="text-[10px] font-mono text-[#6B6B80]/60">
-                        {tx.token.symbol || shortenAddress(tx.token.address)}
+                      <span className="inline-flex items-center gap-1 text-[10px] font-mono text-[#6B6B80]/60">
+                        <span>{tx.token.symbol || tx.token.name || "Unknown"}</span>
+                        <CopyAddress address={tx.token.address} />
                       </span>
                     )}
                   </div>

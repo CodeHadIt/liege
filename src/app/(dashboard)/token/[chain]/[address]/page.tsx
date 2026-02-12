@@ -9,9 +9,11 @@ import { ContractSafety } from "@/features/token-analyzer/components/contract-sa
 import { LiquidityPools } from "@/features/token-analyzer/components/liquidity-pools";
 import { TopHolders } from "@/features/token-analyzer/components/top-holders";
 import { RecentTransactions } from "@/features/token-analyzer/components/recent-transactions";
+import { TopTraders } from "@/features/token-analyzer/components/top-traders";
 import { DDScoreCard } from "@/features/token-analyzer/components/dd-score-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AlertTriangle } from "lucide-react";
+import { chainLabel } from "@/lib/utils";
 import type { ChainId } from "@/types/chain";
 
 export default function TokenPage({
@@ -63,7 +65,7 @@ export default function TokenPage({
         <p className="text-sm text-center max-w-md">
           Could not find data for{" "}
           <span className="font-mono text-[#00F0FF]">{address.slice(0, 8)}...{address.slice(-6)}</span>{" "}
-          on <span className="capitalize text-[#E8E8ED]">{chain}</span>.
+          on <span className="text-[#E8E8ED]">{chainLabel(chain)}</span>.
         </p>
         <p className="text-xs mt-3 opacity-50">
           Verify the address is correct and the token has trading activity.
@@ -80,9 +82,11 @@ export default function TokenPage({
 
       {/* Main content: chart + sidebar */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Chart — 2 cols */}
-        <div className="lg:col-span-2">
+        {/* Left column — chart, top traders, recent transactions */}
+        <div className="lg:col-span-2 space-y-6">
           <CandlestickChart chain={token.chain} address={token.address} marketCap={token.marketCap} priceUsd={token.priceUsd} />
+          <TopTraders chain={token.chain} address={token.address} />
+          <RecentTransactions chain={token.chain} address={token.address} />
         </div>
 
         {/* Sidebar panels — 1 col */}
@@ -94,18 +98,9 @@ export default function TokenPage({
           {token.safetySignals && (
             <ContractSafety signals={token.safetySignals} />
           )}
-        </div>
-      </div>
-
-      {/* Bottom row: liquidity + transactions */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div>
           {token.liquidity && (
             <LiquidityPools liquidity={token.liquidity} />
           )}
-        </div>
-        <div>
-          <RecentTransactions chain={token.chain} address={token.address} />
         </div>
       </div>
     </div>

@@ -7,7 +7,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PriceChange } from "@/components/shared/price-change";
 import { ChainBadge } from "@/components/shared/chain-badge";
 import { useChain } from "@/providers/chain-provider";
-import { formatUsd, shortenAddress, formatTimeAgo } from "@/lib/utils";
+import { CopyAddress } from "@/components/shared/copy-address";
+import { formatUsd, formatTimeAgo } from "@/lib/utils";
 import {
   TrendingUp,
   Zap,
@@ -280,9 +281,7 @@ function TrendingTable({
                             <span className="text-[10px] text-[#6B6B80] truncate max-w-[120px]">
                               {token.name}
                             </span>
-                            <span className="text-[10px] font-mono text-[#6B6B80]/50">
-                              {shortenAddress(token.address)}
-                            </span>
+                            <CopyAddress address={token.address} className="opacity-50 hover:opacity-100" />
                           </div>
                         </div>
                       </Link>

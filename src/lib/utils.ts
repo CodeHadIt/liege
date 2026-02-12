@@ -61,3 +61,14 @@ export function detectChainFromAddress(
   if (isValidEvmAddress(address)) return "evm";
   return null;
 }
+
+const CHAIN_LABELS: Record<string, string> = {
+  solana: "SOL",
+  base: "BASE",
+  bsc: "BSC",
+  evm: "EVM",
+};
+
+export function chainLabel(chain: string): string {
+  return CHAIN_LABELS[chain] ?? chain.toUpperCase();
+}

@@ -9,7 +9,7 @@ import { DeployerReputation } from "@/features/wallet-tracker/components/deploye
 import { AddressDisplay } from "@/components/shared/address-display";
 import { ChainBadge } from "@/components/shared/chain-badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatUsd } from "@/lib/utils";
+import { formatUsd, chainLabel } from "@/lib/utils";
 import { Wallet, AlertTriangle, Code } from "lucide-react";
 import type { ChainId } from "@/types/chain";
 
@@ -59,7 +59,7 @@ export default function WalletPage({
         <p className="text-sm text-center max-w-md">
           Could not load data for{" "}
           <span className="font-mono text-[#00F0FF]">{address.slice(0, 8)}...{address.slice(-6)}</span>{" "}
-          on <span className="capitalize text-[#E8E8ED]">{chain}</span>.
+          on <span className="text-[#E8E8ED]">{chainLabel(chain)}</span>.
         </p>
       </div>
     );

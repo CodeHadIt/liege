@@ -36,7 +36,7 @@ export async function POST(request: Request) {
 
     // Phase 1: Fetch holders + pair data for each token in parallel
     const tokenResults = await Promise.all(
-      tokens.map(async ({ chain, address }) => {
+      tokens.map(async ({ chain, address, symbol: clientSymbol }) => {
         const cacheKey = `common-holders:${chain}:${address}`;
         const cached = serverCache.get<{
           holders: HolderEntry[];
@@ -54,7 +54,7 @@ export async function POST(request: Request) {
 
         const result = {
           holders,
-          symbol: metadata?.symbol ?? "???",
+          symbol: metadata?.symbol || clientSymbol || "???",
           priceUsd: pairData?.priceUsd ?? null,
         };
         serverCache.set(cacheKey, result, CACHE_TTL.HOLDERS);

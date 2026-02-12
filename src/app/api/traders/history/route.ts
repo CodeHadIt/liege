@@ -10,6 +10,12 @@ import type {
   TradeTranche,
 } from "@/types/traders";
 
+// SOL mints that appear in balance changes
+const SOL_MINTS = new Set([
+  "So11111111111111111111111111111111111111111",
+  "So11111111111111111111111111111111111111112",
+]);
+
 function getEtherscanConfig(chain: ChainId) {
   const configs: Record<
     string,
@@ -29,31 +35,43 @@ function getEtherscanConfig(chain: ChainId) {
   return configs[chain] ?? null;
 }
 
-function parseSolanaTranches(
-  txns: helius.HeliusTransaction[],
-  walletAddress: string,
+/**
+ * Parse Solana wallet history (v1) into trade tranches for a specific token mint.
+ * Uses balanceChanges to detect buys/sells of a particular token.
+ */
+function parseSolanaWalletHistory(
+  txns: helius.WalletHistoryTransaction[],
   tokenMint: string
 ): TradeTranche[] {
   const tranches: TradeTranche[] = [];
 
   for (const tx of txns) {
-    if (!tx.tokenTransfers || tx.tokenTransfers.length === 0) continue;
+    if (tx.error || !tx.timestamp) continue;
 
-    for (const transfer of tx.tokenTransfers) {
-      if (transfer.mint !== tokenMint) continue;
-
-      const isBuy = transfer.toUserAccount === walletAddress;
-      const isSell = transfer.fromUserAccount === walletAddress;
-      if (!isBuy && !isSell) continue;
-
-      tranches.push({
-        txHash: tx.signature,
-        timestamp: tx.timestamp,
-        amount: Math.abs(transfer.tokenAmount),
-        side: isBuy ? "buy" : "sell",
-        source: tx.source || null,
-      });
+    // Aggregate balance changes by mint
+    const netChanges = new Map<string, number>();
+    for (const bc of tx.balanceChanges) {
+      const cur = netChanges.get(bc.mint) ?? 0;
+      netChanges.set(bc.mint, cur + bc.amount);
     }
+
+    const tokenChange = netChanges.get(tokenMint);
+    if (!tokenChange || tokenChange === 0) continue;
+
+    // Determine source (DEX) from feePayer heuristic
+    let source: string | null = null;
+    // If feePayer is not the wallet itself, it might indicate the DEX program
+    if (tx.feePayer !== tokenMint) {
+      source = null; // We don't have source info from v1 API
+    }
+
+    tranches.push({
+      txHash: tx.signature,
+      timestamp: tx.timestamp,
+      amount: Math.abs(tokenChange),
+      side: tokenChange > 0 ? "buy" : "sell",
+      source,
+    });
   }
 
   return tranches;
@@ -81,15 +99,20 @@ export async function POST(request: Request) {
     const solanaTokens = tokens.filter((t) => t.chain === "solana");
     const evmTokens = tokens.filter((t) => t.chain !== "solana");
 
-    // Solana: fetch all wallet transactions once, then filter per token
-    let solanaTxns: helius.HeliusTransaction[] = [];
+    // Solana: fetch wallet history once using v1 endpoint, then filter per token
+    let solanaTxns: helius.WalletHistoryTransaction[] = [];
     if (solanaTokens.length > 0) {
-      const txCacheKey = `solana-txns:${walletAddress}`;
-      const cached = serverCache.get<helius.HeliusTransaction[]>(txCacheKey);
+      const txCacheKey = `solana-wallet-history:${walletAddress}`;
+      const cached = serverCache.get<helius.WalletHistoryTransaction[]>(txCacheKey);
       if (cached) {
         solanaTxns = cached;
       } else {
-        solanaTxns = await helius.getTransactionHistory(walletAddress, 100);
+        // Fetch swap transactions (3 pages = up to 300 swaps)
+        solanaTxns = await helius.getWalletHistoryAll(walletAddress, {
+          maxPages: 3,
+          limit: 100,
+          type: "SWAP",
+        });
         serverCache.set(txCacheKey, solanaTxns, CACHE_TTL.TRADE_HISTORY);
       }
     }
@@ -98,11 +121,7 @@ export async function POST(request: Request) {
 
     // Process Solana tokens
     for (const token of solanaTokens) {
-      const tranches = parseSolanaTranches(
-        solanaTxns,
-        walletAddress,
-        token.address
-      );
+      const tranches = parseSolanaWalletHistory(solanaTxns, token.address);
       tranches.sort((a, b) => a.timestamp - b.timestamp);
 
       const totalBought = tranches

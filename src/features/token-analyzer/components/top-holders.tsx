@@ -4,6 +4,7 @@ import { Users, ExternalLink } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTokenHolders } from "@/features/token-analyzer/hooks/use-token-holders";
+import { useWalletDialog } from "@/providers/wallet-dialog-provider";
 import { shortenAddress } from "@/lib/utils";
 import { getExplorerAddressUrl } from "@/config/chains";
 import type { ChainId } from "@/types/chain";
@@ -77,6 +78,7 @@ function isLikelyLP(
 
 export function TopHolders({ chain, address, priceUsd, liquidityUsd }: TopHoldersProps) {
   const { data: holders, isLoading } = useTokenHolders(chain, address);
+  const { openWalletDialog } = useWalletDialog();
 
   const allHolders = holders || [];
 
@@ -269,15 +271,21 @@ export function TopHolders({ chain, address, priceUsd, liquidityUsd }: TopHolder
                               i < 10 ? PIE_COLORS[i] : "#2A2A3A",
                           }}
                         />
+                        <button
+                          onClick={() => openWalletDialog(holder.address, chain)}
+                          className="text-[11px] font-mono text-[#E8E8ED] hover:text-[#00F0FF] transition-colors truncate"
+                        >
+                          {holder.label || shortenAddress(holder.address, 4)}
+                        </button>
                         <a
                           href={getExplorerAddressUrl(chain, holder.address)}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-[11px] font-mono text-[#E8E8ED] hover:text-[#00F0FF] transition-colors truncate"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-[#6B6B80] opacity-0 group-hover:opacity-50 transition-opacity shrink-0"
                         >
-                          {holder.label || shortenAddress(holder.address, 4)}
+                          <ExternalLink className="h-3 w-3" />
                         </a>
-                        <ExternalLink className="h-3 w-3 text-[#6B6B80] opacity-0 group-hover:opacity-50 transition-opacity shrink-0" />
                       </div>
                       <span className="text-[11px] font-mono text-[#E8E8ED] text-right truncate">
                         {formatBalance(holder.balance)}
