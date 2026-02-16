@@ -126,6 +126,23 @@ export interface TokenSearchResult {
   liquidity: number | null;
 }
 
+export interface PumpFunToken {
+  address: string;
+  name: string;
+  symbol: string;
+  logoUrl: string | null;
+  priceUsd: number | null;
+  liquidity: number | null;
+  fdv: number | null;
+  createdAt: string;
+}
+
+export type DexOrderTag = "dexPaid" | "cto";
+
+export interface DexOrderToken extends PumpFunToken {
+  tags: DexOrderTag[];
+}
+
 export interface TrendingToken extends TokenSearchResult {
   rank: number;
   marketCap: number | null;

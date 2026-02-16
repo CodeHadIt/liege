@@ -127,6 +127,22 @@ export async function enrichTokenBoost(
   )[0];
 }
 
+export interface DexScreenerOrder {
+  type: string;
+  status: string;
+}
+
+export async function getTokenOrders(
+  chainId: string,
+  tokenAddress: string
+): Promise<{ orders: DexScreenerOrder[] } | null> {
+  const data = await fetchDexScreener<DexScreenerOrder[]>(
+    `/orders/v1/${chainId}/${tokenAddress}`
+  );
+  if (Array.isArray(data)) return { orders: data };
+  return null;
+}
+
 export async function getLatestTokenProfiles(): Promise<DexScreenerTokenBoost[]> {
   const data = await fetchDexScreener<DexScreenerTokenBoost[]>(
     `/token-profiles/latest/v1`

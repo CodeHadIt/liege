@@ -46,7 +46,7 @@ class LRUCache {
   }
 }
 
-export const serverCache = new LRUCache(500);
+export const serverCache = new LRUCache(2000);
 
 export const CACHE_TTL = {
   PRICE: 30_000,
@@ -59,4 +59,6 @@ export const CACHE_TTL = {
   TRADE_HISTORY: 120_000,
   TOP_TRADERS: 120_000,
   WALLET_QUICK: 60_000,
+  PUMP_FUN: 30_000,
+  DEX_ORDERS: 3_600_000,
 } as const;
