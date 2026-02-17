@@ -141,6 +141,8 @@ export type DexOrderTag = "dexPaid" | "cto";
 
 export interface DexOrderToken extends PumpFunToken {
   tags: DexOrderTag[];
+  tradeCount?: number;
+  rank?: number;
 }
 
 export interface TrendingToken extends TokenSearchResult {

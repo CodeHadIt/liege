@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
-import { fetchAllPumpFunForPeriod } from "@/lib/api/pump-fun-utils";
+import { fetchDuneTokens } from "@/lib/api/dune";
 import { getTokenOrders } from "@/lib/api/dexscreener";
-import { serverCache, CACHE_TTL } from "@/lib/cache";
 import type { DexOrderTag, DexOrderToken } from "@/types/token";
 
-type Period = "1h" | "4h" | "6h" | "12h" | "24h";
-const VALID_PERIODS: Period[] = ["1h", "4h", "6h", "12h", "24h"];
+type Period = "30m" | "1h" | "2h" | "4h" | "8h";
+const VALID_PERIODS: Period[] = ["30m", "1h", "2h", "4h", "8h"];
 const BATCH_SIZE = 50;
 
 export async function GET(request: Request) {
@@ -15,45 +14,44 @@ export async function GET(request: Request) {
 
   if (!period || !VALID_PERIODS.includes(period)) {
     return NextResponse.json(
-      { error: "Invalid period. Use: 1h, 4h, 6h, 12h, 24h" },
+      { error: "Invalid period. Use: 30m, 1h, 2h, 4h, 8h" },
       { status: 400 }
     );
   }
 
   try {
-    const allTokens = await fetchAllPumpFunForPeriod(period);
+    const { tokens: allTokens, metadata } = await fetchDuneTokens(period);
     const totalTokens = allTokens.length;
+    console.log(`[dex-orders] Dune returned ${totalTokens} tokens for period=${period}, offset=${offset}`);
     const batch = allTokens.slice(offset, offset + BATCH_SIZE);
 
     const results: DexOrderToken[] = [];
 
     for (const token of batch) {
-      const cacheKey = `dex-orders:${token.address}`;
-      let tags = serverCache.get<DexOrderTag[]>(cacheKey);
+      const orderData = await getTokenOrders("solana", token.address);
+      console.log(`[dex-orders] ${token.symbol} (${token.address}): orders=${JSON.stringify(orderData)}`);
+      const tags: DexOrderTag[] = [];
 
-      if (tags === null) {
-        // Cache miss — query DexScreener
-        const orderData = await getTokenOrders("solana", token.address);
-        tags = [];
-
-        if (orderData?.orders) {
-          for (const order of orderData.orders) {
-            if (order.status !== "approved") continue;
-            if (order.type === "tokenProfile" && !tags.includes("dexPaid")) {
-              tags.push("dexPaid");
-            }
-            if (order.type === "communityTakeover" && !tags.includes("cto")) {
-              tags.push("cto");
-            }
+      if (orderData?.orders) {
+        for (const order of orderData.orders) {
+          if (order.status !== "approved") continue;
+          if (order.type === "tokenProfile" && !tags.includes("dexPaid")) {
+            tags.push("dexPaid");
+          }
+          if (order.type === "communityTakeover" && !tags.includes("cto")) {
+            tags.push("cto");
           }
         }
-
-        // Cache even empty arrays (means "checked, no orders")
-        serverCache.set(cacheKey, tags, CACHE_TTL.DEX_ORDERS);
       }
 
       if (tags.length > 0) {
-        results.push({ ...token, tags });
+        const meta = metadata.get(token.address);
+        results.push({
+          ...token,
+          tags,
+          tradeCount: meta?.tradeCount,
+          rank: meta?.rank,
+        });
       }
     }
 

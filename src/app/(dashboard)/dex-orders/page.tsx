@@ -10,7 +10,7 @@ import {
   ShieldCheck,
   Activity,
   DollarSign,
-  Droplets,
+  BarChart3,
   Clock,
   ArrowRight,
   Loader2,
@@ -19,7 +19,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { DexOrderToken, DexOrderTag } from "@/types/token";
 
-type Period = "1h" | "4h" | "6h" | "12h" | "24h";
+type Period = "30m" | "1h" | "2h" | "4h" | "8h";
 
 const SUBSCRIPT_DIGITS = "\u2080\u2081\u2082\u2083\u2084\u2085\u2086\u2087\u2088\u2089";
 
@@ -49,11 +49,11 @@ interface DexOrdersPage {
 }
 
 const PERIODS: { value: Period; label: string }[] = [
+  { value: "30m", label: "30m" },
   { value: "1h", label: "1h" },
+  { value: "2h", label: "2h" },
   { value: "4h", label: "4h" },
-  { value: "6h", label: "6h" },
-  { value: "12h", label: "12h" },
-  { value: "24h", label: "24h" },
+  { value: "8h", label: "8h" },
 ];
 
 function TagBadge({ tag }: { tag: DexOrderTag }) {
@@ -91,7 +91,7 @@ function useDexOrders(period: Period) {
 const PAGE_SIZE = 100;
 
 export default function DexOrdersPage() {
-  const [period, setPeriod] = useState<Period>("1h");
+  const [period, setPeriod] = useState<Period>("8h");
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
   const {
     data,
@@ -291,12 +291,12 @@ export default function DexOrdersPage() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-white/[0.04]">
-                {["Token", "Price", "FDV", "Liquidity", "Age", "Tags", ""].map(
+                {["Token", "Price", "FDV", "Trades", "Age", "Tags", ""].map(
                   (h) => (
                     <th
                       key={h}
                       className={`text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80] px-5 py-3 ${
-                        ["Price", "FDV", "Liquidity", "Age", "Tags", ""].includes(h)
+                        ["Price", "FDV", "Trades", "Age", "Tags", ""].includes(h)
                           ? "text-right"
                           : "text-left"
                       }`}
@@ -395,9 +395,9 @@ export default function DexOrdersPage() {
                         </td>
                         <td className="px-5 py-3.5 text-right">
                           <div className="flex items-center gap-1 justify-end">
-                            <Droplets className="h-3 w-3 text-[#00F0FF]/40" />
+                            <BarChart3 className="h-3 w-3 text-[#00F0FF]/40" />
                             <span className="text-sm font-mono text-[#6B6B80]">
-                              {formatUsd(token.liquidity)}
+                              {token.tradeCount?.toLocaleString() ?? "—"}
                             </span>
                           </div>
                         </td>

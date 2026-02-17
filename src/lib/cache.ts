@@ -61,4 +61,5 @@ export const CACHE_TTL = {
   WALLET_QUICK: 60_000,
   PUMP_FUN: 30_000,
   DEX_ORDERS: 3_600_000,
+  DUNE_RESULTS: 300_000,
 } as const;
