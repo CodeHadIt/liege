@@ -348,6 +348,7 @@ export async function getWalletBalances(
 export interface AssetInfo {
   symbol: string;
   name: string;
+  logoUrl: string | null;
 }
 
 /**
@@ -386,6 +387,7 @@ export async function getAssetBatch(
           result.set(item.id, {
             symbol: item.content.metadata.symbol || "???",
             name: item.content.metadata.name || "Unknown",
+            logoUrl: item.content?.links?.image ?? null,
           });
         }
       }

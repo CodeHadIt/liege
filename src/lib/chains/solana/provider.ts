@@ -372,7 +372,7 @@ export class SolanaChainProvider implements ChainProvider {
       options?.limit ?? 50
     );
 
-    // Collect all unique mints to resolve names
+    // Collect all unique mints to resolve names + logos
     const mintSet = new Set<string>();
     for (const tx of txns) {
       for (const tt of tx.tokenTransfers ?? []) {
@@ -381,25 +381,84 @@ export class SolanaChainProvider implements ChainProvider {
     }
     const assetMap = await helius.getAssetBatch([...mintSet]);
 
-    return txns.map((tx) => ({
-      hash: tx.signature,
-      blockNumber: 0,
-      timestamp: tx.timestamp,
-      type: mapHeliusTxType(tx.type),
-      from: tx.nativeTransfers?.[0]?.fromUserAccount ?? walletAddress,
-      to: tx.nativeTransfers?.[0]?.toUserAccount ?? "",
-      value: tx.nativeTransfers?.[0]?.amount ?? 0,
-      valueUsd: null,
-      token: tx.tokenTransfers?.[0]
-        ? {
-            address: tx.tokenTransfers[0].mint,
-            symbol: assetMap.get(tx.tokenTransfers[0].mint)?.symbol ?? "",
-            name: assetMap.get(tx.tokenTransfers[0].mint)?.name ?? "",
-          }
-        : null,
-      fee: tx.fee,
-      status: "success" as const,
-    }));
+    const walletLower = walletAddress.toLowerCase();
+
+    return txns.map((tx) => {
+      const type = mapHeliusTxType(tx.type);
+      const transfers = tx.tokenTransfers ?? [];
+      const nativeTransfers = tx.nativeTransfers ?? [];
+
+      // Determine the primary token involved and buy/sell side
+      // For swaps: find what the wallet received (buy) vs sent (sell)
+      // The "main" token is the non-SOL non-stablecoin one
+      let primaryTransfer = transfers[0] ?? null;
+      let side: "buy" | "sell" | null = null;
+
+      if (type === "swap" && transfers.length > 0) {
+        // Find the token received by the wallet (buy) and sent from wallet (sell)
+        const received = transfers.find(
+          (t) => t.toUserAccount?.toLowerCase() === walletLower
+        );
+        const sent = transfers.find(
+          (t) => t.fromUserAccount?.toLowerCase() === walletLower
+        );
+
+        // Prefer the non-SOL/non-stable token as primary
+        const receivedIsMain =
+          received && !isNativeMint(received.mint) && !isStableMint(received.mint);
+        const sentIsMain =
+          sent && !isNativeMint(sent.mint) && !isStableMint(sent.mint);
+
+        if (receivedIsMain) {
+          primaryTransfer = received;
+          side = "buy";
+        } else if (sentIsMain) {
+          primaryTransfer = sent;
+          side = "sell";
+        } else if (received) {
+          primaryTransfer = received;
+          side = "buy";
+        } else if (sent) {
+          primaryTransfer = sent;
+          side = "sell";
+        }
+      } else if (type === "transfer" && primaryTransfer) {
+        side =
+          primaryTransfer.toUserAccount?.toLowerCase() === walletLower
+            ? "buy"
+            : "sell";
+      }
+
+      const mint = primaryTransfer?.mint ?? null;
+      const asset = mint ? assetMap.get(mint) : null;
+
+      return {
+        hash: tx.signature,
+        blockNumber: 0,
+        timestamp: tx.timestamp,
+        type,
+        side,
+        from: nativeTransfers[0]?.fromUserAccount ?? primaryTransfer?.fromUserAccount ?? walletAddress,
+        to: nativeTransfers[0]?.toUserAccount ?? primaryTransfer?.toUserAccount ?? "",
+        value: nativeTransfers[0]?.amount ?? 0,
+        valueUsd: null,
+        description: tx.description ?? "",
+        source: tx.source ?? null,
+        token: primaryTransfer
+          ? {
+              address: primaryTransfer.mint,
+              symbol: asset?.symbol ?? "",
+              name: asset?.name ?? "",
+              logoUrl: asset?.logoUrl ?? null,
+              amount: primaryTransfer.tokenAmount ?? 0,
+              isNative: isNativeMint(primaryTransfer.mint),
+              isStablecoin: isStableMint(primaryTransfer.mint),
+            }
+          : null,
+        fee: tx.fee,
+        status: "success" as const,
+      };
+    });
   }
 
   async getDeployedTokens(_walletAddress: string): Promise<DeployedToken[]> {
@@ -433,4 +492,23 @@ function mapHeliusTxType(
   if (t.includes("transfer")) return "transfer";
   if (t.includes("create") || t.includes("deploy")) return "deploy";
   return "other";
+}
+
+const SOL_MINTS = new Set([
+  "So11111111111111111111111111111111111111111",
+  "So11111111111111111111111111111111111111112",
+]);
+
+const SOLANA_STABLES = new Set([
+  "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC
+  "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT
+  "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo", // PYUSD
+]);
+
+function isNativeMint(mint: string): boolean {
+  return SOL_MINTS.has(mint);
+}
+
+function isStableMint(mint: string): boolean {
+  return SOLANA_STABLES.has(mint);
 }

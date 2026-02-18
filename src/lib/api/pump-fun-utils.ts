@@ -1,5 +1,4 @@
 import { getPumpFunNewTokens } from "@/lib/api/moralis";
-import { serverCache } from "@/lib/cache";
 import type { PumpFunToken } from "@/types/token";
 
 type TimePeriod = "1h" | "4h" | "6h" | "12h" | "24h" | "1w";
@@ -12,8 +11,6 @@ export const PERIOD_MS: Record<TimePeriod, number> = {
   "24h": 24 * 60 * 60 * 1000,
   "1w": 7 * 24 * 60 * 60 * 1000,
 };
-
-const PERIOD_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 export function mapMoralisTokens(
   result: NonNullable<Awaited<ReturnType<typeof getPumpFunNewTokens>>>["result"]
@@ -32,14 +29,10 @@ export function mapMoralisTokens(
   }));
 }
 
-/** Fetch all Moralis pages within a time window, server-side cached for 1h. */
+/** Fetch all Moralis pages within a time window. */
 export async function fetchAllPumpFunForPeriod(
   period: TimePeriod
 ): Promise<PumpFunToken[]> {
-  const cacheKey = `pump-fun:${period}`;
-  const cached = serverCache.get<PumpFunToken[]>(cacheKey);
-  if (cached) return cached;
-
   const cutoff = Date.now() - PERIOD_MS[period];
   const all: PumpFunToken[] = [];
   let cursor: string | undefined;
@@ -62,6 +55,5 @@ export async function fetchAllPumpFunForPeriod(
     cursor = response.cursor;
   }
 
-  serverCache.set(cacheKey, all, PERIOD_CACHE_TTL);
   return all;
 }

@@ -48,11 +48,13 @@ export async function GET(
 
     const data: Transaction[] = txns.map((tx) => {
       const firstToken = tx.tokenTransfers?.[0];
+      const asset = firstToken ? assetMap.get(firstToken.mint) : null;
       return {
         hash: tx.signature,
         blockNumber: 0,
         timestamp: tx.timestamp,
         type: mapType(tx.type),
+        side: null,
         from:
           firstToken?.fromUserAccount ??
           tx.nativeTransfers?.[0]?.fromUserAccount ??
@@ -63,11 +65,17 @@ export async function GET(
           "",
         value: firstToken?.tokenAmount ?? tx.nativeTransfers?.[0]?.amount ?? 0,
         valueUsd: null,
+        description: tx.description ?? "",
+        source: tx.source ?? null,
         token: firstToken
           ? {
               address: firstToken.mint,
-              symbol: assetMap.get(firstToken.mint)?.symbol ?? "",
-              name: assetMap.get(firstToken.mint)?.name ?? "",
+              symbol: asset?.symbol ?? "",
+              name: asset?.name ?? "",
+              logoUrl: asset?.logoUrl ?? null,
+              amount: firstToken.tokenAmount ?? 0,
+              isNative: false,
+              isStablecoin: false,
             }
           : null,
         fee: tx.fee,

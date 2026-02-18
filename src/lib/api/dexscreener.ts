@@ -130,16 +130,24 @@ export async function enrichTokenBoost(
 export interface DexScreenerOrder {
   type: string;
   status: string;
+  chainId?: string;
+  tokenAddress?: string;
+  paymentTimestamp?: number;
+}
+
+interface DexScreenerOrdersResponse {
+  orders: DexScreenerOrder[];
+  boosts?: { chainId: string; tokenAddress: string; id: string; amount: number; paymentTimestamp: number }[];
 }
 
 export async function getTokenOrders(
   chainId: string,
   tokenAddress: string
-): Promise<{ orders: DexScreenerOrder[] } | null> {
-  const data = await fetchDexScreener<DexScreenerOrder[]>(
+): Promise<DexScreenerOrdersResponse | null> {
+  const data = await fetchDexScreener<DexScreenerOrdersResponse>(
     `/orders/v1/${chainId}/${tokenAddress}`
   );
-  if (Array.isArray(data)) return { orders: data };
+  if (data && Array.isArray(data.orders)) return data;
   return null;
 }
 

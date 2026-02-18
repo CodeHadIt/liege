@@ -85,21 +85,30 @@ export function RecentTransactions({
             {txns.slice(0, 20).map((tx) => {
               const config = txTypeConfig[tx.type];
               const Icon = config.icon;
+              const tokenName = tx.token?.symbol || tx.token?.name || null;
               return (
                 <div
                   key={tx.hash}
                   className="flex items-center gap-3 p-2.5 rounded-lg table-row-hover transition-colors group"
                 >
-                  {/* Type icon */}
-                  <div
-                    className="h-7 w-7 rounded-lg flex items-center justify-center shrink-0"
-                    style={{ backgroundColor: `${config.color}10` }}
-                  >
-                    <Icon
-                      className="h-3.5 w-3.5"
-                      style={{ color: config.color }}
+                  {/* Token logo or type icon */}
+                  {tx.token?.logoUrl ? (
+                    <img
+                      src={tx.token.logoUrl}
+                      alt={tokenName ?? ""}
+                      className="h-7 w-7 rounded-full ring-1 ring-white/[0.06] shrink-0"
                     />
-                  </div>
+                  ) : (
+                    <div
+                      className="h-7 w-7 rounded-lg flex items-center justify-center shrink-0"
+                      style={{ backgroundColor: `${config.color}10` }}
+                    >
+                      <Icon
+                        className="h-3.5 w-3.5"
+                        style={{ color: config.color }}
+                      />
+                    </div>
+                  )}
 
                   {/* Details */}
                   <div className="flex-1 min-w-0">
@@ -114,18 +123,25 @@ export function RecentTransactions({
                       >
                         {config.label}
                       </span>
-                      {tx.token && (
+                      {tokenName && (
                         <span className="inline-flex items-center gap-1">
                           <span className="text-[11px] font-mono font-semibold text-[#E8E8ED] truncate">
-                            {tx.token.symbol || tx.token.name || "Unknown"}
+                            {tokenName}
                           </span>
-                          <CopyAddress address={tx.token.address} />
+                          {tx.token && !tx.token.isNative && !tx.token.isStablecoin && (
+                            <CopyAddress address={tx.token.address} />
+                          )}
                         </span>
                       )}
                       <span className="text-[10px] font-mono text-[#6B6B80] truncate">
                         {shortenAddress(tx.from, 4)}
                       </span>
                     </div>
+                    {tx.description && (
+                      <span className="text-[9px] font-mono text-[#6B6B80]/60 truncate block mt-0.5 max-w-[280px]">
+                        {tx.description}
+                      </span>
+                    )}
                   </div>
 
                   {/* Time + link */}

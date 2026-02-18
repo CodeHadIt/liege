@@ -143,6 +143,9 @@ export interface DexOrderToken extends PumpFunToken {
   tags: DexOrderTag[];
   tradeCount?: number;
   rank?: number;
+  discoveredAt: string;
+  url?: string | null;
+  twitter?: string | null;
 }
 
 export interface TrendingToken extends TokenSearchResult {

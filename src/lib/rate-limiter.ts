@@ -47,6 +47,7 @@ const API_RATE_LIMITS: Record<string, RateLimiterConfig> = {
   basescan: { maxTokens: 5, refillRate: 0.08 },
   bscscan: { maxTokens: 5, refillRate: 0.08 },
   jupiter: { maxTokens: 30, refillRate: 0.5 },
+  moralis: { maxTokens: 20, refillRate: 0.33 },
 };
 
 export async function rateLimit(api: string): Promise<void> {

@@ -1,33 +1,39 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CopyAddress } from "@/components/shared/copy-address";
 import { formatUsd, formatTimeAgo } from "@/lib/utils";
 import {
-  ShieldCheck,
+  Rocket,
   Activity,
   DollarSign,
-  BarChart3,
+  Droplets,
   Clock,
   ArrowRight,
-  Tag,
-  Globe,
-  Twitter,
-  ExternalLink,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { REFETCH_INTERVALS } from "@/config/constants";
-import type { DexOrderToken, DexOrderTag } from "@/types/token";
+import type { PumpFunToken } from "@/types/token";
 
-type Period = "30m" | "1h" | "2h" | "4h" | "8h";
+type Period = "latest" | "1h" | "4h" | "6h" | "24h" | "1w";
 
-const SUBSCRIPT_DIGITS = "\u2080\u2081\u2082\u2083\u2084\u2085\u2086\u2087\u2088\u2089";
+const PERIOD_LABELS: Record<Period, string> = {
+  latest: "LAUNCHED",
+  "1h": "LAUNCHED (1H)",
+  "4h": "LAUNCHED (4H)",
+  "6h": "LAUNCHED (6H)",
+  "24h": "LAUNCHED (24H)",
+  "1w": "LAUNCHED (1W)",
+};
+
+const SUBSCRIPT_DIGITS = "₀₁₂₃₄₅₆₇₈₉";
 
 function formatPrice(price: number): string {
   if (price >= 0.01) return `$${price.toFixed(4)}`;
+  // Count zeros after "0." to build $0.0₅1234 notation
   const str = price.toFixed(20);
   const afterDot = str.split(".")[1] ?? "";
   let zeros = 0;
@@ -43,68 +49,82 @@ function formatPrice(price: number): string {
   return `$0.0${subscript}${significant}`;
 }
 
-interface DexOrdersResponse {
-  data: DexOrderToken[];
-  totalProfiles: number;
-  period: string;
+interface PumpFunPage {
+  data: PumpFunToken[];
+  nextCursor: string | null;
   hasMore: boolean;
-  totalChecked: number;
-  totalTokens: number;
 }
 
 const PERIODS: { value: Period; label: string }[] = [
-  { value: "30m", label: "30m" },
+  { value: "latest", label: "Latest" },
   { value: "1h", label: "1h" },
-  { value: "2h", label: "2h" },
   { value: "4h", label: "4h" },
-  { value: "8h", label: "8h" },
+  { value: "6h", label: "6h" },
+  { value: "24h", label: "24h" },
+  { value: "1w", label: "1w" },
 ];
 
-function TagBadge({ tag }: { tag: DexOrderTag }) {
-  if (tag === "dexPaid") {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-[#00FF88]/10 text-[#00FF88] border border-[#00FF88]/20">
-        DEX PAID
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-[#FFB800]/10 text-[#FFB800] border border-[#FFB800]/20">
-      CTO
-    </span>
-  );
+function usePumpFunTokens(period: Period) {
+  return useInfiniteQuery<PumpFunPage>({
+    queryKey: ["pump-fun", period],
+    queryFn: async ({ pageParam }) => {
+      const params = new URLSearchParams({ period });
+      if (pageParam) params.set("cursor", pageParam as string);
+      const res = await fetch(`/api/pump-fun?${params}`);
+      return res.json();
+    },
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) =>
+      lastPage.hasMore ? (lastPage.nextCursor ?? undefined) : undefined,
+  });
 }
 
 const PAGE_SIZE = 100;
 
-export default function DexOrdersPage() {
-  const [period, setPeriod] = useState<Period>("8h");
+export default function PumpFunPage() {
+  const [period, setPeriod] = useState<Period>("latest");
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
+  const {
+    data,
+    isLoading,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = usePumpFunTokens(period);
 
-  const { data: response, isLoading } = useQuery<DexOrdersResponse>({
-    queryKey: ["dex-orders", period],
-    queryFn: async () => {
-      const res = await fetch(`/api/dex-orders?period=${period}`);
-      return res.json();
-    },
-    refetchInterval: REFETCH_INTERVALS.DEX_ORDERS,
-  });
-
-  const tokens = response?.data ?? [];
-  const totalProfiles = response?.totalProfiles ?? 0;
+  // Auto-fetch ALL pages in background for accurate total count
+  useEffect(() => {
+    if (hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   // Reset visible count when period changes
   useEffect(() => {
     setDisplayCount(PAGE_SIZE);
   }, [period]);
 
-  const dexPaidCount = tokens.filter((t) => t.tags.includes("dexPaid")).length;
-  const ctoCount = tokens.filter((t) => t.tags.includes("cto")).length;
+  // Deduplicate tokens across all fetched pages
+  const tokens = (() => {
+    if (!data?.pages) return [];
+    const seen = new Set<string>();
+    const result: PumpFunToken[] = [];
+    for (const page of data.pages) {
+      for (const token of page.data) {
+        if (!seen.has(token.address)) {
+          seen.add(token.address);
+          result.push(token);
+        }
+      }
+    }
+    return result;
+  })();
 
   const visibleTokens = tokens.slice(0, displayCount);
   const hasMoreToShow = displayCount < tokens.length;
+  const allPagesFetched = !hasNextPage;
 
-  // IntersectionObserver for progressive rendering
+  // IntersectionObserver to reveal more rows on scroll
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   const handleIntersect = useCallback(
@@ -126,36 +146,33 @@ export default function DexOrdersPage() {
     return () => observer.disconnect();
   }, [handleIntersect]);
 
-  const TABLE_HEADERS = [
-    { label: "Token", align: "left" },
-    { label: "Price", align: "right" },
-    { label: "FDV", align: "right" },
-    { label: "Created", align: "right" },
-    { label: "Discovered", align: "right" },
-    { label: "Links", align: "right" },
-    { label: "Tags", align: "right" },
-    { label: "", align: "right" },
-  ];
+  const highestFdv = tokens.length
+    ? [...tokens].sort((a, b) => (b.fdv ?? 0) - (a.fdv ?? 0))[0]
+    : null;
+
+  const latestLaunch = tokens.length
+    ? [...tokens].sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      )[0]
+    : null;
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="animate-fade-up">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#00FF88]/20 to-[#00FF88]/5 border border-[#00FF88]/10 flex items-center justify-center">
-            <ShieldCheck className="h-5 w-5 text-[#00FF88]" />
+          <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#A855F7]/20 to-[#A855F7]/5 border border-[#A855F7]/10 flex items-center justify-center">
+            <Rocket className="h-5 w-5 text-[#A855F7]" />
           </div>
           <div>
             <h1 className="text-2xl font-bold tracking-tight">
-              Dex Orders
+              Pump.fun Tokens
             </h1>
             <div className="flex items-center gap-2 mt-0.5">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00FF88] opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00FF88]" />
-              </span>
+              <Activity className="h-3 w-3 text-[#00FF88]" />
               <span className="text-xs font-mono text-[#6B6B80]">
-                Live &middot; {totalProfiles} profiles tracked
+                Scroll to load more
               </span>
             </div>
           </div>
@@ -166,22 +183,26 @@ export default function DexOrdersPage() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {[
           {
-            label: "WITH PROFILES",
-            value: tokens.length ? tokens.length.toLocaleString() : "--",
-            icon: ShieldCheck,
-            color: "#00FF88",
+            label: PERIOD_LABELS[period],
+            value: tokens.length
+              ? `${tokens.length.toLocaleString()}${allPagesFetched ? "" : "+"}`
+              : "--",
+            icon: Rocket,
+            color: "#A855F7",
           },
           {
-            label: "DEX PAID",
-            value: dexPaidCount ? dexPaidCount.toLocaleString() : "--",
+            label: "HIGHEST FDV",
+            value: highestFdv ? formatUsd(highestFdv.fdv) : "--",
             icon: DollarSign,
-            color: "#00FF88",
+            color: "#00F0FF",
           },
           {
-            label: "CTO",
-            value: ctoCount ? ctoCount.toLocaleString() : "--",
-            icon: Tag,
-            color: "#FFB800",
+            label: "LATEST LAUNCH",
+            value: latestLaunch
+              ? latestLaunch.symbol
+              : "--",
+            icon: Clock,
+            color: "#00FF88",
           },
         ].map((stat, i) => (
           <div
@@ -211,7 +232,7 @@ export default function DexOrdersPage() {
             className={cn(
               "px-4 py-2 rounded-lg text-xs font-mono font-semibold transition-all flex-1 text-center",
               period === p.value
-                ? "bg-[#00FF88]/10 text-[#00FF88] shadow-[0_0_12px_rgba(0,255,136,0.08)]"
+                ? "bg-[#A855F7]/10 text-[#A855F7] shadow-[0_0_12px_rgba(168,85,247,0.08)]"
                 : "text-[#6B6B80] hover:text-[#E8E8ED]"
             )}
           >
@@ -224,16 +245,13 @@ export default function DexOrdersPage() {
       <div className="glow-card rounded-xl overflow-hidden animate-fade-up">
         <div className="px-5 py-3 border-b border-white/[0.04] flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="h-4 w-4 text-[#00FF88]/50" />
+            <Rocket className="h-4 w-4 text-[#A855F7]/50" />
             <span className="text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80]">
-              Tokens with DexScreener Profiles
+              Pump.fun New Tokens
             </span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00FF88] opacity-75" />
-              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[#00FF88]" />
-            </span>
+            <div className="h-1.5 w-1.5 rounded-full bg-[#00FF88] pulse-dot" />
             <span className="text-[10px] font-mono text-[#00FF88]/70">
               LIVE
             </span>
@@ -244,12 +262,16 @@ export default function DexOrdersPage() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-white/[0.04]">
-                {TABLE_HEADERS.map((h) => (
+                {["Token", "Price", "FDV", "Liquidity", "Age", ""].map((h) => (
                   <th
-                    key={h.label}
-                    className={`text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80] px-5 py-3 text-${h.align}`}
+                    key={h}
+                    className={`text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80] px-5 py-3 ${
+                      ["Price", "FDV", "Liquidity", "Age", ""].includes(h)
+                        ? "text-right"
+                        : "text-left"
+                    }`}
                   >
-                    {h.label}
+                    {h}
                   </th>
                 ))}
               </tr>
@@ -267,26 +289,32 @@ export default function DexOrdersPage() {
                           </div>
                         </div>
                       </td>
-                      {Array.from({ length: 7 }).map((_, j) => (
-                        <td key={j} className="px-5 py-3.5">
-                          <Skeleton className="h-4 w-16 ml-auto shimmer" />
-                        </td>
-                      ))}
+                      <td className="px-5 py-3.5">
+                        <Skeleton className="h-4 w-16 ml-auto shimmer" />
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <Skeleton className="h-4 w-16 ml-auto shimmer" />
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <Skeleton className="h-4 w-16 ml-auto shimmer" />
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <Skeleton className="h-4 w-12 ml-auto shimmer" />
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <Skeleton className="h-4 w-4 ml-auto shimmer" />
+                      </td>
                     </tr>
                   ))
                 : visibleTokens.map((token) => {
                     const createdTs = Math.floor(
                       new Date(token.createdAt).getTime() / 1000
                     );
-                    const discoveredTs = Math.floor(
-                      new Date(token.discoveredAt).getTime() / 1000
-                    );
                     return (
                       <tr
                         key={token.address}
                         className="border-b border-white/[0.03] table-row-hover group"
                       >
-                        {/* Token */}
                         <td className="px-5 py-3.5">
                           <Link
                             href={`/token/solana/${token.address}`}
@@ -299,12 +327,12 @@ export default function DexOrdersPage() {
                                 className="h-8 w-8 rounded-full ring-1 ring-white/[0.06]"
                               />
                             ) : (
-                              <div className="h-8 w-8 rounded-full bg-gradient-to-br from-[#00FF88]/15 to-[#00F0FF]/15 flex items-center justify-center text-[10px] font-bold text-[#00FF88] ring-1 ring-white/[0.06]">
+                              <div className="h-8 w-8 rounded-full bg-gradient-to-br from-[#A855F7]/15 to-[#FF3B5C]/15 flex items-center justify-center text-[10px] font-bold text-[#A855F7] ring-1 ring-white/[0.06]">
                                 {token.symbol.slice(0, 2)}
                               </div>
                             )}
                             <div>
-                              <span className="font-semibold text-sm text-[#E8E8ED] group-hover:text-[#00FF88] transition-colors">
+                              <span className="font-semibold text-sm text-[#E8E8ED] group-hover:text-[#A855F7] transition-colors">
                                 {token.symbol}
                               </span>
                               <div className="flex items-center gap-2 mt-0.5">
@@ -319,8 +347,6 @@ export default function DexOrdersPage() {
                             </div>
                           </Link>
                         </td>
-
-                        {/* Price */}
                         <td className="px-5 py-3.5 text-right">
                           <span className="text-sm font-mono font-medium text-[#E8E8ED]">
                             {token.priceUsd != null
@@ -328,81 +354,29 @@ export default function DexOrdersPage() {
                               : "\u2014"}
                           </span>
                         </td>
-
-                        {/* FDV */}
                         <td className="px-5 py-3.5 text-right">
                           <span className="text-sm font-mono text-[#6B6B80]">
                             {formatUsd(token.fdv)}
                           </span>
                         </td>
-
-                        {/* Created (token creation time) */}
                         <td className="px-5 py-3.5 text-right">
                           <div className="flex items-center gap-1 justify-end">
-                            <Clock className="h-3 w-3 text-[#6B6B80]/50" />
-                            <span className="text-[11px] font-mono text-[#6B6B80]">
+                            <Droplets className="h-3 w-3 text-[#00F0FF]/40" />
+                            <span className="text-sm font-mono text-[#6B6B80]">
+                              {formatUsd(token.liquidity)}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-5 py-3.5 text-right">
+                          <div className="flex items-center gap-1 justify-end">
+                            <Clock className="h-3 w-3 text-[#FFB800]/50" />
+                            <span className="text-[11px] font-mono text-[#FFB800]">
                               {formatTimeAgo(createdTs)}
                             </span>
                           </div>
                         </td>
-
-                        {/* Discovered (dex order time) */}
                         <td className="px-5 py-3.5 text-right">
-                          <div className="flex items-center gap-1 justify-end">
-                            <ShieldCheck className="h-3 w-3 text-[#00FF88]/50" />
-                            <span className="text-[11px] font-mono text-[#00FF88]">
-                              {formatTimeAgo(discoveredTs)}
-                            </span>
-                          </div>
-                        </td>
-
-                        {/* Links */}
-                        <td className="px-5 py-3.5 text-right">
-                          <div className="flex items-center gap-2 justify-end">
-                            {token.url && (
-                              <a
-                                href={token.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-[#6B6B80] hover:text-[#00F0FF] transition-colors"
-                                title="Website"
-                              >
-                                <Globe className="h-3.5 w-3.5" />
-                              </a>
-                            )}
-                            {token.twitter && (
-                              <a
-                                href={token.twitter}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-[#6B6B80] hover:text-[#1DA1F2] transition-colors"
-                                title="Twitter"
-                              >
-                                <Twitter className="h-3.5 w-3.5" />
-                              </a>
-                            )}
-                            {!token.url && !token.twitter && (
-                              <span className="text-[#6B6B80]/30">
-                                <ExternalLink className="h-3.5 w-3.5" />
-                              </span>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Tags */}
-                        <td className="px-5 py-3.5 text-right">
-                          <div className="flex items-center gap-1 justify-end">
-                            {token.tags.map((tag) => (
-                              <TagBadge key={tag} tag={tag} />
-                            ))}
-                          </div>
-                        </td>
-
-                        {/* Arrow */}
-                        <td className="px-5 py-3.5 text-right">
-                          <ArrowRight className="h-3.5 w-3.5 text-[#6B6B80]/0 group-hover:text-[#00FF88]/50 transition-all ml-auto" />
+                          <ArrowRight className="h-3.5 w-3.5 text-[#6B6B80]/0 group-hover:text-[#A855F7]/50 transition-all ml-auto" />
                         </td>
                       </tr>
                     );
@@ -414,21 +388,21 @@ export default function DexOrdersPage() {
         {/* Sentinel for IntersectionObserver */}
         <div ref={sentinelRef} />
 
-        {/* Loading more rows */}
+        {/* Loading more rows spinner */}
         {hasMoreToShow && (
           <div className="flex items-center justify-center gap-2 py-6">
-            <Activity className="h-4 w-4 text-[#00FF88] animate-pulse" />
+            <Loader2 className="h-4 w-4 text-[#A855F7] animate-spin" />
             <span className="text-xs font-mono text-[#6B6B80]">
-              Showing {visibleTokens.length} of {tokens.length} tokens...
+              Showing {visibleTokens.length} of {tokens.length}{allPagesFetched ? "" : "+"} tokens...
             </span>
           </div>
         )}
 
         {/* All displayed message */}
-        {!isLoading && tokens.length > 0 && !hasMoreToShow && (
+        {!isLoading && !hasMoreToShow && allPagesFetched && tokens.length > 0 && (
           <div className="text-center py-4 border-t border-white/[0.04]">
             <span className="text-[10px] font-mono text-[#6B6B80]">
-              {tokens.length.toLocaleString()} token{tokens.length !== 1 ? "s" : ""} with profiles &middot; auto-refreshing every 30s
+              All {tokens.length.toLocaleString()} tokens loaded
             </span>
           </div>
         )}
@@ -436,10 +410,10 @@ export default function DexOrdersPage() {
         {/* Empty state */}
         {!isLoading && tokens.length === 0 && (
           <div className="text-center py-16 text-[#6B6B80]">
-            <ShieldCheck className="h-8 w-8 mx-auto mb-3 opacity-30" />
-            <p className="text-sm">No tokens with DexScreener profiles found</p>
+            <Rocket className="h-8 w-8 mx-auto mb-3 opacity-30" />
+            <p className="text-sm">No pump.fun tokens found</p>
             <p className="text-xs mt-1 opacity-60">
-              Profiles accumulate over time — try a longer period or wait a few minutes
+              Try a different time period
             </p>
           </div>
         )}

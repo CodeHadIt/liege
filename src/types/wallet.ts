@@ -48,11 +48,22 @@ export interface Transaction {
   blockNumber: number;
   timestamp: number;
   type: "swap" | "transfer" | "deploy" | "approve" | "other";
+  side: "buy" | "sell" | null;
   from: string;
   to: string;
   value: number;
   valueUsd: number | null;
-  token: { address: string; symbol: string; name: string } | null;
+  description: string;
+  source: string | null;
+  token: {
+    address: string;
+    symbol: string;
+    name: string;
+    logoUrl: string | null;
+    amount: number;
+    isNative: boolean;
+    isStablecoin: boolean;
+  } | null;
   fee: number;
   status: "success" | "failed";
 }
