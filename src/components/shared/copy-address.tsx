@@ -22,7 +22,7 @@ export function CopyAddress({ address, className }: CopyAddressProps) {
   return (
     <button
       onClick={handleCopy}
-      className={`shrink-0 text-[#6B6B80] hover:text-[#00F0FF] transition-colors ${className ?? ""}`}
+      className={`shrink-0 text-[#6B6B80] hover:text-[#00F0FF] transition-colors cursor-pointer ${className ?? ""}`}
       title={`Copy: ${address}`}
     >
       {copied ? (

@@ -359,7 +359,7 @@ export default function DexOrdersPage() {
       </div>
 
       {/* Token table */}
-      <div className="glow-card rounded-xl overflow-hidden animate-fade-up">
+      <div className="glow-card rounded-xl animate-fade-up">
         <div className="px-5 py-3 border-b border-white/[0.04] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <ShieldCheck className="h-4 w-4 text-[#00FF88]/50" />
@@ -430,17 +430,29 @@ export default function DexOrdersPage() {
                             href={`/token/solana/${token.address}`}
                             className="flex items-center gap-3"
                           >
-                            {token.logoUrl ? (
-                              <img
-                                src={token.logoUrl}
-                                alt={token.symbol}
-                                className="h-8 w-8 rounded-full ring-1 ring-white/[0.06]"
-                              />
-                            ) : (
-                              <div className="h-8 w-8 rounded-full bg-gradient-to-br from-[#00FF88]/15 to-[#00F0FF]/15 flex items-center justify-center text-[10px] font-bold text-[#00FF88] ring-1 ring-white/[0.06]">
-                                {token.symbol.slice(0, 2)}
-                              </div>
-                            )}
+                            <div className="relative group/img shrink-0">
+                              {token.logoUrl ? (
+                                <img
+                                  src={token.logoUrl}
+                                  alt={token.symbol}
+                                  className="h-8 w-8 rounded-full ring-1 ring-white/[0.06]"
+                                />
+                              ) : (
+                                <div className="h-8 w-8 rounded-full bg-gradient-to-br from-[#00FF88]/15 to-[#00F0FF]/15 flex items-center justify-center text-[10px] font-bold text-[#00FF88] ring-1 ring-white/[0.06]">
+                                  {token.symbol.slice(0, 2)}
+                                </div>
+                              )}
+                              {token.logoUrl && (
+                                <div className="absolute left-0 top-full mt-2 hidden group-hover/img:block z-50 pointer-events-none h-28 w-28 rounded-xl ring-1 ring-white/10 shadow-xl shadow-black/60 overflow-hidden bg-black">
+                                  <img
+                                    src={token.logoUrl}
+                                    alt={token.symbol}
+                                    className="h-full w-full object-cover contrast-[1.05] brightness-[1.02]"
+                                    style={{ imageRendering: "-webkit-optimize-contrast" }}
+                                  />
+                                </div>
+                              )}
+                            </div>
                             <div>
                               <span className="font-semibold text-sm text-[#E8E8ED] group-hover:text-[#00FF88] transition-colors">
                                 {token.symbol}
