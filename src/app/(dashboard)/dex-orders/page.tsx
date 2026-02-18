@@ -43,6 +43,38 @@ const FDV_RANGES = [
   { value: "1m+", label: "1M+" },
 ] as const;
 
+const AGE_RANGES = [
+  { value: "all", label: "All" },
+  { value: "0-5m", label: "≤5m" },
+  { value: "5m-15m", label: "5-15m" },
+  { value: "15m-30m", label: "15-30m" },
+  { value: "30m-1h", label: "30m-1h" },
+  { value: "1h-2h", label: "1-2h" },
+  { value: "2h-6h", label: "2-6h" },
+  { value: "6h-24h", label: "6-24h" },
+  { value: "24h+", label: "24h+" },
+] as const;
+
+type AgeFilter = (typeof AGE_RANGES)[number]["value"];
+
+function matchesAgeRange(createdAt: string, range: AgeFilter): boolean {
+  if (range === "all") return true;
+  const ageMs = Date.now() - new Date(createdAt).getTime();
+  const mins = ageMs / 60_000;
+  const hrs = mins / 60;
+  switch (range) {
+    case "0-5m": return mins <= 5;
+    case "5m-15m": return mins > 5 && mins <= 15;
+    case "15m-30m": return mins > 15 && mins <= 30;
+    case "30m-1h": return mins > 30 && hrs <= 1;
+    case "1h-2h": return hrs > 1 && hrs <= 2;
+    case "2h-6h": return hrs > 2 && hrs <= 6;
+    case "6h-24h": return hrs > 6 && hrs <= 24;
+    case "24h+": return hrs > 24;
+    default: return true;
+  }
+}
+
 type FdvFilter = (typeof FDV_RANGES)[number]["value"];
 
 function matchesFdvRange(fdv: number | null, range: FdvFilter): boolean {
@@ -120,10 +152,11 @@ function loadFilters(): {
   period: Period;
   bondedFilter: BondedFilter;
   fdvFilter: FdvFilter;
+  ageFilter: AgeFilter;
   sortField: SortField;
   sortOrder: SortOrder;
 } {
-  const defaults = { period: "8h" as Period, bondedFilter: "all" as BondedFilter, fdvFilter: "all" as FdvFilter, sortField: "dexPaid" as SortField, sortOrder: "newest" as SortOrder };
+  const defaults = { period: "8h" as Period, bondedFilter: "all" as BondedFilter, fdvFilter: "all" as FdvFilter, ageFilter: "all" as AgeFilter, sortField: "dexPaid" as SortField, sortOrder: "newest" as SortOrder };
   if (typeof window === "undefined") return defaults;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -141,6 +174,7 @@ export default function DexOrdersPage() {
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
   const [bondedFilter, setBondedFilter] = useState<BondedFilter>("all");
   const [fdvFilter, setFdvFilter] = useState<FdvFilter>("all");
+  const [ageFilter, setAgeFilter] = useState<AgeFilter>("all");
   const [sortField, setSortField] = useState<SortField>("dexPaid");
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
 
@@ -150,6 +184,7 @@ export default function DexOrdersPage() {
     setPeriod(saved.period);
     setBondedFilter(saved.bondedFilter);
     setFdvFilter(saved.fdvFilter);
+    setAgeFilter(saved.ageFilter);
     setSortField(saved.sortField);
     setSortOrder(saved.sortOrder);
     setHydrated(true);
@@ -158,8 +193,8 @@ export default function DexOrdersPage() {
   // Persist to localStorage on change
   useEffect(() => {
     if (!hydrated) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ period, bondedFilter, fdvFilter, sortField, sortOrder }));
-  }, [period, bondedFilter, fdvFilter, sortField, sortOrder, hydrated]);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ period, bondedFilter, fdvFilter, ageFilter, sortField, sortOrder }));
+  }, [period, bondedFilter, fdvFilter, ageFilter, sortField, sortOrder, hydrated]);
 
   const { data: response, isLoading } = useQuery<DexOrdersResponse>({
     queryKey: ["dex-orders", period],
@@ -183,9 +218,14 @@ export default function DexOrdersPage() {
       result = result.filter((t) => t.liquidity == null || t.liquidity === 0);
     }
 
-    // FDV filter
+    // Current MC filter (uses currentFdv, falls back to fdv if not yet refreshed)
     if (fdvFilter !== "all") {
-      result = result.filter((t) => matchesFdvRange(t.fdv, fdvFilter));
+      result = result.filter((t) => matchesFdvRange(t.currentFdv ?? t.fdv, fdvFilter));
+    }
+
+    // Created time filter
+    if (ageFilter !== "all") {
+      result = result.filter((t) => matchesAgeRange(t.createdAt, ageFilter));
     }
 
     // Sort by selected field
@@ -200,14 +240,14 @@ export default function DexOrdersPage() {
     });
 
     return result;
-  }, [tokens, bondedFilter, fdvFilter, sortField, sortOrder]);
+  }, [tokens, bondedFilter, fdvFilter, ageFilter, sortField, sortOrder]);
 
-  const isFiltered = bondedFilter !== "all" || fdvFilter !== "all";
+  const isFiltered = bondedFilter !== "all" || fdvFilter !== "all" || ageFilter !== "all";
 
   // Reset visible count when period or filters change
   useEffect(() => {
     setDisplayCount(PAGE_SIZE);
-  }, [period, bondedFilter, fdvFilter, sortField, sortOrder]);
+  }, [period, bondedFilter, fdvFilter, ageFilter, sortField, sortOrder]);
 
   const dexPaidCount = filteredTokens.filter((t) => t.tags.includes("dexPaid")).length;
   const ctoCount = filteredTokens.filter((t) => t.tags.includes("cto")).length;
@@ -319,7 +359,11 @@ export default function DexOrdersPage() {
       </div>
 
       {/* Period selector */}
-      <div className="flex gap-1 bg-white/[0.02] rounded-xl p-1 border border-white/[0.04] animate-fade-up stagger-4">
+      <div className="space-y-1.5 animate-fade-up stagger-4">
+        <span className="text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80] px-1">
+          Dex Paid Within
+        </span>
+      <div className="flex gap-1 bg-white/[0.02] rounded-xl p-1 border border-white/[0.04]">
         {PERIODS.map((p) => (
           <button
             key={p.value}
@@ -334,6 +378,7 @@ export default function DexOrdersPage() {
             {p.label}
           </button>
         ))}
+      </div>
       </div>
 
       {/* Filters */}
@@ -403,6 +448,10 @@ export default function DexOrdersPage() {
         </div>
 
         {/* Row 2: FDV range */}
+        <div className="space-y-1.5">
+          <span className="text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80] px-1">
+            Current MC
+          </span>
         <div className="flex gap-1 bg-white/[0.02] rounded-xl p-1 border border-white/[0.04] flex-wrap">
           {FDV_RANGES.map((r) => (
             <button
@@ -418,6 +467,30 @@ export default function DexOrdersPage() {
               {r.label}
             </button>
           ))}
+        </div>
+        </div>
+
+        {/* Row 3: Created time range */}
+        <div className="space-y-1.5">
+          <span className="text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80] px-1">
+            Token Age
+          </span>
+        <div className="flex gap-1 bg-white/[0.02] rounded-xl p-1 border border-white/[0.04] flex-wrap">
+          {AGE_RANGES.map((r) => (
+            <button
+              key={r.value}
+              onClick={() => setAgeFilter(r.value)}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-mono font-semibold transition-all",
+                ageFilter === r.value
+                  ? "bg-[#00FF88]/10 text-[#00FF88] shadow-[0_0_12px_rgba(0,255,136,0.08)]"
+                  : "text-[#6B6B80] hover:text-[#E8E8ED]"
+              )}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
         </div>
       </div>
 
