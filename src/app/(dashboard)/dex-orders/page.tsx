@@ -19,6 +19,8 @@ import {
   ArrowSquareOut,
   SortAscending,
   SortDescending,
+  TrendUp,
+  TrendDown,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import { REFETCH_INTERVALS } from "@/config/constants";
@@ -98,7 +100,7 @@ function TagBadge({ tag }: { tag: DexOrderTag }) {
   if (tag === "dexPaid") {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-[#00FF88]/10 text-[#00FF88] border border-[#00FF88]/20">
-        DEX PAID
+        DP
       </span>
     );
   }
@@ -193,9 +195,10 @@ export default function DexOrdersPage() {
   const TABLE_HEADERS = [
     { label: "Token", align: "left" },
     { label: "Price", align: "right" },
-    { label: "FDV", align: "right" },
     { label: "Created", align: "right" },
-    { label: "Discovered", align: "right" },
+    { label: "Dex Paid Time", align: "right" },
+    { label: "MC at Dex Pay", align: "right" },
+    { label: "Current MC", align: "right" },
     { label: "Links", align: "right" },
     { label: "Tags", align: "right" },
     { label: "", align: "right" },
@@ -405,7 +408,7 @@ export default function DexOrdersPage() {
                           </div>
                         </div>
                       </td>
-                      {Array.from({ length: 7 }).map((_, j) => (
+                      {Array.from({ length: 8 }).map((_, j) => (
                         <td key={j} className="px-5 py-3.5">
                           <Skeleton className="h-4 w-16 ml-auto shimmer" />
                         </td>
@@ -479,13 +482,6 @@ export default function DexOrdersPage() {
                           </span>
                         </td>
 
-                        {/* FDV */}
-                        <td className="px-5 py-3.5 text-right">
-                          <span className="text-sm font-mono text-[#6B6B80]">
-                            {formatUsd(token.fdv)}
-                          </span>
-                        </td>
-
                         {/* Created (token creation time) */}
                         <td className="px-5 py-3.5 text-right">
                           <div className="flex items-center gap-1 justify-end">
@@ -496,7 +492,7 @@ export default function DexOrdersPage() {
                           </div>
                         </td>
 
-                        {/* Discovered (dex order time) */}
+                        {/* Dex Paid Time */}
                         <td className="px-5 py-3.5 text-right">
                           <div className="flex items-center gap-1 justify-end">
                             <ShieldCheck className="h-3 w-3 text-[#00FF88]/50" />
@@ -504,6 +500,37 @@ export default function DexOrdersPage() {
                               {formatTimeAgo(discoveredTs)}
                             </span>
                           </div>
+                        </td>
+
+                        {/* MC at Dex Pay */}
+                        <td className="px-5 py-3.5 text-right">
+                          <span className="text-sm font-mono text-[#6B6B80]">
+                            {formatUsd(token.fdv)}
+                          </span>
+                        </td>
+
+                        {/* Current MC */}
+                        <td className="px-5 py-3.5 text-right">
+                          {token.currentFdv != null ? (() => {
+                            const isUp = token.fdv != null && token.currentFdv > token.fdv;
+                            const isDown = token.fdv != null && token.currentFdv < token.fdv;
+                            return (
+                              <span
+                                className={cn(
+                                  "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold border",
+                                  isUp && "bg-[#00FF88]/10 text-[#00FF88] border-[#00FF88]/20",
+                                  isDown && "bg-[#FF4444]/10 text-[#FF4444] border-[#FF4444]/20",
+                                  !isUp && !isDown && "bg-white/[0.04] text-[#6B6B80] border-white/[0.06]"
+                                )}
+                              >
+                                {isUp && <TrendUp className="h-3 w-3" />}
+                                {isDown && <TrendDown className="h-3 w-3" />}
+                                {formatUsd(token.currentFdv)}
+                              </span>
+                            );
+                          })() : (
+                            <span className="text-sm font-mono text-[#6B6B80]">{"\u2014"}</span>
+                          )}
                         </td>
 
                         {/* Links */}

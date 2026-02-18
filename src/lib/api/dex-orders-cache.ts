@@ -151,6 +151,8 @@ interface DexProfileRow {
   logo_url: string | null;
   price_usd: number | null;
   fdv: number | null;
+  current_fdv: number | null;
+  fdv_updated_at: string | null;
   liquidity_usd: number | null;
   trade_count: number | null;
   created_at: number | null;
@@ -170,7 +172,7 @@ export async function getDexProfiles(period: Period): Promise<DexOrderToken[]> {
   const { data, error } = await supabase
     .from("dex_profiles")
     .select(
-      "token_address, name, symbol, logo_url, price_usd, fdv, liquidity_usd, trade_count, created_at, url, twitter, discovered_at"
+      "token_address, name, symbol, logo_url, price_usd, fdv, current_fdv, fdv_updated_at, liquidity_usd, trade_count, created_at, url, twitter, discovered_at"
     )
     .gte("discovered_at", since)
     .order("discovered_at", { ascending: false });
@@ -187,6 +189,7 @@ export async function getDexProfiles(period: Period): Promise<DexOrderToken[]> {
     logoUrl: row.logo_url,
     priceUsd: row.price_usd,
     fdv: row.fdv,
+    currentFdv: row.current_fdv,
     liquidity: row.liquidity_usd,
     createdAt: row.created_at
       ? new Date(row.created_at).toISOString()
@@ -212,4 +215,50 @@ export async function getTotalProfileCount(): Promise<number> {
     return 0;
   }
   return count ?? 0;
+}
+
+/**
+ * Refresh current market caps for all stored tokens.
+ * Only refreshes tokens where fdv_updated_at is null or older than 2 minutes.
+ */
+export async function refreshCurrentMarketCaps(): Promise<void> {
+  const staleThreshold = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+
+  const { data: rows, error } = await supabase
+    .from("dex_profiles")
+    .select("token_address")
+    .or(`fdv_updated_at.is.null,fdv_updated_at.lt.${staleThreshold}`);
+
+  if (error) {
+    console.error("[dex-orders-cache] MC refresh query error:", error.message);
+    return;
+  }
+
+  const addresses = rows?.map((r) => r.token_address) ?? [];
+  if (addresses.length === 0) {
+    console.log("[dex-orders-cache] MC refresh: all tokens up to date");
+    return;
+  }
+
+  console.log(`[dex-orders-cache] MC refresh: updating ${addresses.length} tokens`);
+
+  const enriched = await batchEnrich(addresses);
+  const now = new Date().toISOString();
+  let updated = 0;
+
+  for (const [addr, pair] of enriched) {
+    const currentFdv = pair.fdv ?? null;
+    const { error: updateErr } = await supabase
+      .from("dex_profiles")
+      .update({ current_fdv: currentFdv, fdv_updated_at: now })
+      .eq("token_address", addr);
+
+    if (updateErr) {
+      console.error(`[dex-orders-cache] MC update error for ${addr}:`, updateErr.message);
+    } else {
+      updated++;
+    }
+  }
+
+  console.log(`[dex-orders-cache] MC refresh complete: ${updated}/${addresses.length} tokens updated`);
 }

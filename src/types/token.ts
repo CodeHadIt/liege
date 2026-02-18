@@ -146,6 +146,7 @@ export interface DexOrderToken extends PumpFunToken {
   discoveredAt: string;
   url?: string | null;
   twitter?: string | null;
+  currentFdv?: number | null;
 }
 
 export interface TrendingToken extends TokenSearchResult {
