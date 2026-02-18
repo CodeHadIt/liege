@@ -2,12 +2,12 @@
 
 import { useState } from "react";
 import {
-  ChevronDown,
-  ChevronUp,
+  CaretDown,
+  CaretUp,
   ArrowDownLeft,
   ArrowUpRight,
-  Loader2,
-} from "lucide-react";
+  CircleNotch,
+} from "@phosphor-icons/react";
 import { chainLabel } from "@/lib/utils";
 import type { TokenTradeHistory } from "@/types/traders";
 
@@ -153,9 +153,9 @@ function TokenTradeSection({
           className="flex items-center gap-1 text-[9px] font-mono text-[#6B6B80] hover:text-[#00F0FF] transition-colors"
         >
           {showTranches ? (
-            <ChevronUp className="h-3 w-3" />
+            <CaretUp className="h-3 w-3" />
           ) : (
-            <ChevronDown className="h-3 w-3" />
+            <CaretDown className="h-3 w-3" />
           )}
           {tranches.length} trade{tranches.length !== 1 ? "s" : ""} ({buys.length}{" "}
           buy{buys.length !== 1 ? "s" : ""}, {sells.length} sell
@@ -219,7 +219,7 @@ export function TradeHistoryDetail({
   if (isLoading) {
     return (
       <div className="flex items-center gap-2 py-3 text-[10px] font-mono text-[#6B6B80]">
-        <Loader2 className="h-3 w-3 animate-spin text-[#00F0FF]" />
+        <CircleNotch className="h-3 w-3 animate-spin text-[#00F0FF]" />
         Loading trade history...
       </div>
     );

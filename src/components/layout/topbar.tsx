@@ -1,6 +1,6 @@
 "use client";
 
-import { Crown, Menu, Scan } from "lucide-react";
+import { Crown, List, Scan } from "@phosphor-icons/react";
 import { ChainSelector } from "./chain-selector";
 import { ThemeToggle } from "./theme-toggle";
 import { TokenSearch } from "@/components/shared/token-search";
@@ -16,7 +16,7 @@ export function Topbar() {
       <Sheet>
         <SheetTrigger asChild>
           <Button variant="ghost" size="icon" className="md:hidden text-[#6B6B80] hover:text-[#00F0FF]">
-            <Menu className="h-5 w-5" />
+            <List className="h-5 w-5" />
           </Button>
         </SheetTrigger>
         <SheetContent side="left" className="p-0 w-64 border-white/[0.04]">

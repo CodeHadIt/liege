@@ -1,4 +1,4 @@
-import { Shield, AlertTriangle, CheckCircle, Info, XCircle } from "lucide-react";
+import { Shield, Warning, CheckCircle, Info, XCircle } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import type { SafetySignals, SafetyFlag } from "@/types/token";
 
@@ -11,7 +11,7 @@ const severityConfig: Record<
   { icon: typeof Shield; color: string; glow: string }
 > = {
   critical: { icon: XCircle, color: "#FF3B5C", glow: "rgba(255, 59, 92, 0.08)" },
-  warning: { icon: AlertTriangle, color: "#FFB800", glow: "rgba(255, 184, 0, 0.06)" },
+  warning: { icon: Warning, color: "#FFB800", glow: "rgba(255, 184, 0, 0.06)" },
   info: { icon: Info, color: "#00F0FF", glow: "rgba(0, 240, 255, 0.06)" },
   safe: { icon: CheckCircle, color: "#00FF88", glow: "rgba(0, 255, 136, 0.06)" },
 };

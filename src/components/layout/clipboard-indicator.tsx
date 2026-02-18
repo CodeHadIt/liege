@@ -1,6 +1,6 @@
 "use client";
 
-import { Coins, Loader2, Wallet, X } from "lucide-react";
+import { Coins, CircleNotch, Wallet, X } from "@phosphor-icons/react";
 import { useRouter } from "next/navigation";
 import { useClipboardAddress } from "@/hooks/use-clipboard-address";
 import { chainLabel as getChainLabel } from "@/lib/utils";
@@ -14,7 +14,7 @@ export function ClipboardIndicator() {
   if (loading) {
     return (
       <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] text-[11px] text-[#6B6B80]">
-        <Loader2 className="h-3 w-3 animate-spin" />
+        <CircleNotch className="h-3 w-3 animate-spin" />
         <span>Detecting...</span>
       </div>
     );

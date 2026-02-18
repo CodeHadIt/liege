@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react";
 import type { DisplayCurrency } from "@/features/common-traders/components/trade-history-detail";
-import { GitCompareArrows, Zap } from "lucide-react";
+import { GitDiff, Lightning } from "@phosphor-icons/react";
 import {
   TokenMultiInput,
   type SelectedToken,
@@ -36,7 +36,7 @@ export default function TradersPage() {
       <div>
         <div className="flex items-center gap-3 mb-2">
           <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#00F0FF]/20 to-[#A855F7]/20 border border-[#00F0FF]/10 flex items-center justify-center">
-            <GitCompareArrows className="h-5 w-5 text-[#00F0FF]" />
+            <GitDiff className="h-5 w-5 text-[#00F0FF]" />
           </div>
           <div>
             <h1 className="text-xl font-bold text-[#E8E8ED]">
@@ -81,7 +81,7 @@ export default function TradersPage() {
                 </>
               ) : (
                 <>
-                  <Zap className="h-3.5 w-3.5" />
+                  <Lightning className="h-3.5 w-3.5" />
                   Find Common Traders
                 </>
               )}

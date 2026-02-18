@@ -7,7 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ChevronDown } from "lucide-react";
+import { CaretDown } from "@phosphor-icons/react";
 import type { ChainId } from "@/types/chain";
 
 const chains: { id: ChainId | "all"; label: string; color: string }[] = [
@@ -32,7 +32,7 @@ export function ChainSelector() {
           <span className="hidden sm:inline text-[#E8E8ED] font-medium">
             {current.label}
           </span>
-          <ChevronDown className="h-3.5 w-3.5 text-[#6B6B80]" />
+          <CaretDown className="h-3.5 w-3.5 text-[#6B6B80]" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="bg-[#111118] border-white/[0.06]">

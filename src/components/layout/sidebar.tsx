@@ -3,24 +3,24 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  TrendingUp,
-  Search,
+  TrendUp,
+  MagnifyingGlass,
   Shield,
   Crown,
-  Activity,
+  Pulse,
   Wallet,
   Scan,
-  GitCompareArrows,
+  GitDiff,
   Rocket,
   ShieldCheck,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
-  { href: "/trending", label: "Trending", icon: TrendingUp, shortcut: "T" },
-  { href: "/search", label: "Search", icon: Search, shortcut: "S" },
+  { href: "/trending", label: "Trending", icon: TrendUp, shortcut: "T" },
+  { href: "/search", label: "Search", icon: MagnifyingGlass, shortcut: "S" },
   { href: "/wallet", label: "Wallet Tracker", icon: Wallet, shortcut: "W" },
-  { href: "/traders", label: "Common Traders", icon: GitCompareArrows, shortcut: "C" },
+  { href: "/traders", label: "Common Traders", icon: GitDiff, shortcut: "C" },
   { href: "/pump-fun", label: "Pump.fun", icon: Rocket, shortcut: "P" },
   { href: "/dex-orders", label: "Dex Orders", icon: ShieldCheck, shortcut: "D" },
 ];
@@ -43,7 +43,7 @@ export function Sidebar() {
             LIEGE
           </span>
           <div className="flex items-center gap-1.5">
-            <Activity className="h-2.5 w-2.5 text-[#00FF88]" />
+            <Pulse className="h-2.5 w-2.5 text-[#00FF88]" />
             <span className="text-[10px] font-mono text-[#00FF88]/70 uppercase tracking-widest">
               Live
             </span>

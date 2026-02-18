@@ -2,15 +2,15 @@
 
 import { useState } from "react";
 import {
-  TrendingUp,
-  ExternalLink,
-  ChevronDown,
-  ChevronUp,
-  DollarSign,
+  TrendUp,
+  ArrowSquareOut,
+  CaretDown,
+  CaretUp,
+  CurrencyDollarSimple,
   Coins,
-  Loader2,
+  CircleNotch,
   Users,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTopTraders } from "@/features/token-analyzer/hooks/use-top-traders";
 import { useWalletDialog } from "@/providers/wallet-dialog-provider";
@@ -114,7 +114,7 @@ function TraderRow({
           >
             {shortenAddress(trader.walletAddress, 4)}
           </button>
-          <ExternalLink className="h-2.5 w-2.5 text-[#6B6B80] opacity-0 group-hover:opacity-50 transition-opacity shrink-0" />
+          <ArrowSquareOut className="h-2.5 w-2.5 text-[#6B6B80] opacity-0 group-hover:opacity-50 transition-opacity shrink-0" />
         </div>
         <span className="text-[10px] font-mono text-[#E8E8ED] text-right">
           {formatCompact(trader.nativeBalance)} {nativeSymbol}
@@ -151,9 +151,9 @@ function TraderRow({
         </span>
         <div className="flex items-center justify-center">
           {expanded ? (
-            <ChevronUp className="h-3 w-3 text-[#6B6B80]" />
+            <CaretUp className="h-3 w-3 text-[#6B6B80]" />
           ) : (
-            <ChevronDown className="h-3 w-3 text-[#6B6B80]" />
+            <CaretDown className="h-3 w-3 text-[#6B6B80]" />
           )}
         </div>
       </button>
@@ -253,14 +253,14 @@ export function TopTraders({ chain, address }: TopTradersProps) {
     return (
       <div className="glow-card rounded-xl overflow-hidden">
         <div className="px-5 py-3 border-b border-white/[0.04] flex items-center gap-2">
-          <TrendingUp className="h-4 w-4 text-[#00F0FF]/50" />
+          <TrendUp className="h-4 w-4 text-[#00F0FF]/50" />
           <span className="text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80]">
             Top Traders
           </span>
         </div>
         <div className="p-4 space-y-3">
           <div className="flex items-center gap-2 py-4 justify-center text-[#6B6B80]">
-            <Loader2 className="h-4 w-4 animate-spin text-[#00F0FF]" />
+            <CircleNotch className="h-4 w-4 animate-spin text-[#00F0FF]" />
             <span className="text-xs font-mono">Loading top traders...</span>
           </div>
         </div>
@@ -272,7 +272,7 @@ export function TopTraders({ chain, address }: TopTradersProps) {
     return (
       <div className="glow-card rounded-xl overflow-hidden">
         <div className="px-5 py-3 border-b border-white/[0.04] flex items-center gap-2">
-          <TrendingUp className="h-4 w-4 text-[#00F0FF]/50" />
+          <TrendUp className="h-4 w-4 text-[#00F0FF]/50" />
           <span className="text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80]">
             Top Traders
           </span>
@@ -292,7 +292,7 @@ export function TopTraders({ chain, address }: TopTradersProps) {
       {/* Header */}
       <div className="px-5 py-3 border-b border-white/[0.04] flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <TrendingUp className="h-4 w-4 text-[#00F0FF]/50" />
+          <TrendUp className="h-4 w-4 text-[#00F0FF]/50" />
           <span className="text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80]">
             Top Traders
           </span>
@@ -311,7 +311,7 @@ export function TopTraders({ chain, address }: TopTradersProps) {
           }`}
         >
           {displayMode === "usd" ? (
-            <DollarSign className="h-3 w-3" />
+            <CurrencyDollarSimple className="h-3 w-3" />
           ) : (
             <Coins className="h-3 w-3" />
           )}

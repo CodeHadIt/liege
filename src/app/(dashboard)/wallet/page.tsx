@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Wallet, ArrowRight, Search } from "lucide-react";
+import { Wallet, ArrowRight, MagnifyingGlass } from "@phosphor-icons/react";
 import { detectChainFromAddress } from "@/lib/utils";
 
 export default function WalletLandingPage() {
@@ -42,7 +42,7 @@ export default function WalletLandingPage() {
         <form onSubmit={handleSubmit} className="relative">
           <div className="glow-card rounded-xl overflow-hidden">
             <div className="flex items-center gap-3 p-4">
-              <Search className="h-5 w-5 text-[#6B6B80] shrink-0" />
+              <MagnifyingGlass className="h-5 w-5 text-[#6B6B80] shrink-0" />
               <input
                 type="text"
                 value={address}

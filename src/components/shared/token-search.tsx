@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Search, ArrowRight } from "lucide-react";
+import { MagnifyingGlass, ArrowRight } from "@phosphor-icons/react";
 import { CopyAddress } from "@/components/shared/copy-address";
 import { detectChainFromAddress, formatUsd, chainLabel } from "@/lib/utils";
 import type { TokenSearchResult } from "@/types/token";
@@ -58,7 +58,7 @@ export function TokenSearch() {
   return (
     <div className="relative">
       <div className="relative group">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#6B6B80] group-focus-within:text-[#00F0FF] transition-colors" />
+        <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#6B6B80] group-focus-within:text-[#00F0FF] transition-colors" />
         <input
           placeholder="Search tokens or paste address..."
           value={query}

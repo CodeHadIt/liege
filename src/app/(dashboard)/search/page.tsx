@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ChainBadge } from "@/components/shared/chain-badge";
 import { formatUsd } from "@/lib/utils";
 import { CopyAddress } from "@/components/shared/copy-address";
-import { Search, ArrowRight, Scan } from "lucide-react";
+import { MagnifyingGlass, ArrowRight, Scan } from "@phosphor-icons/react";
 import type { TokenSearchResult } from "@/types/token";
 import type { ChainId } from "@/types/chain";
 
@@ -33,7 +33,7 @@ export default function SearchPage() {
       {/* Header */}
       <div className="flex items-center gap-3">
         <div className="h-10 w-10 rounded-xl bg-[#00F0FF]/10 border border-[#00F0FF]/20 flex items-center justify-center">
-          <Search className="h-5 w-5 text-[#00F0FF]" />
+          <MagnifyingGlass className="h-5 w-5 text-[#00F0FF]" />
         </div>
         <div>
           <h1 className="text-lg font-bold text-[#E8E8ED] tracking-tight">

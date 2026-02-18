@@ -13,11 +13,7 @@ import type { IChartApi, Time } from "lightweight-charts";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTokenChart } from "@/features/token-analyzer/hooks/use-token-chart";
 import { cn } from "@/lib/utils";
-import {
-  BarChart3,
-  CandlestickChart as CandleIcon,
-  LineChart as LineIcon,
-} from "lucide-react";
+import { ChartBar, ChartLine } from "@phosphor-icons/react";
 import type { ChainId } from "@/types/chain";
 import type { Timeframe } from "@/types/token";
 
@@ -229,7 +225,7 @@ export function CandlestickChart({ chain, address, marketCap, priceUsd }: Candle
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.04]">
         <div className="flex items-center gap-2">
-          <CandleIcon className="h-4 w-4 text-[#00F0FF]/50" />
+          <ChartBar className="h-4 w-4 text-[#00F0FF]/50" />
           <span className="text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80]">
             Price Chart
           </span>
@@ -248,7 +244,7 @@ export function CandlestickChart({ chain, address, marketCap, priceUsd }: Candle
               onClick={() => setChartMode("candle")}
               title="Candlestick"
             >
-              <CandleIcon className="h-3.5 w-3.5" />
+              <ChartBar className="h-3.5 w-3.5" />
             </button>
             <button
               className={cn(
@@ -260,7 +256,7 @@ export function CandlestickChart({ chain, address, marketCap, priceUsd }: Candle
               onClick={() => setChartMode("line")}
               title="Line"
             >
-              <LineIcon className="h-3.5 w-3.5" />
+              <ChartLine className="h-3.5 w-3.5" />
             </button>
           </div>
 
@@ -290,7 +286,7 @@ export function CandlestickChart({ chain, address, marketCap, priceUsd }: Candle
           <Skeleton className="h-[360px] w-full shimmer rounded-lg" />
         ) : !hasData ? (
           <div className="h-[360px] flex flex-col items-center justify-center text-[#6B6B80]">
-            <BarChart3 className="h-8 w-8 mb-3 opacity-20" />
+            <ChartBar className="h-8 w-8 mb-3 opacity-20" />
             <span className="text-sm">No chart data available</span>
           </div>
         ) : (

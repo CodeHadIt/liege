@@ -1,12 +1,12 @@
 import { formatUsd, formatNumber, formatTimeAgo } from "@/lib/utils";
 import {
-  DollarSign,
-  BarChart3,
-  Droplets,
-  ArrowLeftRight,
+  CurrencyDollarSimple,
+  ChartBar,
+  Drop,
+  ArrowsLeftRight,
   Clock,
-  Layers,
-} from "lucide-react";
+  Stack,
+} from "@phosphor-icons/react";
 import type { UnifiedTokenData } from "@/types/token";
 
 interface TokenStatsGridProps {
@@ -27,22 +27,22 @@ export function TokenStatsGrid({ token }: TokenStatsGridProps) {
     {
       label: "MARKET CAP",
       value: formatUsd(token.marketCap),
-      icon: DollarSign,
+      icon: CurrencyDollarSimple,
     },
     {
       label: "24H VOLUME",
       value: formatUsd(token.volume24h),
-      icon: BarChart3,
+      icon: ChartBar,
     },
     {
       label: "LIQUIDITY",
       value: formatUsd(token.liquidity?.totalUsd),
-      icon: Droplets,
+      icon: Drop,
     },
     {
       label: "FDV",
       value: formatUsd(token.fdv),
-      icon: Layers,
+      icon: Stack,
     },
     {
       label: "24H TXNS",
@@ -52,7 +52,7 @@ export function TokenStatsGrid({ token }: TokenStatsGridProps) {
       sub: token.txns24h
         ? `${token.txns24h.buys}B / ${token.txns24h.sells}S`
         : undefined,
-      icon: ArrowLeftRight,
+      icon: ArrowsLeftRight,
     },
     {
       label: "AGE",

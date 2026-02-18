@@ -4,11 +4,11 @@ import { useState } from "react";
 import {
   ArrowDownLeft,
   ArrowUpRight,
-  ArrowLeftRight,
+  ArrowsLeftRight,
   Repeat,
-  Activity,
-  ExternalLink,
-} from "lucide-react";
+  Pulse,
+  ArrowSquareOut,
+} from "@phosphor-icons/react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CopyAddress } from "@/components/shared/copy-address";
 import { useWalletTransactions } from "@/features/wallet-tracker/hooks/use-wallet-transactions";
@@ -28,8 +28,8 @@ const txTypeConfig: Record<
   { icon: typeof ArrowUpRight; color: string; label: string }
 > = {
   swap: { icon: Repeat, color: "#A855F7", label: "SWAP" },
-  transfer: { icon: ArrowLeftRight, color: "#00F0FF", label: "TRANSFER" },
-  deploy: { icon: Activity, color: "#00FF88", label: "DEPLOY" },
+  transfer: { icon: ArrowsLeftRight, color: "#00F0FF", label: "TRANSFER" },
+  deploy: { icon: Pulse, color: "#00FF88", label: "DEPLOY" },
   approve: { icon: ArrowUpRight, color: "#FFB800", label: "APPROVE" },
   other: { icon: ArrowDownLeft, color: "#6B6B80", label: "OTHER" },
 };
@@ -204,7 +204,7 @@ function TxRow({ tx, chain }: { tx: Transaction; chain: ChainId }) {
           rel="noopener noreferrer"
           className="text-[#6B6B80] hover:text-[#00F0FF] transition-colors opacity-0 group-hover:opacity-100"
         >
-          <ExternalLink className="h-3.5 w-3.5" />
+          <ArrowSquareOut className="h-3.5 w-3.5" />
         </a>
       </div>
     </div>
@@ -229,7 +229,7 @@ export function TransactionHistory({
       {/* Header */}
       <div className="px-5 py-3 border-b border-white/[0.04] flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Activity className="h-4 w-4 text-[#00F0FF]/50" />
+          <Pulse className="h-4 w-4 text-[#00F0FF]/50" />
           <span className="text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80]">
             Transaction History
           </span>
@@ -274,7 +274,7 @@ export function TransactionHistory({
           </div>
         ) : !txns || txns.length === 0 ? (
           <div className="text-center py-16 text-[#6B6B80]">
-            <Activity className="h-8 w-8 mx-auto mb-3 opacity-20" />
+            <Pulse className="h-8 w-8 mx-auto mb-3 opacity-20" />
             <p className="text-sm">No transactions found</p>
           </div>
         ) : (

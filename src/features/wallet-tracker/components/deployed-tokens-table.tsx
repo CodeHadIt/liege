@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Code, ArrowRight, AlertTriangle, CheckCircle, Skull, HelpCircle } from "lucide-react";
+import { Code, ArrowRight, Warning, CheckCircle, Skull, Question } from "@phosphor-icons/react";
 import { formatUsd, formatTimeAgo } from "@/lib/utils";
 import type { DeployedToken } from "@/types/wallet";
 import type { ChainId } from "@/types/chain";
@@ -17,8 +17,8 @@ const statusConfig: Record<
 > = {
   active: { icon: CheckCircle, color: "#00FF88", label: "ACTIVE" },
   rugged: { icon: Skull, color: "#FF3B5C", label: "RUGGED" },
-  dead: { icon: AlertTriangle, color: "#FFB800", label: "DEAD" },
-  unknown: { icon: HelpCircle, color: "#6B6B80", label: "UNKNOWN" },
+  dead: { icon: Warning, color: "#FFB800", label: "DEAD" },
+  unknown: { icon: Question, color: "#6B6B80", label: "UNKNOWN" },
 };
 
 export function DeployedTokensTable({ tokens, chain }: DeployedTokensTableProps) {

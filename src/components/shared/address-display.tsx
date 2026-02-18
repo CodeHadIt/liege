@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Copy, Check, ExternalLink } from "lucide-react";
+import { Copy, Check, ArrowSquareOut } from "@phosphor-icons/react";
 import { shortenAddress } from "@/lib/utils";
 import { useWalletDialog } from "@/providers/wallet-dialog-provider";
 import { getExplorerAddressUrl } from "@/config/chains";
@@ -62,7 +62,7 @@ export function AddressDisplay({
           rel="noopener noreferrer"
           className="text-[#6B6B80] hover:text-[#00F0FF] transition-colors"
         >
-          <ExternalLink className="h-3 w-3" />
+          <ArrowSquareOut className="h-3 w-3" />
         </a>
       )}
     </span>

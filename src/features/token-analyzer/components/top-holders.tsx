@@ -1,6 +1,6 @@
 "use client";
 
-import { Users, ExternalLink } from "lucide-react";
+import { Users, ArrowSquareOut } from "@phosphor-icons/react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTokenHolders } from "@/features/token-analyzer/hooks/use-token-holders";
@@ -284,7 +284,7 @@ export function TopHolders({ chain, address, priceUsd, liquidityUsd }: TopHolder
                           onClick={(e) => e.stopPropagation()}
                           className="text-[#6B6B80] opacity-0 group-hover:opacity-50 transition-opacity shrink-0"
                         >
-                          <ExternalLink className="h-3 w-3" />
+                          <ArrowSquareOut className="h-3 w-3" />
                         </a>
                       </div>
                       <span className="text-[11px] font-mono text-[#E8E8ED] text-right truncate">

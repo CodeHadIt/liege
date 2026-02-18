@@ -12,7 +12,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTokenChart } from "@/features/token-analyzer/hooks/use-token-chart";
 import { cn } from "@/lib/utils";
-import { BarChart3 } from "lucide-react";
+import { ChartBar } from "@phosphor-icons/react";
 import type { ChainId } from "@/types/chain";
 import type { Timeframe } from "@/types/token";
 
@@ -51,7 +51,7 @@ export function PriceChart({ chain, address }: PriceChartProps) {
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.04]">
         <div className="flex items-center gap-2">
-          <BarChart3 className="h-4 w-4 text-[#00F0FF]/50" />
+          <ChartBar className="h-4 w-4 text-[#00F0FF]/50" />
           <span className="text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80]">
             Price Chart
           </span>
@@ -80,7 +80,7 @@ export function PriceChart({ chain, address }: PriceChartProps) {
           <Skeleton className="h-[300px] w-full shimmer rounded-lg" />
         ) : chartData.length === 0 ? (
           <div className="h-[300px] flex flex-col items-center justify-center text-[#6B6B80]">
-            <BarChart3 className="h-8 w-8 mb-3 opacity-20" />
+            <ChartBar className="h-8 w-8 mb-3 opacity-20" />
             <span className="text-sm">No chart data available</span>
           </div>
         ) : (

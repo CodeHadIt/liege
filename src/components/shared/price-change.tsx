@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { TrendingUp, TrendingDown } from "lucide-react";
+import { TrendUp, TrendDown } from "@phosphor-icons/react";
 
 interface PriceChangeProps {
   value: number | null;
@@ -31,9 +31,9 @@ export function PriceChange({
     >
       {showIcon && !isNeutral &&
         (isPositive ? (
-          <TrendingUp className="h-3 w-3" />
+          <TrendUp className="h-3 w-3" />
         ) : (
-          <TrendingDown className="h-3 w-3" />
+          <TrendDown className="h-3 w-3" />
         ))}
       {isPositive ? "+" : ""}
       {value.toFixed(2)}%

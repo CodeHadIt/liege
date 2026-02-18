@@ -10,15 +10,15 @@ import { useChain } from "@/providers/chain-provider";
 import { CopyAddress } from "@/components/shared/copy-address";
 import { formatUsd, formatTimeAgo } from "@/lib/utils";
 import {
-  TrendingUp,
-  Zap,
-  BarChart3,
+  TrendUp,
+  Lightning,
+  ChartBar,
   ArrowRight,
-  Activity,
+  Pulse,
   Rocket,
   Flame,
   Clock,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import type { TrendingToken } from "@/types/token";
 import type { ChainId } from "@/types/chain";
@@ -80,10 +80,10 @@ export default function TrendingPage() {
     ? [...tokens].sort((a, b) => (b.volume24h ?? 0) - (a.volume24h ?? 0))
     : [];
 
-  const tabs: { value: Tab; label: string; icon: typeof TrendingUp }[] = [
+  const tabs: { value: Tab; label: string; icon: typeof TrendUp }[] = [
     { value: "trending", label: "Trending", icon: Flame },
     { value: "new", label: "New Launches", icon: Rocket },
-    { value: "volume", label: "Volume Movers", icon: BarChart3 },
+    { value: "volume", label: "Volume Movers", icon: ChartBar },
   ];
 
   return (
@@ -92,14 +92,14 @@ export default function TrendingPage() {
       <div className="animate-fade-up">
         <div className="flex items-center gap-3">
           <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#00F0FF]/20 to-[#00F0FF]/5 border border-[#00F0FF]/10 flex items-center justify-center">
-            <TrendingUp className="h-5 w-5 text-[#00F0FF]" />
+            <TrendUp className="h-5 w-5 text-[#00F0FF]" />
           </div>
           <div>
             <h1 className="text-2xl font-bold tracking-tight">
               Market Overview
             </h1>
             <div className="flex items-center gap-2 mt-0.5">
-              <Activity className="h-3 w-3 text-[#00FF88]" />
+              <Pulse className="h-3 w-3 text-[#00FF88]" />
               <span className="text-xs font-mono text-[#6B6B80]">
                 Updated every 60s
               </span>
@@ -114,13 +114,13 @@ export default function TrendingPage() {
           {
             label: "TRENDING",
             value: tokens?.length ?? "--",
-            icon: TrendingUp,
+            icon: TrendUp,
             color: "#00F0FF",
           },
           {
             label: "TOP VOLUME",
             value: tokens?.[0] ? formatUsd(tokens[0].volume24h) : "--",
-            icon: BarChart3,
+            icon: ChartBar,
             color: "#A855F7",
           },
           {
@@ -128,7 +128,7 @@ export default function TrendingPage() {
             value: topGainer ? (
               <PriceChange value={topGainer.priceChange24h} className="text-xl" />
             ) : "--",
-            icon: Zap,
+            icon: Lightning,
             color: "#00FF88",
           },
         ].map((stat, i) => (
@@ -317,7 +317,7 @@ function TrendingTable({
       </div>
       {!isLoading && (!tokens || tokens.length === 0) && (
         <div className="text-center py-16 text-[#6B6B80]">
-          <TrendingUp className="h-8 w-8 mx-auto mb-3 opacity-30" />
+          <TrendUp className="h-8 w-8 mx-auto mb-3 opacity-30" />
           <p className="text-sm">No trending tokens found</p>
           <p className="text-xs mt-1 opacity-60">Data refreshes every 60 seconds</p>
         </div>

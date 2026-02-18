@@ -8,16 +8,16 @@ import { CopyAddress } from "@/components/shared/copy-address";
 import { formatUsd, formatTimeAgo } from "@/lib/utils";
 import {
   ShieldCheck,
-  Activity,
-  DollarSign,
-  BarChart3,
+  Pulse,
+  CurrencyDollarSimple,
+  ChartBar,
   Clock,
   ArrowRight,
   Tag,
   Globe,
-  Twitter,
-  ExternalLink,
-} from "lucide-react";
+  XLogo,
+  ArrowSquareOut,
+} from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import { REFETCH_INTERVALS } from "@/config/constants";
 import type { DexOrderToken, DexOrderTag } from "@/types/token";
@@ -174,7 +174,7 @@ export default function DexOrdersPage() {
           {
             label: "DEX PAID",
             value: dexPaidCount ? dexPaidCount.toLocaleString() : "--",
-            icon: DollarSign,
+            icon: CurrencyDollarSimple,
             color: "#00FF88",
           },
           {
@@ -380,12 +380,12 @@ export default function DexOrdersPage() {
                                 className="text-[#6B6B80] hover:text-[#1DA1F2] transition-colors"
                                 title="Twitter"
                               >
-                                <Twitter className="h-3.5 w-3.5" />
+                                <XLogo className="h-3.5 w-3.5" />
                               </a>
                             )}
                             {!token.url && !token.twitter && (
                               <span className="text-[#6B6B80]/30">
-                                <ExternalLink className="h-3.5 w-3.5" />
+                                <ArrowSquareOut className="h-3.5 w-3.5" />
                               </span>
                             )}
                           </div>
@@ -417,7 +417,7 @@ export default function DexOrdersPage() {
         {/* Loading more rows */}
         {hasMoreToShow && (
           <div className="flex items-center justify-center gap-2 py-6">
-            <Activity className="h-4 w-4 text-[#00FF88] animate-pulse" />
+            <Pulse className="h-4 w-4 text-[#00FF88] animate-pulse" />
             <span className="text-xs font-mono text-[#6B6B80]">
               Showing {visibleTokens.length} of {tokens.length} tokens...
             </span>

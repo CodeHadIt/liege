@@ -4,11 +4,11 @@ import { useQuery } from "@tanstack/react-query";
 import {
   ArrowDownLeft,
   ArrowUpRight,
-  ArrowLeftRight,
+  ArrowsLeftRight,
   Repeat,
-  Activity,
-  ExternalLink,
-} from "lucide-react";
+  Pulse,
+  ArrowSquareOut,
+} from "@phosphor-icons/react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CopyAddress } from "@/components/shared/copy-address";
 import { shortenAddress, formatTimeAgo } from "@/lib/utils";
@@ -26,8 +26,8 @@ const txTypeConfig: Record<
   { icon: typeof ArrowUpRight; color: string; label: string }
 > = {
   swap: { icon: Repeat, color: "#A855F7", label: "SWAP" },
-  transfer: { icon: ArrowLeftRight, color: "#00F0FF", label: "TRANSFER" },
-  deploy: { icon: Activity, color: "#00FF88", label: "DEPLOY" },
+  transfer: { icon: ArrowsLeftRight, color: "#00F0FF", label: "TRANSFER" },
+  deploy: { icon: Pulse, color: "#00FF88", label: "DEPLOY" },
   approve: { icon: ArrowUpRight, color: "#FFB800", label: "APPROVE" },
   other: { icon: ArrowDownLeft, color: "#6B6B80", label: "OTHER" },
 };
@@ -55,7 +55,7 @@ export function RecentTransactions({
       {/* Header */}
       <div className="px-5 py-3 border-b border-white/[0.04] flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Activity className="h-4 w-4 text-[#00F0FF]/50" />
+          <Pulse className="h-4 w-4 text-[#00F0FF]/50" />
           <span className="text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80]">
             Recent Transactions
           </span>
@@ -77,7 +77,7 @@ export function RecentTransactions({
           </div>
         ) : !txns || txns.length === 0 ? (
           <div className="text-center py-10 text-[#6B6B80]">
-            <Activity className="h-6 w-6 mx-auto mb-2 opacity-20" />
+            <Pulse className="h-6 w-6 mx-auto mb-2 opacity-20" />
             <span className="text-xs">No recent transactions</span>
           </div>
         ) : (
@@ -155,7 +155,7 @@ export function RecentTransactions({
                       rel="noopener noreferrer"
                       className="text-[#6B6B80] hover:text-[#00F0FF] transition-colors opacity-0 group-hover:opacity-100"
                     >
-                      <ExternalLink className="h-3 w-3" />
+                      <ArrowSquareOut className="h-3 w-3" />
                     </a>
                   </div>
                 </div>

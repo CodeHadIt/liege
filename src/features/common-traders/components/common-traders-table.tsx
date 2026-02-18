@@ -2,14 +2,14 @@
 
 import { useState } from "react";
 import {
-  ExternalLink,
-  ChevronDown,
-  ChevronUp,
+  ArrowSquareOut,
+  CaretDown,
+  CaretUp,
   Users,
-  Search as SearchIcon,
-  DollarSign,
+  MagnifyingGlass as SearchIcon,
+  CurrencyDollarSimple,
   Coins,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import { shortenAddress, chainLabel } from "@/lib/utils";
 import { getExplorerAddressUrl } from "@/config/chains";
 import { useWalletDialog } from "@/providers/wallet-dialog-provider";
@@ -120,7 +120,7 @@ function TraderRow({
             onClick={(e) => e.stopPropagation()}
             className="text-[#6B6B80] opacity-0 group-hover:opacity-50 transition-opacity shrink-0"
           >
-            <ExternalLink className="h-3 w-3" />
+            <ArrowSquareOut className="h-3 w-3" />
           </a>
         </div>
         <div className="flex items-center justify-center gap-1">
@@ -138,9 +138,9 @@ function TraderRow({
         </span>
         <div className="flex items-center justify-center">
           {isExpanded ? (
-            <ChevronUp className="h-3.5 w-3.5 text-[#6B6B80]" />
+            <CaretUp className="h-3.5 w-3.5 text-[#6B6B80]" />
           ) : (
-            <ChevronDown className="h-3.5 w-3.5 text-[#6B6B80]" />
+            <CaretDown className="h-3.5 w-3.5 text-[#6B6B80]" />
           )}
         </div>
       </button>
@@ -299,7 +299,7 @@ export function CommonTradersTable({
             }`}
           >
             {displayCurrency === "usd" ? (
-              <DollarSign className="h-3 w-3" />
+              <CurrencyDollarSimple className="h-3 w-3" />
             ) : (
               <Coins className="h-3 w-3" />
             )}

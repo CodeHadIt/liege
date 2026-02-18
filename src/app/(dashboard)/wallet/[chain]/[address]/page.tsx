@@ -10,7 +10,7 @@ import { AddressDisplay } from "@/components/shared/address-display";
 import { ChainBadge } from "@/components/shared/chain-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatUsd, chainLabel } from "@/lib/utils";
-import { Wallet, AlertTriangle, Code } from "lucide-react";
+import { Wallet, Warning, Code } from "@phosphor-icons/react";
 import type { ChainId } from "@/types/chain";
 
 export default function WalletPage({
@@ -53,7 +53,7 @@ export default function WalletPage({
     return (
       <div className="flex flex-col items-center justify-center py-24 text-[#6B6B80]">
         <div className="h-16 w-16 rounded-2xl bg-[#FF3B5C]/10 border border-[#FF3B5C]/20 flex items-center justify-center mb-6">
-          <AlertTriangle className="h-7 w-7 text-[#FF3B5C]" />
+          <Warning className="h-7 w-7 text-[#FF3B5C]" />
         </div>
         <h2 className="text-lg font-bold text-[#E8E8ED] mb-2">Wallet Not Found</h2>
         <p className="text-sm text-center max-w-md">

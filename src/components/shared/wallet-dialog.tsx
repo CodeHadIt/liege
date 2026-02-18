@@ -4,15 +4,15 @@ import { useState } from "react";
 import {
   Wallet,
   Coins,
-  TrendingUp,
+  TrendUp,
   ArrowDownLeft,
   ArrowUpRight,
-  ExternalLink,
-  Loader2,
-  Activity,
+  ArrowSquareOut,
+  CircleNotch,
+  Pulse,
   Trophy,
-  BarChart3,
-} from "lucide-react";
+  ChartBar,
+} from "@phosphor-icons/react";
 import {
   Dialog,
   DialogContent,
@@ -70,7 +70,7 @@ export function WalletDialog() {
     {
       id: "pnl",
       label: "PNL History",
-      icon: <BarChart3 className="h-3 w-3" />,
+      icon: <ChartBar className="h-3 w-3" />,
     },
     {
       id: "top-buys",
@@ -80,7 +80,7 @@ export function WalletDialog() {
     {
       id: "activity",
       label: "Activity",
-      icon: <Activity className="h-3 w-3" />,
+      icon: <Pulse className="h-3 w-3" />,
     },
   ];
 
@@ -121,7 +121,7 @@ export function WalletDialog() {
                   className="text-[10px] font-mono text-[#6B6B80] hover:text-[#00F0FF] transition-colors flex items-center gap-1 mt-0.5"
                 >
                   View on explorer
-                  <ExternalLink className="h-2.5 w-2.5" />
+                  <ArrowSquareOut className="h-2.5 w-2.5" />
                 </a>
               )}
             </div>
@@ -130,7 +130,7 @@ export function WalletDialog() {
 
         {isLoading && (
           <div className="flex items-center justify-center py-16 text-[#6B6B80]">
-            <Loader2 className="h-5 w-5 animate-spin text-[#00F0FF] mr-2" />
+            <CircleNotch className="h-5 w-5 animate-spin text-[#00F0FF] mr-2" />
             <span className="text-sm font-mono">Loading wallet data...</span>
           </div>
         )}
@@ -404,7 +404,7 @@ function PnlTab({
           className="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-white/[0.02] transition-colors"
         >
           <div className="flex items-center gap-2">
-            <TrendingUp
+            <TrendUp
               className={`h-3 w-3 ${
                 entry.realizedPnl >= 0
                   ? "text-[#00FF88]"

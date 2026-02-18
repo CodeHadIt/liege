@@ -8,13 +8,13 @@ import { CopyAddress } from "@/components/shared/copy-address";
 import { formatUsd, formatTimeAgo } from "@/lib/utils";
 import {
   Rocket,
-  Activity,
-  DollarSign,
-  Droplets,
+  Pulse,
+  CurrencyDollarSimple,
+  Drop,
   Clock,
   ArrowRight,
-  Loader2,
-} from "lucide-react";
+  CircleNotch,
+} from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import type { PumpFunToken } from "@/types/token";
 
@@ -170,7 +170,7 @@ export default function PumpFunPage() {
               Pump.fun Tokens
             </h1>
             <div className="flex items-center gap-2 mt-0.5">
-              <Activity className="h-3 w-3 text-[#00FF88]" />
+              <Pulse className="h-3 w-3 text-[#00FF88]" />
               <span className="text-xs font-mono text-[#6B6B80]">
                 Scroll to load more
               </span>
@@ -193,7 +193,7 @@ export default function PumpFunPage() {
           {
             label: "HIGHEST FDV",
             value: highestFdv ? formatUsd(highestFdv.fdv) : "--",
-            icon: DollarSign,
+            icon: CurrencyDollarSimple,
             color: "#00F0FF",
           },
           {
@@ -361,7 +361,7 @@ export default function PumpFunPage() {
                         </td>
                         <td className="px-5 py-3.5 text-right">
                           <div className="flex items-center gap-1 justify-end">
-                            <Droplets className="h-3 w-3 text-[#00F0FF]/40" />
+                            <Drop className="h-3 w-3 text-[#00F0FF]/40" />
                             <span className="text-sm font-mono text-[#6B6B80]">
                               {formatUsd(token.liquidity)}
                             </span>
@@ -391,7 +391,7 @@ export default function PumpFunPage() {
         {/* Loading more rows spinner */}
         {hasMoreToShow && (
           <div className="flex items-center justify-center gap-2 py-6">
-            <Loader2 className="h-4 w-4 text-[#A855F7] animate-spin" />
+            <CircleNotch className="h-4 w-4 text-[#A855F7] animate-spin" />
             <span className="text-xs font-mono text-[#6B6B80]">
               Showing {visibleTokens.length} of {tokens.length}{allPagesFetched ? "" : "+"} tokens...
             </span>

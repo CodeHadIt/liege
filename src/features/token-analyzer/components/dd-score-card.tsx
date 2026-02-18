@@ -1,4 +1,4 @@
-import { Shield, TrendingUp, Users, Droplets, Clock, UserCheck } from "lucide-react";
+import { Shield, TrendUp, Users, Drop, Clock, UserCheck } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import type { DueDiligenceScore } from "@/types/token";
 
@@ -15,7 +15,7 @@ const gradeColors: Record<DueDiligenceScore["grade"], string> = {
 };
 
 const factors = [
-  { key: "liquidity" as const, label: "Liquidity", icon: Droplets, weight: "25%" },
+  { key: "liquidity" as const, label: "Liquidity", icon: Drop, weight: "25%" },
   { key: "holderDistribution" as const, label: "Holders", icon: Users, weight: "20%" },
   { key: "contractSafety" as const, label: "Contract", icon: Shield, weight: "25%" },
   { key: "deployerHistory" as const, label: "Deployer", icon: UserCheck, weight: "15%" },
@@ -40,7 +40,7 @@ export function DDScoreCard({ score }: DDScoreCardProps) {
       {/* Header */}
       <div className="px-5 py-3 border-b border-white/[0.04] flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <TrendingUp className="h-4 w-4 text-[#00F0FF]/50" />
+          <TrendUp className="h-4 w-4 text-[#00F0FF]/50" />
           <span className="text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80]">
             Due Diligence Score
           </span>

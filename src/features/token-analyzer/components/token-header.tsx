@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, Globe, Twitter } from "lucide-react";
+import { ArrowSquareOut, Globe, XLogo } from "@phosphor-icons/react";
 import { ChainBadge } from "@/components/shared/chain-badge";
 import { AddressDisplay } from "@/components/shared/address-display";
 import { PriceChange } from "@/components/shared/price-change";
@@ -87,7 +87,7 @@ export function TokenHeader({ token }: TokenHeaderProps) {
             >
               <Globe className="h-3.5 w-3.5" />
               Website
-              <ExternalLink className="h-3 w-3 opacity-50" />
+              <ArrowSquareOut className="h-3 w-3 opacity-50" />
             </a>
           )}
           {token.twitter && (
@@ -97,9 +97,9 @@ export function TokenHeader({ token }: TokenHeaderProps) {
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors"
             >
-              <Twitter className="h-3.5 w-3.5" />
+              <XLogo className="h-3.5 w-3.5" />
               Twitter
-              <ExternalLink className="h-3 w-3 opacity-50" />
+              <ArrowSquareOut className="h-3 w-3 opacity-50" />
             </a>
           )}
         </div>

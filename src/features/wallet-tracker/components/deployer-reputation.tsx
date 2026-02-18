@@ -1,4 +1,4 @@
-import { UserCheck, AlertTriangle, Skull, CheckCircle, Code } from "lucide-react";
+import { UserCheck, Warning, Skull, CheckCircle, Code } from "@phosphor-icons/react";
 import type { DeployerScore } from "@/types/wallet";
 
 interface DeployerReputationProps {
@@ -123,7 +123,7 @@ export function DeployerReputation({ score }: DeployerReputationProps) {
           </div>
           <div className="p-3 rounded-lg bg-white/[0.02] border border-white/[0.04] text-center">
             <div className="flex items-center justify-center gap-1.5 mb-1">
-              <AlertTriangle className="h-3 w-3 text-[#FFB800]/50" />
+              <Warning className="h-3 w-3 text-[#FFB800]/50" />
               <span className="text-[10px] font-mono text-[#6B6B80]">DEAD</span>
             </div>
             <span className="text-lg font-bold font-mono text-[#FFB800]">

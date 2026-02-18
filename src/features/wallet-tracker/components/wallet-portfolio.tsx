@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Wallet, ArrowRight } from "lucide-react";
+import { Wallet, ArrowRight } from "@phosphor-icons/react";
 import { PriceChange } from "@/components/shared/price-change";
 import { formatUsd, shortenAddress } from "@/lib/utils";
 import type { WalletTokenHolding } from "@/types/wallet";
