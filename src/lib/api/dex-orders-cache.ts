@@ -222,25 +222,45 @@ export async function getTotalProfileCount(): Promise<number> {
  * Only refreshes tokens where fdv_updated_at is null or older than 2 minutes.
  */
 export async function refreshCurrentMarketCaps(): Promise<void> {
+  console.log("[Current MC] Fetching current market caps...");
   const staleThreshold = new Date(Date.now() - 2 * 60 * 1000).toISOString();
 
-  const { data: rows, error } = await supabase
+  // Query tokens that have never been refreshed
+  const { data: nullRows, error: nullErr } = await supabase
     .from("dex_profiles")
     .select("token_address")
-    .or(`fdv_updated_at.is.null,fdv_updated_at.lt.${staleThreshold}`);
+    .is("fdv_updated_at", null);
 
-  if (error) {
-    console.error("[dex-orders-cache] MC refresh query error:", error.message);
+  if (nullErr) {
+    console.error("[Current MC] Query error (null):", nullErr.message);
     return;
   }
 
-  const addresses = rows?.map((r) => r.token_address) ?? [];
+  // Query tokens with stale fdv_updated_at
+  const { data: staleRows, error: staleErr } = await supabase
+    .from("dex_profiles")
+    .select("token_address")
+    .lt("fdv_updated_at", staleThreshold);
+
+  if (staleErr) {
+    console.error("[Current MC] Query error (stale):", staleErr.message);
+    return;
+  }
+
+  const seen = new Set<string>();
+  const addresses: string[] = [];
+  for (const row of [...(nullRows ?? []), ...(staleRows ?? [])]) {
+    if (!seen.has(row.token_address)) {
+      seen.add(row.token_address);
+      addresses.push(row.token_address);
+    }
+  }
   if (addresses.length === 0) {
-    console.log("[dex-orders-cache] MC refresh: all tokens up to date");
+    console.log("[Current MC] All tokens up to date, skipping");
     return;
   }
 
-  console.log(`[dex-orders-cache] MC refresh: updating ${addresses.length} tokens`);
+  console.log(`[Current MC] Found ${addresses.length} stale tokens, enriching...`);
 
   const enriched = await batchEnrich(addresses);
   const now = new Date().toISOString();
@@ -248,17 +268,22 @@ export async function refreshCurrentMarketCaps(): Promise<void> {
 
   for (const [addr, pair] of enriched) {
     const currentFdv = pair.fdv ?? null;
+    const liquidityUsd = pair.liquidity?.usd ?? null;
     const { error: updateErr } = await supabase
       .from("dex_profiles")
-      .update({ current_fdv: currentFdv, fdv_updated_at: now })
+      .update({
+        current_fdv: currentFdv,
+        liquidity_usd: liquidityUsd,
+        fdv_updated_at: now,
+      })
       .eq("token_address", addr);
 
     if (updateErr) {
-      console.error(`[dex-orders-cache] MC update error for ${addr}:`, updateErr.message);
+      console.error(`[Current MC] Update error for ${addr}:`, updateErr.message);
     } else {
       updated++;
     }
   }
 
-  console.log(`[dex-orders-cache] MC refresh complete: ${updated}/${addresses.length} tokens updated`);
+  console.log(`[Current MC] Done — ${updated}/${addresses.length} tokens updated`);
 }

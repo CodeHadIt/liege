@@ -28,6 +28,7 @@ import type { DexOrderToken, DexOrderTag } from "@/types/token";
 
 type Period = "30m" | "1h" | "2h" | "4h" | "8h";
 type BondedFilter = "all" | "bonded" | "notBonded";
+type SortField = "dexPaid" | "created";
 type SortOrder = "newest" | "oldest";
 
 const FDV_RANGES = [
@@ -113,12 +114,52 @@ function TagBadge({ tag }: { tag: DexOrderTag }) {
 
 const PAGE_SIZE = 100;
 
+const STORAGE_KEY = "dex-orders-filters";
+
+function loadFilters(): {
+  period: Period;
+  bondedFilter: BondedFilter;
+  fdvFilter: FdvFilter;
+  sortField: SortField;
+  sortOrder: SortOrder;
+} {
+  const defaults = { period: "8h" as Period, bondedFilter: "all" as BondedFilter, fdvFilter: "all" as FdvFilter, sortField: "dexPaid" as SortField, sortOrder: "newest" as SortOrder };
+  if (typeof window === "undefined") return defaults;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw);
+    return { ...defaults, ...parsed };
+  } catch {
+    return defaults;
+  }
+}
+
 export default function DexOrdersPage() {
+  const [hydrated, setHydrated] = useState(false);
   const [period, setPeriod] = useState<Period>("8h");
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
   const [bondedFilter, setBondedFilter] = useState<BondedFilter>("all");
   const [fdvFilter, setFdvFilter] = useState<FdvFilter>("all");
+  const [sortField, setSortField] = useState<SortField>("dexPaid");
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
+
+  // Hydrate from localStorage on mount
+  useEffect(() => {
+    const saved = loadFilters();
+    setPeriod(saved.period);
+    setBondedFilter(saved.bondedFilter);
+    setFdvFilter(saved.fdvFilter);
+    setSortField(saved.sortField);
+    setSortOrder(saved.sortOrder);
+    setHydrated(true);
+  }, []);
+
+  // Persist to localStorage on change
+  useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ period, bondedFilter, fdvFilter, sortField, sortOrder }));
+  }, [period, bondedFilter, fdvFilter, sortField, sortOrder, hydrated]);
 
   const { data: response, isLoading } = useQuery<DexOrdersResponse>({
     queryKey: ["dex-orders", period],
@@ -147,22 +188,26 @@ export default function DexOrdersPage() {
       result = result.filter((t) => matchesFdvRange(t.fdv, fdvFilter));
     }
 
-    // Sort by creation time
+    // Sort by selected field
     result = [...result].sort((a, b) => {
-      const aTime = new Date(a.createdAt).getTime();
-      const bTime = new Date(b.createdAt).getTime();
+      const aTime = sortField === "dexPaid"
+        ? new Date(a.discoveredAt).getTime()
+        : new Date(a.createdAt).getTime();
+      const bTime = sortField === "dexPaid"
+        ? new Date(b.discoveredAt).getTime()
+        : new Date(b.createdAt).getTime();
       return sortOrder === "newest" ? bTime - aTime : aTime - bTime;
     });
 
     return result;
-  }, [tokens, bondedFilter, fdvFilter, sortOrder]);
+  }, [tokens, bondedFilter, fdvFilter, sortField, sortOrder]);
 
   const isFiltered = bondedFilter !== "all" || fdvFilter !== "all";
 
   // Reset visible count when period or filters change
   useEffect(() => {
     setDisplayCount(PAGE_SIZE);
-  }, [period, bondedFilter, fdvFilter, sortOrder]);
+  }, [period, bondedFilter, fdvFilter, sortField, sortOrder]);
 
   const dexPaidCount = filteredTokens.filter((t) => t.tags.includes("dexPaid")).length;
   const ctoCount = filteredTokens.filter((t) => t.tags.includes("cto")).length;
@@ -320,6 +365,21 @@ export default function DexOrdersPage() {
           </div>
 
           <div className="flex gap-1 bg-white/[0.02] rounded-xl p-1 border border-white/[0.04] ml-auto">
+            {(["dexPaid", "created"] as const).map((val) => (
+              <button
+                key={val}
+                onClick={() => setSortField(val)}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-xs font-mono font-semibold transition-all",
+                  sortField === val
+                    ? "bg-[#00FF88]/10 text-[#00FF88] shadow-[0_0_12px_rgba(0,255,136,0.08)]"
+                    : "text-[#6B6B80] hover:text-[#E8E8ED]"
+                )}
+              >
+                {val === "dexPaid" ? "Dex Paid" : "Created"}
+              </button>
+            ))}
+            <div className="w-px bg-white/[0.06] mx-0.5" />
             {(["newest", "oldest"] as const).map((val) => (
               <button
                 key={val}
@@ -517,14 +577,14 @@ export default function DexOrdersPage() {
                             return (
                               <span
                                 className={cn(
-                                  "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold border",
-                                  isUp && "bg-[#00FF88]/10 text-[#00FF88] border-[#00FF88]/20",
-                                  isDown && "bg-[#FF4444]/10 text-[#FF4444] border-[#FF4444]/20",
+                                  "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold border transition-all duration-300 mc-badge-enter",
+                                  isUp && "bg-[#00FF88]/10 text-[#00FF88] border-[#00FF88]/20 mc-glow-green",
+                                  isDown && "bg-[#FF4444]/10 text-[#FF4444] border-[#FF4444]/20 mc-glow-red",
                                   !isUp && !isDown && "bg-white/[0.04] text-[#6B6B80] border-white/[0.06]"
                                 )}
                               >
-                                {isUp && <TrendUp className="h-3 w-3" />}
-                                {isDown && <TrendDown className="h-3 w-3" />}
+                                {isUp && <TrendUp className="h-3 w-3 mc-arrow-up" />}
+                                {isDown && <TrendDown className="h-3 w-3 mc-arrow-down" />}
                                 {formatUsd(token.currentFdv)}
                               </span>
                             );
