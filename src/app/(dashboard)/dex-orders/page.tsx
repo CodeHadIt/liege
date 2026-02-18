@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,12 +17,46 @@ import {
   Globe,
   XLogo,
   ArrowSquareOut,
+  SortAscending,
+  SortDescending,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import { REFETCH_INTERVALS } from "@/config/constants";
 import type { DexOrderToken, DexOrderTag } from "@/types/token";
 
 type Period = "30m" | "1h" | "2h" | "4h" | "8h";
+type BondedFilter = "all" | "bonded" | "notBonded";
+type SortOrder = "newest" | "oldest";
+
+const FDV_RANGES = [
+  { value: "all", label: "All" },
+  { value: "0-5k", label: "≤5K" },
+  { value: "5k-10k", label: "5-10K" },
+  { value: "10k-20k", label: "10-20K" },
+  { value: "20k-50k", label: "20-50K" },
+  { value: "50k-100k", label: "50-100K" },
+  { value: "100k-500k", label: "100K-500K" },
+  { value: "500k-1m", label: "500K-1M" },
+  { value: "1m+", label: "1M+" },
+] as const;
+
+type FdvFilter = (typeof FDV_RANGES)[number]["value"];
+
+function matchesFdvRange(fdv: number | null, range: FdvFilter): boolean {
+  if (range === "all") return true;
+  if (fdv == null) return false;
+  switch (range) {
+    case "0-5k": return fdv <= 5_000;
+    case "5k-10k": return fdv > 5_000 && fdv <= 10_000;
+    case "10k-20k": return fdv > 10_000 && fdv <= 20_000;
+    case "20k-50k": return fdv > 20_000 && fdv <= 50_000;
+    case "50k-100k": return fdv > 50_000 && fdv <= 100_000;
+    case "100k-500k": return fdv > 100_000 && fdv <= 500_000;
+    case "500k-1m": return fdv > 500_000 && fdv <= 1_000_000;
+    case "1m+": return fdv > 1_000_000;
+    default: return true;
+  }
+}
 
 const SUBSCRIPT_DIGITS = "\u2080\u2081\u2082\u2083\u2084\u2085\u2086\u2087\u2088\u2089";
 
@@ -80,6 +114,9 @@ const PAGE_SIZE = 100;
 export default function DexOrdersPage() {
   const [period, setPeriod] = useState<Period>("8h");
   const [displayCount, setDisplayCount] = useState(PAGE_SIZE);
+  const [bondedFilter, setBondedFilter] = useState<BondedFilter>("all");
+  const [fdvFilter, setFdvFilter] = useState<FdvFilter>("all");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
 
   const { data: response, isLoading } = useQuery<DexOrdersResponse>({
     queryKey: ["dex-orders", period],
@@ -93,16 +130,43 @@ export default function DexOrdersPage() {
   const tokens = response?.data ?? [];
   const totalProfiles = response?.totalProfiles ?? 0;
 
-  // Reset visible count when period changes
+  const filteredTokens = useMemo(() => {
+    let result = tokens;
+
+    // Bonded filter
+    if (bondedFilter === "bonded") {
+      result = result.filter((t) => t.liquidity != null && t.liquidity > 0);
+    } else if (bondedFilter === "notBonded") {
+      result = result.filter((t) => t.liquidity == null || t.liquidity === 0);
+    }
+
+    // FDV filter
+    if (fdvFilter !== "all") {
+      result = result.filter((t) => matchesFdvRange(t.fdv, fdvFilter));
+    }
+
+    // Sort by creation time
+    result = [...result].sort((a, b) => {
+      const aTime = new Date(a.createdAt).getTime();
+      const bTime = new Date(b.createdAt).getTime();
+      return sortOrder === "newest" ? bTime - aTime : aTime - bTime;
+    });
+
+    return result;
+  }, [tokens, bondedFilter, fdvFilter, sortOrder]);
+
+  const isFiltered = bondedFilter !== "all" || fdvFilter !== "all";
+
+  // Reset visible count when period or filters change
   useEffect(() => {
     setDisplayCount(PAGE_SIZE);
-  }, [period]);
+  }, [period, bondedFilter, fdvFilter, sortOrder]);
 
-  const dexPaidCount = tokens.filter((t) => t.tags.includes("dexPaid")).length;
-  const ctoCount = tokens.filter((t) => t.tags.includes("cto")).length;
+  const dexPaidCount = filteredTokens.filter((t) => t.tags.includes("dexPaid")).length;
+  const ctoCount = filteredTokens.filter((t) => t.tags.includes("cto")).length;
 
-  const visibleTokens = tokens.slice(0, displayCount);
-  const hasMoreToShow = displayCount < tokens.length;
+  const visibleTokens = filteredTokens.slice(0, displayCount);
+  const hasMoreToShow = displayCount < filteredTokens.length;
 
   // IntersectionObserver for progressive rendering
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -167,7 +231,11 @@ export default function DexOrdersPage() {
         {[
           {
             label: "WITH PROFILES",
-            value: tokens.length ? tokens.length.toLocaleString() : "--",
+            value: filteredTokens.length
+              ? isFiltered
+                ? `${filteredTokens.length.toLocaleString()} / ${tokens.length.toLocaleString()}`
+                : filteredTokens.length.toLocaleString()
+              : "--",
             icon: ShieldCheck,
             color: "#00FF88",
           },
@@ -218,6 +286,76 @@ export default function DexOrdersPage() {
             {p.label}
           </button>
         ))}
+      </div>
+
+      {/* Filters */}
+      <div className="space-y-2 animate-fade-up">
+        {/* Row 1: Bonded + Sort */}
+        <div className="flex gap-3 flex-wrap">
+          <div className="flex gap-1 bg-white/[0.02] rounded-xl p-1 border border-white/[0.04]">
+            {(["all", "bonded", "notBonded"] as const).map((val) => {
+              const labels: Record<BondedFilter, string> = {
+                all: "All",
+                bonded: "Bonded",
+                notBonded: "Not Bonded",
+              };
+              return (
+                <button
+                  key={val}
+                  onClick={() => setBondedFilter(val)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-xs font-mono font-semibold transition-all",
+                    bondedFilter === val
+                      ? "bg-[#00FF88]/10 text-[#00FF88] shadow-[0_0_12px_rgba(0,255,136,0.08)]"
+                      : "text-[#6B6B80] hover:text-[#E8E8ED]"
+                  )}
+                >
+                  {labels[val]}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex gap-1 bg-white/[0.02] rounded-xl p-1 border border-white/[0.04] ml-auto">
+            {(["newest", "oldest"] as const).map((val) => (
+              <button
+                key={val}
+                onClick={() => setSortOrder(val)}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-xs font-mono font-semibold transition-all flex items-center gap-1.5",
+                  sortOrder === val
+                    ? "bg-[#00FF88]/10 text-[#00FF88] shadow-[0_0_12px_rgba(0,255,136,0.08)]"
+                    : "text-[#6B6B80] hover:text-[#E8E8ED]"
+                )}
+              >
+                {val === "newest" ? (
+                  <SortDescending className="h-3.5 w-3.5" />
+                ) : (
+                  <SortAscending className="h-3.5 w-3.5" />
+                )}
+                {val === "newest" ? "Newest" : "Oldest"}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Row 2: FDV range */}
+        <div className="flex gap-1 bg-white/[0.02] rounded-xl p-1 border border-white/[0.04] flex-wrap">
+          {FDV_RANGES.map((r) => (
+            <button
+              key={r.value}
+              onClick={() => setFdvFilter(r.value)}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-mono font-semibold transition-all",
+                fdvFilter === r.value
+                  ? "bg-[#00FF88]/10 text-[#00FF88] shadow-[0_0_12px_rgba(0,255,136,0.08)]"
+                  : "text-[#6B6B80] hover:text-[#E8E8ED]"
+              )}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Token table */}
@@ -419,27 +557,41 @@ export default function DexOrdersPage() {
           <div className="flex items-center justify-center gap-2 py-6">
             <Pulse className="h-4 w-4 text-[#00FF88] animate-pulse" />
             <span className="text-xs font-mono text-[#6B6B80]">
-              Showing {visibleTokens.length} of {tokens.length} tokens...
+              Showing {visibleTokens.length} of {filteredTokens.length} tokens...
             </span>
           </div>
         )}
 
         {/* All displayed message */}
-        {!isLoading && tokens.length > 0 && !hasMoreToShow && (
+        {!isLoading && filteredTokens.length > 0 && !hasMoreToShow && (
           <div className="text-center py-4 border-t border-white/[0.04]">
             <span className="text-[10px] font-mono text-[#6B6B80]">
-              {tokens.length.toLocaleString()} token{tokens.length !== 1 ? "s" : ""} with profiles &middot; auto-refreshing every 30s
+              {isFiltered
+                ? `${filteredTokens.length.toLocaleString()} of ${tokens.length.toLocaleString()} tokens`
+                : `${filteredTokens.length.toLocaleString()} token${filteredTokens.length !== 1 ? "s" : ""} with profiles`}
+              {" "}&middot; auto-refreshing every 30s
             </span>
           </div>
         )}
 
-        {/* Empty state */}
+        {/* Empty state — no data at all */}
         {!isLoading && tokens.length === 0 && (
           <div className="text-center py-16 text-[#6B6B80]">
             <ShieldCheck className="h-8 w-8 mx-auto mb-3 opacity-30" />
             <p className="text-sm">No tokens with DexScreener profiles found</p>
             <p className="text-xs mt-1 opacity-60">
               Profiles accumulate over time — try a longer period or wait a few minutes
+            </p>
+          </div>
+        )}
+
+        {/* Empty state — filters exclude everything */}
+        {!isLoading && tokens.length > 0 && filteredTokens.length === 0 && (
+          <div className="text-center py-16 text-[#6B6B80]">
+            <ShieldCheck className="h-8 w-8 mx-auto mb-3 opacity-30" />
+            <p className="text-sm">No tokens match current filters</p>
+            <p className="text-xs mt-1 opacity-60">
+              Try adjusting bonded status or FDV range
             </p>
           </div>
         )}
