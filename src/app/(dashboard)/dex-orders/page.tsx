@@ -691,7 +691,7 @@ export default function DexOrdersPage() {
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}
-                              className="opacity-60 hover:opacity-100 transition-opacity !cursor-pointer"
+                              className="opacity-60 hover:opacity-100 transition-opacity" style={{ cursor: "pointer" }}
                               title="Axiom"
                             >
                               <img src="/images/axiom_favicon.ico" alt="Axiom" className="h-3.5 w-3.5 rounded-sm" />
@@ -701,7 +701,7 @@ export default function DexOrdersPage() {
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}
-                              className="opacity-60 hover:opacity-100 transition-opacity !cursor-pointer"
+                              className="opacity-60 hover:opacity-100 transition-opacity" style={{ cursor: "pointer" }}
                               title="Trojan"
                             >
                               <img src="/images/trojan_favicon.png" alt="Trojan" className="h-3.5 w-3.5 rounded-sm brightness-0 invert" />
@@ -711,7 +711,7 @@ export default function DexOrdersPage() {
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}
-                              className="opacity-60 hover:opacity-100 transition-opacity !cursor-pointer"
+                              className="opacity-60 hover:opacity-100 transition-opacity" style={{ cursor: "pointer" }}
                               title="Terminal"
                             >
                               <img src="/images/terminal_favicon.png" alt="Terminal" className="h-4 w-4 rounded-sm object-contain" />
@@ -733,7 +733,7 @@ export default function DexOrdersPage() {
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   onClick={(e) => e.stopPropagation()}
-                                  className="text-[#6B6B80] transition-colors !cursor-pointer"
+                                  className="text-[#6B6B80] transition-colors" style={{ cursor: "pointer" }}
                                   onMouseEnter={(e) => (e.currentTarget.style.color = hoverColor)}
                                   onMouseLeave={(e) => (e.currentTarget.style.color = "")}
                                   title={s.type.charAt(0).toUpperCase() + s.type.slice(1)}
@@ -754,7 +754,7 @@ export default function DexOrdersPage() {
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   onClick={(e) => e.stopPropagation()}
-                                  className="text-[#6B6B80] transition-colors !cursor-pointer"
+                                  className="text-[#6B6B80] transition-colors" style={{ cursor: "pointer" }}
                                   onMouseEnter={(e) => (e.currentTarget.style.color = hoverColor)}
                                   onMouseLeave={(e) => (e.currentTarget.style.color = "")}
                                   title={platform ? platform.charAt(0).toUpperCase() + platform.slice(1) : "Website"}
