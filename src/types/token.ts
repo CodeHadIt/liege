@@ -139,6 +139,11 @@ export interface PumpFunToken {
 
 export type DexOrderTag = "dexPaid" | "cto";
 
+export interface DexOrderSocial {
+  type: string;
+  url: string;
+}
+
 export interface DexOrderToken extends PumpFunToken {
   tags: DexOrderTag[];
   tradeCount?: number;
@@ -147,6 +152,8 @@ export interface DexOrderToken extends PumpFunToken {
   url?: string | null;
   twitter?: string | null;
   currentFdv?: number | null;
+  socials?: DexOrderSocial[];
+  websites?: string[];
 }
 
 export interface TrendingToken extends TokenSearchResult {

@@ -76,34 +76,66 @@ export function TokenHeader({ token }: TokenHeaderProps) {
       </div>
 
       {/* Links row */}
-      {(token.website || token.twitter) && (
-        <div className="flex items-center gap-3 mt-4 pt-4 border-t border-white/[0.04]">
-          {token.website && (
+      <div className="flex items-center gap-3 mt-4 pt-4 border-t border-white/[0.04]">
+        {token.chain === "solana" && (
+          <>
             <a
-              href={token.website}
+              href={`https://axiom.trade/t/${token.address}/@genes?chain=sol`}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors"
+              className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors cursor-pointer"
             >
-              <Globe className="h-3.5 w-3.5" />
-              Website
+              <img src="/images/axiom_favicon.ico" alt="Axiom" className="h-3.5 w-3.5 rounded-sm" />
+              Axiom
               <ArrowSquareOut className="h-3 w-3 opacity-50" />
             </a>
-          )}
-          {token.twitter && (
             <a
-              href={token.twitter}
+              href={`https://trojan.com/terminal?token=${token.address}&ref=garriwenes`}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors"
+              className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors cursor-pointer"
             >
-              <XLogo className="h-3.5 w-3.5" />
-              Twitter
+              <img src="/images/trojan_favicon.png" alt="Trojan" className="h-3.5 w-3.5 rounded-sm brightness-0 invert" />
+              Trojan
               <ArrowSquareOut className="h-3 w-3 opacity-50" />
             </a>
-          )}
-        </div>
-      )}
+            <a
+              href={`https://trade.padre.gg/trade/solana/${token.address}?rk=warri`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors cursor-pointer"
+            >
+              <img src="/images/terminal_favicon.png" alt="Terminal" className="h-4 w-4 rounded-sm object-contain" />
+              Terminal
+              <ArrowSquareOut className="h-3 w-3 opacity-50" />
+            </a>
+          </>
+        )}
+        {token.website && (
+          <a
+            href={token.website}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors cursor-pointer"
+          >
+            <Globe className="h-3.5 w-3.5" />
+            Website
+            <ArrowSquareOut className="h-3 w-3 opacity-50" />
+          </a>
+        )}
+        {token.twitter && (
+          <a
+            href={token.twitter}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors cursor-pointer"
+          >
+            <XLogo className="h-3.5 w-3.5" />
+            Twitter
+            <ArrowSquareOut className="h-3 w-3 opacity-50" />
+          </a>
+        )}
+      </div>
     </div>
   );
 }

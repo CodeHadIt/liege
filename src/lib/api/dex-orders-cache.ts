@@ -102,6 +102,8 @@ export async function pollAndStoreDexProfiles(): Promise<number> {
       const pair = enriched.get(p.tokenAddress);
       const twitter =
         pair?.info?.socials?.find((s) => s.type === "twitter")?.url ?? null;
+      const socials = pair?.info?.socials ?? [];
+      const websites = pair?.info?.websites?.map((w) => w.url) ?? [];
 
       return {
         token_address: p.tokenAddress,
@@ -118,6 +120,8 @@ export async function pollAndStoreDexProfiles(): Promise<number> {
         created_at: pair?.pairCreatedAt ?? null,
         url: p.url ?? null,
         twitter,
+        socials,
+        websites,
         discovered_at: new Date().toISOString(),
       };
     });
@@ -158,6 +162,8 @@ interface DexProfileRow {
   created_at: number | null;
   url: string | null;
   twitter: string | null;
+  socials: { type: string; url: string }[] | null;
+  websites: string[] | null;
   discovered_at: string;
 }
 
@@ -172,7 +178,7 @@ export async function getDexProfiles(period: Period): Promise<DexOrderToken[]> {
   const { data, error } = await supabase
     .from("dex_profiles")
     .select(
-      "token_address, name, symbol, logo_url, price_usd, fdv, current_fdv, fdv_updated_at, liquidity_usd, trade_count, created_at, url, twitter, discovered_at"
+      "token_address, name, symbol, logo_url, price_usd, fdv, current_fdv, fdv_updated_at, liquidity_usd, trade_count, created_at, url, twitter, socials, websites, discovered_at"
     )
     .gte("discovered_at", since)
     .order("discovered_at", { ascending: false });
@@ -199,6 +205,8 @@ export async function getDexProfiles(period: Period): Promise<DexOrderToken[]> {
     discoveredAt: row.discovered_at,
     url: row.url,
     twitter: row.twitter,
+    socials: row.socials ?? [],
+    websites: row.websites ?? [],
   }));
 }
 

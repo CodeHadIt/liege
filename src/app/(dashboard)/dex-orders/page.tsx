@@ -16,15 +16,30 @@ import {
   Tag,
   Globe,
   XLogo,
-  ArrowSquareOut,
   SortAscending,
   SortDescending,
   TrendUp,
   TrendDown,
+  TelegramLogo,
+  DiscordLogo,
+  TiktokLogo,
+  InstagramLogo,
+  YoutubeLogo,
+  RedditLogo,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import { REFETCH_INTERVALS } from "@/config/constants";
-import type { DexOrderToken, DexOrderTag } from "@/types/token";
+import type { DexOrderToken } from "@/types/token";
+
+const SOCIAL_ICON_MAP: Record<string, { icon: React.ElementType; color: string }> = {
+  twitter: { icon: XLogo, color: "#1DA1F2" },
+  telegram: { icon: TelegramLogo, color: "#26A5E4" },
+  discord: { icon: DiscordLogo, color: "#5865F2" },
+  tiktok: { icon: TiktokLogo, color: "#E8E8ED" },
+  instagram: { icon: InstagramLogo, color: "#E4405F" },
+  youtube: { icon: YoutubeLogo, color: "#FF0000" },
+  reddit: { icon: RedditLogo, color: "#FF4500" },
+};
 
 type Period = "30m" | "1h" | "2h" | "4h" | "8h";
 type BondedFilter = "all" | "bonded" | "notBonded";
@@ -128,21 +143,6 @@ const PERIODS: { value: Period; label: string }[] = [
   { value: "4h", label: "4h" },
   { value: "8h", label: "8h" },
 ];
-
-function TagBadge({ tag }: { tag: DexOrderTag }) {
-  if (tag === "dexPaid") {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-[#00FF88]/10 text-[#00FF88] border border-[#00FF88]/20">
-        DP
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-[#FFB800]/10 text-[#FFB800] border border-[#FFB800]/20">
-      CTO
-    </span>
-  );
-}
 
 const PAGE_SIZE = 100;
 
@@ -284,8 +284,8 @@ export default function DexOrdersPage() {
     { label: "Dex Paid Time", align: "right" },
     { label: "MC at Dex Pay", align: "right" },
     { label: "Current MC", align: "right" },
-    { label: "Links", align: "right" },
-    { label: "Tags", align: "right" },
+    { label: "Trade", align: "right" },
+    { label: "Socials", align: "right" },
     { label: "", align: "right" },
   ];
 
@@ -666,46 +666,78 @@ export default function DexOrdersPage() {
                           )}
                         </td>
 
-                        {/* Links */}
+                        {/* Trade */}
                         <td className="px-5 py-3.5 text-right">
                           <div className="flex items-center gap-2 justify-end">
-                            {token.url && (
+                            <a
+                              href={`https://axiom.trade/t/${token.address}/@genes?chain=sol`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="opacity-60 hover:opacity-100 transition-opacity cursor-pointer"
+                              title="Axiom"
+                            >
+                              <img src="/images/axiom_favicon.ico" alt="Axiom" className="h-3.5 w-3.5 rounded-sm" />
+                            </a>
+                            <a
+                              href={`https://trojan.com/terminal?token=${token.address}&ref=garriwenes`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="opacity-60 hover:opacity-100 transition-opacity cursor-pointer"
+                              title="Trojan"
+                            >
+                              <img src="/images/trojan_favicon.png" alt="Trojan" className="h-3.5 w-3.5 rounded-sm brightness-0 invert" />
+                            </a>
+                            <a
+                              href={`https://trade.padre.gg/trade/solana/${token.address}?rk=warri`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="opacity-60 hover:opacity-100 transition-opacity cursor-pointer"
+                              title="Terminal"
+                            >
+                              <img src="/images/terminal_favicon.png" alt="Terminal" className="h-4 w-4 rounded-sm object-contain" />
+                            </a>
+                          </div>
+                        </td>
+
+                        {/* Socials */}
+                        <td className="px-5 py-3.5 text-right">
+                          <div className="flex items-center gap-2 justify-end">
+                            {token.socials?.map((s) => {
+                              const mapped = SOCIAL_ICON_MAP[s.type];
+                              const Icon = mapped?.icon ?? Globe;
+                              const hoverColor = mapped?.color ?? "#00F0FF";
+                              return (
+                                <a
+                                  key={s.type}
+                                  href={s.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-[#6B6B80] transition-colors cursor-pointer"
+                                  style={{ ["--hover-color" as string]: hoverColor }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.color = hoverColor)}
+                                  onMouseLeave={(e) => (e.currentTarget.style.color = "")}
+                                  title={s.type.charAt(0).toUpperCase() + s.type.slice(1)}
+                                >
+                                  <Icon className="h-3.5 w-3.5" />
+                                </a>
+                              );
+                            })}
+                            {token.websites?.filter((w) => !w.includes("dexscreener")).map((w) => (
                               <a
-                                href={token.url}
+                                key={w}
+                                href={w}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 onClick={(e) => e.stopPropagation()}
-                                className="text-[#6B6B80] hover:text-[#00F0FF] transition-colors"
+                                className="text-[#6B6B80] hover:text-[#00F0FF] transition-colors cursor-pointer"
                                 title="Website"
                               >
                                 <Globe className="h-3.5 w-3.5" />
                               </a>
-                            )}
-                            {token.twitter && (
-                              <a
-                                href={token.twitter}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-[#6B6B80] hover:text-[#1DA1F2] transition-colors"
-                                title="Twitter"
-                              >
-                                <XLogo className="h-3.5 w-3.5" />
-                              </a>
-                            )}
-                            {!token.url && !token.twitter && (
-                              <span className="text-[#6B6B80]/30">
-                                <ArrowSquareOut className="h-3.5 w-3.5" />
-                              </span>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Tags */}
-                        <td className="px-5 py-3.5 text-right">
-                          <div className="flex items-center gap-1 justify-end">
-                            {token.tags.map((tag) => (
-                              <TagBadge key={tag} tag={tag} />
                             ))}
                           </div>
                         </td>

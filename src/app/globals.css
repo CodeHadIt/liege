@@ -400,7 +400,7 @@ body::before {
   width: 20%;
   height: 100%;
   background: linear-gradient(90deg, transparent, rgba(0, 255, 136, 0.3), transparent);
-  animation: mc-flash-green 3s ease-in-out infinite;
+  animation: mc-flash-green 1.8s ease-in-out infinite;
   pointer-events: none;
 }
 
@@ -418,7 +418,7 @@ body::before {
   width: 20%;
   height: 100%;
   background: linear-gradient(90deg, transparent, rgba(255, 68, 68, 0.3), transparent);
-  animation: mc-flash-red 3s ease-in-out infinite;
+  animation: mc-flash-red 1.8s ease-in-out infinite;
   pointer-events: none;
 }
 
