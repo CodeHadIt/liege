@@ -83,7 +83,7 @@ export function TokenHeader({ token }: TokenHeaderProps) {
               href={`https://axiom.trade/t/${token.address}/@genes?chain=sol`}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors !cursor-pointer"
             >
               <img src="/images/axiom_favicon.ico" alt="Axiom" className="h-3.5 w-3.5 rounded-sm" />
               Axiom
@@ -93,7 +93,7 @@ export function TokenHeader({ token }: TokenHeaderProps) {
               href={`https://trojan.com/terminal?token=${token.address}&ref=garriwenes`}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors !cursor-pointer"
             >
               <img src="/images/trojan_favicon.png" alt="Trojan" className="h-3.5 w-3.5 rounded-sm brightness-0 invert" />
               Trojan
@@ -103,7 +103,7 @@ export function TokenHeader({ token }: TokenHeaderProps) {
               href={`https://trade.padre.gg/trade/solana/${token.address}?rk=warri`}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors !cursor-pointer"
             >
               <img src="/images/terminal_favicon.png" alt="Terminal" className="h-4 w-4 rounded-sm object-contain" />
               Terminal
@@ -116,7 +116,7 @@ export function TokenHeader({ token }: TokenHeaderProps) {
             href={token.website}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors !cursor-pointer"
           >
             <Globe className="h-3.5 w-3.5" />
             Website
@@ -128,7 +128,7 @@ export function TokenHeader({ token }: TokenHeaderProps) {
             href={token.twitter}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors !cursor-pointer"
           >
             <XLogo className="h-3.5 w-3.5" />
             Twitter

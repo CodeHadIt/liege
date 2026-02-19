@@ -41,6 +41,23 @@ const SOCIAL_ICON_MAP: Record<string, { icon: React.ElementType; color: string }
   reddit: { icon: RedditLogo, color: "#FF4500" },
 };
 
+const URL_PLATFORM_PATTERNS: { pattern: RegExp; type: string }[] = [
+  { pattern: /twitter\.com|x\.com/i, type: "twitter" },
+  { pattern: /t\.me|telegram/i, type: "telegram" },
+  { pattern: /discord\.gg|discord\.com/i, type: "discord" },
+  { pattern: /tiktok\.com/i, type: "tiktok" },
+  { pattern: /instagram\.com/i, type: "instagram" },
+  { pattern: /youtube\.com|youtu\.be/i, type: "youtube" },
+  { pattern: /reddit\.com/i, type: "reddit" },
+];
+
+function detectPlatform(url: string): string | null {
+  for (const { pattern, type } of URL_PLATFORM_PATTERNS) {
+    if (pattern.test(url)) return type;
+  }
+  return null;
+}
+
 type Period = "30m" | "1h" | "2h" | "4h" | "8h";
 type BondedFilter = "all" | "bonded" | "notBonded";
 type SortField = "dexPaid" | "created";
@@ -674,7 +691,7 @@ export default function DexOrdersPage() {
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}
-                              className="opacity-60 hover:opacity-100 transition-opacity cursor-pointer"
+                              className="opacity-60 hover:opacity-100 transition-opacity !cursor-pointer"
                               title="Axiom"
                             >
                               <img src="/images/axiom_favicon.ico" alt="Axiom" className="h-3.5 w-3.5 rounded-sm" />
@@ -684,7 +701,7 @@ export default function DexOrdersPage() {
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}
-                              className="opacity-60 hover:opacity-100 transition-opacity cursor-pointer"
+                              className="opacity-60 hover:opacity-100 transition-opacity !cursor-pointer"
                               title="Trojan"
                             >
                               <img src="/images/trojan_favicon.png" alt="Trojan" className="h-3.5 w-3.5 rounded-sm brightness-0 invert" />
@@ -694,7 +711,7 @@ export default function DexOrdersPage() {
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}
-                              className="opacity-60 hover:opacity-100 transition-opacity cursor-pointer"
+                              className="opacity-60 hover:opacity-100 transition-opacity !cursor-pointer"
                               title="Terminal"
                             >
                               <img src="/images/terminal_favicon.png" alt="Terminal" className="h-4 w-4 rounded-sm object-contain" />
@@ -716,8 +733,7 @@ export default function DexOrdersPage() {
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   onClick={(e) => e.stopPropagation()}
-                                  className="text-[#6B6B80] transition-colors cursor-pointer"
-                                  style={{ ["--hover-color" as string]: hoverColor }}
+                                  className="text-[#6B6B80] transition-colors !cursor-pointer"
                                   onMouseEnter={(e) => (e.currentTarget.style.color = hoverColor)}
                                   onMouseLeave={(e) => (e.currentTarget.style.color = "")}
                                   title={s.type.charAt(0).toUpperCase() + s.type.slice(1)}
@@ -726,19 +742,27 @@ export default function DexOrdersPage() {
                                 </a>
                               );
                             })}
-                            {token.websites?.filter((w) => !w.includes("dexscreener")).map((w) => (
-                              <a
-                                key={w}
-                                href={w}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-[#6B6B80] hover:text-[#00F0FF] transition-colors cursor-pointer"
-                                title="Website"
-                              >
-                                <Globe className="h-3.5 w-3.5" />
-                              </a>
-                            ))}
+                            {token.websites?.filter((w) => !w.includes("dexscreener")).map((w) => {
+                              const platform = detectPlatform(w);
+                              const mapped = platform ? SOCIAL_ICON_MAP[platform] : null;
+                              const Icon = mapped?.icon ?? Globe;
+                              const hoverColor = mapped?.color ?? "#00F0FF";
+                              return (
+                                <a
+                                  key={w}
+                                  href={w}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-[#6B6B80] transition-colors !cursor-pointer"
+                                  onMouseEnter={(e) => (e.currentTarget.style.color = hoverColor)}
+                                  onMouseLeave={(e) => (e.currentTarget.style.color = "")}
+                                  title={platform ? platform.charAt(0).toUpperCase() + platform.slice(1) : "Website"}
+                                >
+                                  <Icon className="h-3.5 w-3.5" />
+                                </a>
+                              );
+                            })}
                           </div>
                         </td>
 
