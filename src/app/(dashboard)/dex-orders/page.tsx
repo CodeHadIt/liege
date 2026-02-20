@@ -5,6 +5,13 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CopyAddress } from "@/components/shared/copy-address";
+import { AddressDisplay } from "@/components/shared/address-display";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { formatUsd, formatTimeAgo } from "@/lib/utils";
 import {
   ShieldCheck,
@@ -13,6 +20,7 @@ import {
   ChartBar,
   Clock,
   ArrowRight,
+  ArrowSquareOut,
   Tag,
   Globe,
   XLogo,
@@ -26,6 +34,9 @@ import {
   InstagramLogo,
   YoutubeLogo,
   RedditLogo,
+  Drop,
+  Coins,
+  CalendarBlank,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import { REFETCH_INTERVALS } from "@/config/constants";
@@ -194,6 +205,7 @@ export default function DexOrdersPage() {
   const [ageFilter, setAgeFilter] = useState<AgeFilter>("all");
   const [sortField, setSortField] = useState<SortField>("dexPaid");
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
+  const [selectedToken, setSelectedToken] = useState<DexOrderToken | null>(null);
 
   // Hydrate from localStorage on mount
   useEffect(() => {
@@ -576,13 +588,12 @@ export default function DexOrdersPage() {
                       <tr
                         key={token.address}
                         className="border-b border-white/[0.03] table-row-hover group"
+                        onClick={() => setSelectedToken(token)}
+                        style={{ cursor: "pointer" }}
                       >
                         {/* Token */}
                         <td className="px-5 py-3.5">
-                          <Link
-                            href={`/token/solana/${token.address}`}
-                            className="flex items-center gap-3"
-                          >
+                          <div className="flex items-center gap-3">
                             <div className="relative group/img shrink-0">
                               {token.logoUrl ? (
                                 <img
@@ -620,7 +631,7 @@ export default function DexOrdersPage() {
                                 />
                               </div>
                             </div>
-                          </Link>
+                          </div>
                         </td>
 
                         {/* Price */}
@@ -824,6 +835,225 @@ export default function DexOrdersPage() {
           </div>
         )}
       </div>
+
+      {/* Token Detail Dialog */}
+      <Dialog open={!!selectedToken} onOpenChange={(open) => { if (!open) setSelectedToken(null); }}>
+        <DialogContent className="sm:max-w-2xl bg-[#0A0A0F] border-white/[0.06] p-0 gap-0 overflow-hidden">
+          {selectedToken && (() => {
+            const token = selectedToken;
+            const createdTs = Math.floor(new Date(token.createdAt).getTime() / 1000);
+            const discoveredTs = Math.floor(new Date(token.discoveredAt).getTime() / 1000);
+            const isUp = token.fdv != null && token.currentFdv != null && token.currentFdv > token.fdv;
+            const isDown = token.fdv != null && token.currentFdv != null && token.currentFdv < token.fdv;
+
+            return (
+              <>
+                {/* Header */}
+                <DialogHeader className="p-5 pb-4 border-b border-white/[0.04]">
+                  <div className="flex items-center gap-4">
+                    {token.logoUrl ? (
+                      <img
+                        src={token.logoUrl}
+                        alt={token.symbol}
+                        className="h-12 w-12 rounded-full ring-1 ring-white/[0.08]"
+                      />
+                    ) : (
+                      <div className="h-12 w-12 rounded-full bg-gradient-to-br from-[#00FF88]/15 to-[#00F0FF]/15 flex items-center justify-center text-sm font-bold text-[#00FF88] ring-1 ring-white/[0.08]">
+                        {token.symbol.slice(0, 2)}
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <DialogTitle className="text-lg font-bold text-[#E8E8ED] flex items-center gap-2">
+                        {token.name}
+                        <span className="text-sm font-mono text-[#6B6B80]">{token.symbol}</span>
+                      </DialogTitle>
+                      <div className="flex items-center gap-2 mt-1">
+                        <AddressDisplay address={token.address} chain="solana" chars={6} />
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-xl font-bold font-mono text-[#E8E8ED]">
+                        {token.priceUsd != null ? formatPrice(token.priceUsd) : "\u2014"}
+                      </div>
+                    </div>
+                  </div>
+                </DialogHeader>
+
+                <div className="p-5 space-y-4">
+                  {/* Dex Order Info */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {[
+                      {
+                        label: "Dex Paid Time",
+                        value: formatTimeAgo(discoveredTs),
+                        tooltip: new Date(token.discoveredAt).toLocaleString(),
+                        icon: ShieldCheck,
+                        color: "#00FF88",
+                      },
+                      {
+                        label: "MC at Dex Pay",
+                        value: formatUsd(token.fdv),
+                        icon: Coins,
+                        color: "#6B6B80",
+                      },
+                      {
+                        label: "Current MC",
+                        value: formatUsd(token.currentFdv ?? null),
+                        icon: isUp ? TrendUp : isDown ? TrendDown : Coins,
+                        color: isUp ? "#00FF88" : isDown ? "#FF4444" : "#6B6B80",
+                        badge: true,
+                      },
+                      {
+                        label: "Liquidity",
+                        value: formatUsd(token.liquidity ?? null),
+                        icon: Drop,
+                        color: "#00F0FF",
+                      },
+                    ].map((stat) => (
+                      <div
+                        key={stat.label}
+                        className="glow-card stat-card rounded-lg p-3"
+                        title={stat.tooltip}
+                      >
+                        <div className="flex items-center gap-1.5 mb-1.5">
+                          <stat.icon className="h-3 w-3" style={{ color: stat.color, opacity: 0.6 }} />
+                          <span className="text-[9px] font-mono font-semibold uppercase tracking-[0.12em] text-[#6B6B80]">
+                            {stat.label}
+                          </span>
+                        </div>
+                        {stat.badge && token.currentFdv != null ? (
+                          <span
+                            className={cn(
+                              "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-semibold border",
+                              isUp && "bg-[#00FF88]/10 text-[#00FF88] border-[#00FF88]/20 mc-glow-green",
+                              isDown && "bg-[#FF4444]/10 text-[#FF4444] border-[#FF4444]/20 mc-glow-red",
+                              !isUp && !isDown && "bg-white/[0.04] text-[#6B6B80] border-white/[0.06]"
+                            )}
+                          >
+                            {isUp && <TrendUp className="h-3 w-3" />}
+                            {isDown && <TrendDown className="h-3 w-3" />}
+                            {stat.value}
+                          </span>
+                        ) : (
+                          <div className="text-sm font-bold font-mono text-[#E8E8ED]">{stat.value}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Token Stats */}
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { label: "Created", value: formatTimeAgo(createdTs), icon: CalendarBlank, color: "#6B6B80" },
+                      { label: "Trades", value: token.tradeCount?.toLocaleString() ?? "\u2014", icon: ChartBar, color: "#00F0FF" },
+                      { label: "Price", value: token.priceUsd != null ? formatPrice(token.priceUsd) : "\u2014", icon: CurrencyDollarSimple, color: "#FFB800" },
+                    ].map((stat) => (
+                      <div key={stat.label} className="glow-card stat-card rounded-lg p-3">
+                        <div className="flex items-center gap-1.5 mb-1.5">
+                          <stat.icon className="h-3 w-3" style={{ color: stat.color, opacity: 0.6 }} />
+                          <span className="text-[9px] font-mono font-semibold uppercase tracking-[0.12em] text-[#6B6B80]">
+                            {stat.label}
+                          </span>
+                        </div>
+                        <div className="text-sm font-bold font-mono text-[#E8E8ED]">{stat.value}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Trade Links */}
+                  <div>
+                    <span className="text-[9px] font-mono font-semibold uppercase tracking-[0.12em] text-[#6B6B80] mb-2 block">
+                      Trade
+                    </span>
+                    <div className="flex gap-2">
+                      {[
+                        { label: "Axiom", href: `https://axiom.trade/t/${token.address}/@genes?chain=sol`, icon: "/images/axiom_favicon.ico", imgClass: "" },
+                        { label: "Trojan", href: `https://trojan.com/terminal?token=${token.address}&ref=garriwenes`, icon: "/images/trojan_favicon.png", imgClass: "brightness-0 invert" },
+                        { label: "Terminal", href: `https://trade.padre.gg/trade/solana/${token.address}?rk=warri`, icon: "/images/terminal_favicon.png", imgClass: "object-contain" },
+                      ].map((link) => (
+                        <a
+                          key={link.label}
+                          href={link.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06] hover:border-[#00FF88]/20 hover:bg-[#00FF88]/5 transition-all text-xs font-mono text-[#E8E8ED]"
+                          style={{ cursor: "pointer" }}
+                        >
+                          <img src={link.icon} alt={link.label} className={cn("h-4 w-4 rounded-sm", link.imgClass)} />
+                          {link.label}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Social Links */}
+                  {((token.socials && token.socials.length > 0) || (token.websites && token.websites.filter((w) => !w.includes("dexscreener")).length > 0)) && (
+                    <div>
+                      <span className="text-[9px] font-mono font-semibold uppercase tracking-[0.12em] text-[#6B6B80] mb-2 block">
+                        Socials
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        {token.socials?.map((s) => {
+                          const mapped = SOCIAL_ICON_MAP[s.type];
+                          const Icon = mapped?.icon ?? Globe;
+                          const color = mapped?.color ?? "#00F0FF";
+                          return (
+                            <a
+                              key={s.type}
+                              href={s.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06] hover:border-white/[0.12] transition-all text-xs font-mono text-[#E8E8ED]"
+                              style={{ cursor: "pointer" }}
+                            >
+                              <Icon className="h-3.5 w-3.5" style={{ color }} />
+                              {s.type.charAt(0).toUpperCase() + s.type.slice(1)}
+                            </a>
+                          );
+                        })}
+                        {token.websites?.filter((w) => !w.includes("dexscreener")).map((w) => {
+                          const platform = detectPlatform(w);
+                          const mapped = platform ? SOCIAL_ICON_MAP[platform] : null;
+                          const Icon = mapped?.icon ?? Globe;
+                          const color = mapped?.color ?? "#00F0FF";
+                          return (
+                            <a
+                              key={w}
+                              href={w}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06] hover:border-white/[0.12] transition-all text-xs font-mono text-[#E8E8ED]"
+                              style={{ cursor: "pointer" }}
+                            >
+                              <Icon className="h-3.5 w-3.5" style={{ color }} />
+                              {platform ? platform.charAt(0).toUpperCase() + platform.slice(1) : "Website"}
+                            </a>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Footer — View Full Analysis */}
+                  <div className="pt-2 border-t border-white/[0.04]">
+                    <Link
+                      href={`/token/solana/${token.address}`}
+                      className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg bg-[#00FF88]/5 border border-[#00FF88]/10 hover:bg-[#00FF88]/10 hover:border-[#00FF88]/20 transition-all text-sm font-semibold text-[#00FF88]"
+                      style={{ cursor: "pointer" }}
+                    >
+                      View Full Analysis
+                      <ArrowSquareOut className="h-4 w-4" />
+                    </Link>
+                  </div>
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
