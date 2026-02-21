@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Outfit, JetBrains_Mono } from "next/font/google";
+import { PrivyProvider } from "@/providers/privy-provider";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { QueryProvider } from "@/providers/query-provider";
 import { ChainProvider } from "@/providers/chain-provider";
@@ -36,18 +37,20 @@ export default function RootLayout({
       <body
         className={`${outfit.variable} ${jetbrainsMono.variable} font-sans antialiased`}
       >
-        <ThemeProvider>
-          <QueryProvider>
-            <ChainProvider>
-              <WalletDialogProvider>
-                <TooltipProvider>
-                  {children}
-                  <WalletDialog />
-                </TooltipProvider>
-              </WalletDialogProvider>
-            </ChainProvider>
-          </QueryProvider>
-        </ThemeProvider>
+        <PrivyProvider>
+          <ThemeProvider>
+            <QueryProvider>
+              <ChainProvider>
+                <WalletDialogProvider>
+                  <TooltipProvider>
+                    {children}
+                    <WalletDialog />
+                  </TooltipProvider>
+                </WalletDialogProvider>
+              </ChainProvider>
+            </QueryProvider>
+          </ThemeProvider>
+        </PrivyProvider>
       </body>
     </html>
   );

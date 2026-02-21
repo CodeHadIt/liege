@@ -1,6 +1,7 @@
 "use client";
 
 import { Crown, List, Scan } from "@phosphor-icons/react";
+import { AuthButton } from "./auth-button";
 import { ChainSelector } from "./chain-selector";
 import { ThemeToggle } from "./theme-toggle";
 import { TokenSearch } from "@/components/shared/token-search";
@@ -51,6 +52,7 @@ export function Topbar() {
       {/* Right side */}
       <div className="flex items-center gap-2">
         <ChainSelector />
+        <AuthButton />
         <ThemeToggle />
       </div>
     </header>

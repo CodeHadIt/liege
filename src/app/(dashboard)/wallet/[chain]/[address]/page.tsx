@@ -11,6 +11,7 @@ import { ChainBadge } from "@/components/shared/chain-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatUsd, chainLabel } from "@/lib/utils";
 import { Wallet, Warning, Code } from "@phosphor-icons/react";
+import { FavoriteButton } from "@/components/shared/favorite-button";
 import type { ChainId } from "@/types/chain";
 
 export default function WalletPage({
@@ -91,13 +92,16 @@ export default function WalletPage({
             </div>
           </div>
 
-          <div className="text-right">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-[#6B6B80] mb-1">
-              Total Value
+          <div className="flex items-center gap-3">
+            <div className="text-right">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-[#6B6B80] mb-1">
+                Total Value
+              </div>
+              <div className="text-3xl font-bold font-mono text-[#E8E8ED]">
+                {formatUsd(wallet.totalPortfolioUsd)}
+              </div>
             </div>
-            <div className="text-3xl font-bold font-mono text-[#E8E8ED]">
-              {formatUsd(wallet.totalPortfolioUsd)}
-            </div>
+            <FavoriteButton walletAddress={address} chain={chain as ChainId} />
           </div>
         </div>
       </div>

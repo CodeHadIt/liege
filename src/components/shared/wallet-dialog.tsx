@@ -28,6 +28,8 @@ import {
   chainLabel,
 } from "@/lib/utils";
 import { getExplorerAddressUrl } from "@/config/chains";
+import { FavoriteButton } from "@/components/shared/favorite-button";
+import type { ChainId } from "@/types/chain";
 import {
   AreaChart,
   Area,
@@ -125,6 +127,14 @@ export function WalletDialog() {
                 </a>
               )}
             </div>
+            {state.walletAddress && state.chain && (
+              <div className="ml-auto">
+                <FavoriteButton
+                  walletAddress={state.walletAddress}
+                  chain={state.chain as ChainId}
+                />
+              </div>
+            )}
           </DialogTitle>
         </DialogHeader>
 
