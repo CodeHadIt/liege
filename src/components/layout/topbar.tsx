@@ -42,7 +42,7 @@ export function Topbar() {
       </div>
 
       {/* Search */}
-      <div className="flex-1 max-w-xl">
+      <div className="flex-1">
         <TokenSearch />
       </div>
 
@@ -50,7 +50,7 @@ export function Topbar() {
       <ClipboardIndicator />
 
       {/* Right side */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
         <ChainSelector />
         <AuthButton />
         <ThemeToggle />

@@ -37,9 +37,9 @@ export default function RootLayout({
       <body
         className={`${outfit.variable} ${jetbrainsMono.variable} font-sans antialiased`}
       >
-        <PrivyProvider>
-          <ThemeProvider>
-            <QueryProvider>
+        <ThemeProvider>
+          <QueryProvider>
+            <PrivyProvider>
               <ChainProvider>
                 <WalletDialogProvider>
                   <TooltipProvider>
@@ -48,9 +48,9 @@ export default function RootLayout({
                   </TooltipProvider>
                 </WalletDialogProvider>
               </ChainProvider>
-            </QueryProvider>
-          </ThemeProvider>
-        </PrivyProvider>
+            </PrivyProvider>
+          </QueryProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

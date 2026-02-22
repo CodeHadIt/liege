@@ -1,8 +1,8 @@
 "use client";
 
-import { usePrivy, useWallets } from "@privy-io/react-auth";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { useAuthContext } from "@/providers/auth-context";
 import type { ChainId } from "@/types/chain";
 
 interface AuthUser {
@@ -31,25 +31,28 @@ function evmChainIdToChain(chainIdStr: string): ChainId {
 }
 
 export function useAuth() {
-  const { ready, authenticated, user: privyUser, login, logout, getAccessToken } =
-    usePrivy();
-  const { wallets } = useWallets();
-  const queryClient = useQueryClient();
+  const {
+    ready,
+    authenticated,
+    privyUser,
+    wallets,
+    signIn,
+    signOut,
+    getAccessToken,
+  } = useAuthContext();
 
   const connectedWallet = useMemo<ConnectedWalletInfo | null>(() => {
     if (!authenticated) return null;
 
-    // First check the Privy user object for wallet info (includes Solana)
+    // Check the Privy user object for wallet info (includes Solana)
     if (privyUser?.wallet) {
       const w = privyUser.wallet;
       if (w.chainType === "solana") {
         return { address: w.address, chain: "solana" };
       }
-      // For EVM wallets from user object, default to base
-      // (the user object doesn't have specific chain ID)
     }
 
-    // Fall back to connected EVM wallets from useWallets()
+    // Fall back to connected EVM wallets
     if (wallets.length > 0) {
       const wallet = wallets[0];
       return {
@@ -58,7 +61,7 @@ export function useAuth() {
       };
     }
 
-    // If we have a user wallet but couldn't determine above, use it
+    // If we have a user wallet but couldn't match above
     if (privyUser?.wallet) {
       return { address: privyUser.wallet.address, chain: "base" };
     }
@@ -91,16 +94,6 @@ export function useAuth() {
     enabled: !!connectedWallet,
     staleTime: 5 * 60 * 1000,
   });
-
-  const signIn = useCallback(() => {
-    login();
-  }, [login]);
-
-  const signOut = useCallback(async () => {
-    await logout();
-    queryClient.removeQueries({ queryKey: ["auth-user"] });
-    queryClient.removeQueries({ queryKey: ["favorites"] });
-  }, [logout, queryClient]);
 
   return {
     ready,
