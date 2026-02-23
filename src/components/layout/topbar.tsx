@@ -3,7 +3,7 @@
 import { Crown, List, Scan } from "@phosphor-icons/react";
 import { AuthButton } from "./auth-button";
 import { ChainSelector } from "./chain-selector";
-import { ThemeToggle } from "./theme-toggle";
+
 import { TokenSearch } from "@/components/shared/token-search";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -53,7 +53,6 @@ export function Topbar() {
       <div className="flex items-center gap-3">
         <ChainSelector />
         <AuthButton />
-        <ThemeToggle />
       </div>
     </header>
   );
