@@ -21,25 +21,32 @@ export function AuthButton() {
 
   if (!authenticated || !connectedWallet) {
     return (
-      <button
+      <div
+        role="button"
+        tabIndex={0}
         onClick={signIn}
-        className="flex items-center gap-2 h-9 px-3 rounded-lg border border-[#00F0FF]/20 bg-[#00F0FF]/[0.06] hover:bg-[#00F0FF]/[0.12] transition-all text-sm text-[#00F0FF] font-medium"
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") signIn(); }}
+        className="flex items-center gap-2 h-9 px-3 rounded-lg border border-[#00F0FF]/20 bg-[#00F0FF]/[0.06] hover:bg-[#00F0FF]/[0.12] transition-all text-sm text-[#00F0FF] font-medium cursor-pointer select-none"
       >
         <SignIn className="h-4 w-4" />
         <span className="hidden sm:inline">Sign In</span>
-      </button>
+      </div>
     );
   }
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button className="flex items-center gap-2 h-9 px-3 rounded-lg border border-white/[0.06] bg-white/[0.03] hover:bg-white/[0.06] transition-all text-sm">
+        <div
+          role="button"
+          tabIndex={0}
+          className="flex items-center gap-2 h-9 px-3 rounded-lg border border-white/[0.06] bg-white/[0.03] hover:bg-white/[0.06] transition-all text-sm cursor-pointer select-none"
+        >
           <Wallet className="h-4 w-4 text-[#00F0FF]" />
           <span className="font-mono text-[#E8E8ED] text-xs">
             {shortenAddress(connectedWallet.address, 4)}
           </span>
-        </button>
+        </div>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"

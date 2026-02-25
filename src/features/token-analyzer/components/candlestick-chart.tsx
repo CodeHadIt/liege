@@ -110,8 +110,10 @@ export function CandlestickChart({ chain, address, marketCap, priceUsd }: Candle
 
     chartRef.current = chart;
 
-    // Sort bars ascending by timestamp
-    const sorted = [...bars].sort((a, b) => a.timestamp - b.timestamp);
+    // Sort bars ascending by timestamp and deduplicate
+    const sorted = [...bars]
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .filter((bar, i, arr) => i === 0 || bar.timestamp !== arr[i - 1].timestamp);
 
     // Volume series (shared between both modes)
     const volumeSeries = chart.addSeries(HistogramSeries, {
