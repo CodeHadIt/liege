@@ -141,6 +141,10 @@ export interface WalletQuickViewData {
   stablecoinTotal: number;
   stablecoins: StablecoinBalance[];
   pnl30d: number;
+  pnl7d: number;
+  bestTrade30d: { symbol: string; pnl: number } | null;
+  bestTrade7d: { symbol: string; pnl: number } | null;
+  freshBuys7d: { tokenAddress: string; symbol: string; boughtUsd: number }[];
   pnlHistory: { date: string; pnl: number }[];
   activePositions: WalletPosition[];
   recentPnls: PnlHistoryEntry[];

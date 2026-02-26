@@ -131,6 +131,18 @@ export async function POST(request: Request) {
     const topBuys: PnlHistoryEntry[] = [];
     const recentActivity: WalletQuickViewData["recentActivity"] = [];
 
+    // 7d tracking: per-mint buys/sells within 7 days
+    const nowMs = Date.now();
+    const sevenDaysAgoSec = Math.floor((nowMs - 7 * 24 * 60 * 60 * 1000) / 1000);
+    const thirtyDaysAgoSec = Math.floor((nowMs - 30 * 24 * 60 * 60 * 1000) / 1000);
+    // Per-mint buy USD within 7d
+    const buys7d = new Map<string, number>();
+    // Per-mint sell USD within 7d
+    const sells7d = new Map<string, number>();
+    // Best single sell PnL in 30d / 7d
+    let bestTrade30d: { symbol: string; pnl: number } | null = null;
+    let bestTrade7d: { symbol: string; pnl: number } | null = null;
+
     if (chainId === "solana") {
       // Fetch swap history (2 pages = up to 200 swaps)
       const swapTxns = await helius.getWalletHistoryAll(walletAddress, {
@@ -225,6 +237,22 @@ export async function POST(request: Request) {
             side: "sell",
             amount: soldAmount,
           });
+
+          // 7d sell tracking
+          if (tx.timestamp >= sevenDaysAgoSec) {
+            sells7d.set(soldMint, (sells7d.get(soldMint) ?? 0) + receivedUsd);
+          }
+          // Best single-trade tracking (30d and 7d)
+          if (tx.timestamp >= thirtyDaysAgoSec) {
+            if (!bestTrade30d || receivedUsd > bestTrade30d.pnl) {
+              bestTrade30d = { symbol, pnl: receivedUsd };
+            }
+          }
+          if (tx.timestamp >= sevenDaysAgoSec) {
+            if (!bestTrade7d || receivedUsd > bestTrade7d.pnl) {
+              bestTrade7d = { symbol, pnl: receivedUsd };
+            }
+          }
         }
 
         // If we received a token (spent SOL/stables → got token) = buy
@@ -248,6 +276,11 @@ export async function POST(request: Request) {
             side: "buy",
             amount: boughtAmount,
           });
+
+          // 7d buy tracking
+          if (tx.timestamp >= sevenDaysAgoSec) {
+            buys7d.set(boughtMint, (buys7d.get(boughtMint) ?? 0) + buyUsd);
+          }
         }
       }
     }
@@ -290,6 +323,23 @@ export async function POST(request: Request) {
 
     const pnl30d = cumPnl;
 
+    // Compute 7d PnL (sum of all sells in 7d window)
+    let pnl7d = 0;
+    for (const usd of sells7d.values()) {
+      pnl7d += usd;
+    }
+
+    // Fresh buys: tokens bought in 7d with no sells in 7d, still held
+    const heldMints = new Set(activePositions.map((p) => p.tokenAddress));
+    const freshBuys7d: WalletQuickViewData["freshBuys7d"] = [];
+    for (const [mint, boughtUsd] of buys7d) {
+      if (!sells7d.has(mint) && heldMints.has(mint)) {
+        const symbol = symbolMap.get(mint) ?? mint.slice(0, 6);
+        freshBuys7d.push({ tokenAddress: mint, symbol, boughtUsd });
+      }
+    }
+    freshBuys7d.sort((a, b) => b.boughtUsd - a.boughtUsd);
+
     const result: WalletQuickViewData = {
       address: walletAddress,
       chain: chainId,
@@ -299,6 +349,10 @@ export async function POST(request: Request) {
       stablecoinTotal,
       stablecoins,
       pnl30d,
+      pnl7d,
+      bestTrade30d,
+      bestTrade7d,
+      freshBuys7d,
       pnlHistory,
       activePositions,
       recentPnls: recentPnls.slice(0, 20),

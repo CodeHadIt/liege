@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import {
   Star,
@@ -8,15 +9,10 @@ import {
   Trash,
   CircleNotch,
   ArrowSquareOut,
+  CaretDown,
+  CaretUp,
 } from "@phosphor-icons/react";
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
+import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { useFavorites, type Favorite } from "@/hooks/use-favorites";
 import { useWalletQuickView } from "@/hooks/use-wallet-quick-view";
@@ -25,6 +21,7 @@ import {
   formatNumber,
   chainLabel,
 } from "@/lib/utils";
+import type { FavoriteSummary } from "@/app/api/favorites/insights/route";
 import type { ChainId } from "@/types/chain";
 
 function formatUsdCompact(value: number): string {
@@ -37,9 +34,37 @@ function formatUsdCompact(value: number): string {
   return `${sign}$${abs.toFixed(2)}`;
 }
 
+function useFavoriteInsights(favorites: Favorite[]) {
+  return useQuery<Record<string, FavoriteSummary>>({
+    queryKey: [
+      "favorite-insights",
+      favorites.map((f) => `${f.chain}:${f.wallet_address}`).join(","),
+    ],
+    queryFn: async () => {
+      const res = await fetch("/api/favorites/insights", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          wallets: favorites.map((f) => ({
+            address: f.wallet_address,
+            chain: f.chain,
+          })),
+        }),
+      });
+      if (!res.ok) return {};
+      return res.json();
+    },
+    enabled: favorites.length > 0,
+    staleTime: 2 * 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+}
+
 export default function FavoritesPage() {
   const { ready, authenticated, signIn } = useAuth();
   const { favorites, isLoading } = useFavorites();
+  const { data: insights, isLoading: insightsLoading } =
+    useFavoriteInsights(favorites);
 
   if (!ready) {
     return (
@@ -132,7 +157,7 @@ export default function FavoritesPage() {
           </h2>
           <p className="text-sm text-[#6B6B80] max-w-md mx-auto">
             Visit any wallet page and click the star icon to add it to your
-            favorites. You&apos;ll see insights like balance, P&L, and active
+            favorites. You&apos;ll see insights like balance and active
             positions here.
           </p>
         </div>
@@ -189,19 +214,36 @@ export default function FavoritesPage() {
       {/* Favorite cards */}
       <div className="space-y-3">
         {favorites.map((fav) => (
-          <FavoriteWalletCard key={fav.id} favorite={fav} />
+          <FavoriteWalletCard
+            key={fav.id}
+            favorite={fav}
+            summary={insights?.[`${fav.chain}:${fav.wallet_address}`] ?? null}
+            summaryLoading={insightsLoading}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function FavoriteWalletCard({ favorite }: { favorite: Favorite }) {
+function FavoriteWalletCard({
+  favorite,
+  summary,
+  summaryLoading,
+}: {
+  favorite: Favorite;
+  summary: FavoriteSummary | null;
+  summaryLoading: boolean;
+}) {
   const { removeFavorite, isRemoving } = useFavorites();
-  const { data, isLoading } = useWalletQuickView({
-    walletAddress: favorite.wallet_address,
-    chain: favorite.chain,
-  });
+  const [expanded, setExpanded] = useState(false);
+
+  const { data: quickView, isLoading: quickViewLoading } = useWalletQuickView(
+    { walletAddress: favorite.wallet_address, chain: favorite.chain as ChainId },
+    { enabled: expanded }
+  );
+
+  const isSolana = favorite.chain === "solana";
 
   return (
     <div className="glow-card rounded-xl overflow-hidden animate-fade-up">
@@ -232,162 +274,203 @@ function FavoriteWalletCard({ favorite }: { favorite: Favorite }) {
             )}
           </div>
         </div>
-        <button
-          onClick={() => removeFavorite(favorite.id)}
-          disabled={isRemoving}
-          className="h-8 w-8 rounded-lg border border-white/[0.06] bg-white/[0.03] text-[#6B6B80] hover:text-[#FF3B5C] hover:border-[#FF3B5C]/20 hover:bg-[#FF3B5C]/[0.06] transition-all flex items-center justify-center"
-          title="Remove from favorites"
-        >
-          <Trash className="h-3.5 w-3.5" />
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="h-8 w-8 rounded-lg border border-white/[0.06] bg-white/[0.03] text-[#6B6B80] hover:text-[#00F0FF] hover:border-[#00F0FF]/20 hover:bg-[#00F0FF]/[0.06] transition-all flex items-center justify-center"
+            title={expanded ? "Collapse" : "Expand details"}
+          >
+            {expanded ? (
+              <CaretUp className="h-3.5 w-3.5" />
+            ) : (
+              <CaretDown className="h-3.5 w-3.5" />
+            )}
+          </button>
+          <button
+            onClick={() => removeFavorite(favorite.id)}
+            disabled={isRemoving}
+            className="h-8 w-8 rounded-lg border border-white/[0.06] bg-white/[0.03] text-[#6B6B80] hover:text-[#FF3B5C] hover:border-[#FF3B5C]/20 hover:bg-[#FF3B5C]/[0.06] transition-all flex items-center justify-center"
+            title="Remove from favorites"
+          >
+            <Trash className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
 
-      {/* Card body */}
+      {/* Collapsed body — always visible */}
       <div className="px-5 py-4">
-        {isLoading && (
+        {summaryLoading && !summary && (
           <div className="flex items-center justify-center py-6 text-[#6B6B80]">
             <CircleNotch className="h-4 w-4 animate-spin text-[#00F0FF] mr-2" />
             <span className="text-xs font-mono">Loading insights...</span>
           </div>
         )}
 
-        {data && (
-          <div className="space-y-3">
-            {/* Stats */}
-            <div className="grid grid-cols-3 gap-3">
-              <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3">
-                <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-1">
-                  {data.nativeSymbol}
-                </div>
-                <div className="text-sm font-bold font-mono text-[#E8E8ED]">
-                  {formatNumber(data.nativeBalance)}
-                </div>
-                <div className="text-[10px] font-mono text-[#6B6B80]">
-                  {formatUsdCompact(data.nativeBalanceUsd)}
-                </div>
+        {summary && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3">
+              <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-1">
+                {summary.nativeSymbol}
               </div>
-              <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3">
-                <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-1">
-                  Stablecoins
-                </div>
-                <div className="text-sm font-bold font-mono text-[#00FF88]">
-                  {formatUsdCompact(data.stablecoinTotal)}
-                </div>
+              <div className="text-sm font-bold font-mono text-[#E8E8ED]">
+                {formatNumber(summary.nativeBalance)}
               </div>
-              <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3">
-                <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-1">
-                  30d PNL
-                </div>
-                <div
-                  className={`text-sm font-bold font-mono ${
-                    data.pnl30d >= 0 ? "text-[#00FF88]" : "text-[#FF3B5C]"
-                  }`}
-                >
-                  {data.pnl30d >= 0 ? "+" : ""}
-                  {formatUsdCompact(data.pnl30d)}
-                </div>
+              <div className="text-[10px] font-mono text-[#6B6B80]">
+                {formatUsdCompact(summary.nativeBalanceUsd)}
               </div>
             </div>
-
-            {/* Mini PNL chart */}
-            {data.pnlHistory.length > 0 && (
-              <div className="h-[80px] rounded-lg bg-white/[0.02] border border-white/[0.04] p-2">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={data.pnlHistory}>
-                    <defs>
-                      <linearGradient
-                        id={`pnlGrad-${favorite.id}`}
-                        x1="0"
-                        y1="0"
-                        x2="0"
-                        y2="1"
-                      >
-                        <stop
-                          offset="0%"
-                          stopColor={
-                            data.pnl30d >= 0 ? "#00FF88" : "#FF3B5C"
-                          }
-                          stopOpacity={0.3}
-                        />
-                        <stop
-                          offset="100%"
-                          stopColor={
-                            data.pnl30d >= 0 ? "#00FF88" : "#FF3B5C"
-                          }
-                          stopOpacity={0}
-                        />
-                      </linearGradient>
-                    </defs>
-                    <XAxis dataKey="date" hide />
-                    <YAxis hide domain={["auto", "auto"]} />
-                    <Tooltip
-                      content={({ active, payload }) => {
-                        if (!active || !payload?.length) return null;
-                        const entry = payload[0].payload as {
-                          date: string;
-                          pnl: number;
-                        };
-                        return (
-                          <div className="rounded-lg px-2.5 py-1.5 text-[10px] font-mono bg-[#111118] border border-white/[0.08] shadow-xl">
-                            <div className="text-[#6B6B80]">{entry.date}</div>
-                            <div
-                              className={
-                                entry.pnl >= 0
-                                  ? "text-[#00FF88]"
-                                  : "text-[#FF3B5C]"
-                              }
-                            >
-                              {entry.pnl >= 0 ? "+" : ""}
-                              {formatUsdCompact(entry.pnl)}
-                            </div>
-                          </div>
-                        );
-                      }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="pnl"
-                      stroke={data.pnl30d >= 0 ? "#00FF88" : "#FF3B5C"}
-                      strokeWidth={1.5}
-                      fill={`url(#pnlGrad-${favorite.id})`}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
+            <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3">
+              <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-1">
+                Stablecoins
               </div>
-            )}
-
-            {/* Active positions preview */}
-            {data.activePositions.length > 0 && (
-              <div>
-                <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-2">
-                  Active Positions
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {data.activePositions.slice(0, 8).map((pos) => (
-                    <span
-                      key={pos.tokenAddress}
-                      className="text-[10px] font-mono font-semibold px-2 py-1 rounded-md bg-white/[0.04] border border-white/[0.06] text-[#E8E8ED]"
-                    >
-                      {pos.symbol}
-                    </span>
-                  ))}
-                  {data.activePositions.length > 8 && (
-                    <span className="text-[10px] font-mono px-2 py-1 rounded-md bg-white/[0.02] text-[#6B6B80]">
-                      +{data.activePositions.length - 8} more
-                    </span>
-                  )}
-                </div>
+              <div className="text-sm font-bold font-mono text-[#00FF88]">
+                {formatUsdCompact(summary.stablecoinTotal)}
               </div>
-            )}
+            </div>
+            <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3">
+              <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-1">
+                Portfolio
+              </div>
+              <div className="text-sm font-bold font-mono text-[#A855F7]">
+                {formatUsdCompact(summary.totalPortfolioUsd)}
+              </div>
+            </div>
+            <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3">
+              <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-1">
+                Positions
+              </div>
+              <div className="text-sm font-bold font-mono text-[#E8E8ED]">
+                {summary.activePositions.length}
+              </div>
+            </div>
           </div>
         )}
 
-        {!isLoading && !data && (
+        {!summaryLoading && !summary && (
           <div className="text-center py-4 text-[#6B6B80] text-xs font-mono">
             Failed to load wallet data
           </div>
         )}
       </div>
+
+      {/* Expanded body — lazy-loaded */}
+      {expanded && (
+        <div className="px-5 pb-5 border-t border-white/[0.04] pt-4 space-y-4">
+          {quickViewLoading && !quickView && (
+            <div className="flex items-center justify-center py-8 text-[#6B6B80]">
+              <CircleNotch className="h-4 w-4 animate-spin text-[#00F0FF] mr-2" />
+              <span className="text-xs font-mono">Loading detailed data...</span>
+            </div>
+          )}
+
+          {quickView && (
+            <>
+              {/* PnL stats — Solana only */}
+              {isSolana ? (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3">
+                      <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-1">
+                        30d PnL
+                      </div>
+                      <div className={`text-sm font-bold font-mono ${quickView.pnl30d >= 0 ? "text-[#00FF88]" : "text-[#FF3B5C]"}`}>
+                        {quickView.pnl30d >= 0 ? "+" : ""}{formatUsdCompact(quickView.pnl30d)}
+                      </div>
+                    </div>
+                    <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3">
+                      <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-1">
+                        7d PnL
+                      </div>
+                      <div className={`text-sm font-bold font-mono ${quickView.pnl7d >= 0 ? "text-[#00FF88]" : "text-[#FF3B5C]"}`}>
+                        {quickView.pnl7d >= 0 ? "+" : ""}{formatUsdCompact(quickView.pnl7d)}
+                      </div>
+                    </div>
+                    {quickView.bestTrade30d && (
+                      <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3">
+                        <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-1">
+                          Best 30d
+                        </div>
+                        <div className="text-sm font-bold font-mono text-[#00FF88]">
+                          {quickView.bestTrade30d.symbol}
+                        </div>
+                        <div className="text-[10px] font-mono text-[#6B6B80]">
+                          +{formatUsdCompact(quickView.bestTrade30d.pnl)}
+                        </div>
+                      </div>
+                    )}
+                    {quickView.bestTrade7d && (
+                      <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3">
+                        <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-1">
+                          Best 7d
+                        </div>
+                        <div className="text-sm font-bold font-mono text-[#00FF88]">
+                          {quickView.bestTrade7d.symbol}
+                        </div>
+                        <div className="text-[10px] font-mono text-[#6B6B80]">
+                          +{formatUsdCompact(quickView.bestTrade7d.pnl)}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-[10px] font-mono text-[#6B6B80] bg-white/[0.02] border border-white/[0.04] rounded-lg px-3 py-2">
+                  PnL data available for Solana wallets only
+                </div>
+              )}
+
+              {/* Active positions table */}
+              {quickView.activePositions.length > 0 && (
+                <div>
+                  <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-2">
+                    Active Positions
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                    {quickView.activePositions.map((pos) => (
+                      <div
+                        key={pos.tokenAddress}
+                        className="rounded-lg bg-white/[0.03] border border-white/[0.04] px-3 py-2 flex items-center justify-between gap-2"
+                      >
+                        <span className="text-[11px] font-mono font-semibold text-[#E8E8ED] truncate">
+                          {pos.symbol}
+                        </span>
+                        <span className="text-[10px] font-mono text-[#6B6B80] whitespace-nowrap">
+                          {formatUsdCompact(pos.balanceUsd)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Fresh buys — Solana only */}
+              {isSolana && quickView.freshBuys7d.length > 0 && (
+                <div>
+                  <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-2">
+                    Fresh Buys (7d, no sells)
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {quickView.freshBuys7d.map((fb) => (
+                      <span
+                        key={fb.tokenAddress}
+                        className="text-[10px] font-mono font-semibold px-2 py-1 rounded-md bg-[#00FF88]/[0.08] border border-[#00FF88]/[0.12] text-[#00FF88]"
+                      >
+                        {fb.symbol} {formatUsdCompact(fb.boughtUsd)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {!quickViewLoading && !quickView && (
+            <div className="text-center py-4 text-[#6B6B80] text-xs font-mono">
+              Failed to load detailed data
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

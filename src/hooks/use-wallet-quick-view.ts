@@ -22,11 +22,11 @@ async function fetchWalletQuickView(
   return res.json();
 }
 
-export function useWalletQuickView(input: WalletQuickViewInput | null) {
+export function useWalletQuickView(input: WalletQuickViewInput | null, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ["wallet-quick-view", input?.walletAddress, input?.chain],
     queryFn: () => fetchWalletQuickView(input!),
-    enabled: !!input,
+    enabled: (options?.enabled ?? true) && !!input,
     staleTime: 60 * 1000,
   });
 }
