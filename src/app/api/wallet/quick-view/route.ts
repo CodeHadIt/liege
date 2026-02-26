@@ -99,7 +99,7 @@ export async function POST(request: Request) {
         const stableMap = EVM_STABLES_LOWER[chainId] ?? {};
         return !stableMap[tok.tokenAddress.toLowerCase()];
       })
-      .filter((tok) => tok.balance > 0)
+      .filter((tok) => tok.balance > 0 && (tok.balanceUsd ?? 0) >= 0.01)
       .map((tok) => ({
         tokenAddress: tok.tokenAddress,
         symbol: tok.symbol,
@@ -112,6 +112,9 @@ export async function POST(request: Request) {
         pnlPercent: 0,
         entryPrice: null,
         currentPrice: tok.priceUsd,
+        totalBoughtUsd: 0,
+        totalSoldUsd: 0,
+        unrealizedPnl: 0,
       }))
       .sort((a, b) => b.balanceUsd - a.balanceUsd)
       .slice(0, 20);
@@ -142,25 +145,45 @@ export async function POST(request: Request) {
     // Best single sell PnL in 30d / 7d
     let bestTrade30d: { symbol: string; pnl: number } | null = null;
     let bestTrade7d: { symbol: string; pnl: number } | null = null;
+    // Windowed PnL accumulators (realized profit: sell proceeds − cost basis)
+    let pnl7dAccum = 0;
+    let pnl30dAccum = 0;
+    // Per-mint total bought/sold USD (all-time, for position enrichment)
+    const mintTotalBoughtUsd = new Map<string, number>();
+    const mintTotalSoldUsd = new Map<string, number>();
 
     if (chainId === "solana") {
-      // Fetch swap history (2 pages = up to 200 swaps)
-      const swapTxns = await helius.getWalletHistoryAll(walletAddress, {
-        maxPages: 2,
+      // Derive current SOL price from wallet balance (no extra API call)
+      const solPriceUsd =
+        walletBalance.nativeBalance > 0
+          ? walletBalance.nativeBalanceUsd / walletBalance.nativeBalance
+          : 0;
+
+      // Average cost basis ledger per token
+      const costLedger = new Map<
+        string,
+        { totalBoughtAmount: number; totalCostUsd: number }
+      >();
+
+      // Fetch parsed swap history via v0 API (filters SWAP client-side, up to 10 pages)
+      const swapTxns = await helius.getParsedSwapsAll(walletAddress, {
+        maxPages: 10,
         limit: 100,
-        type: "SWAP",
       });
+
+      // Reverse to chronological order so buys are processed before their sells
+      swapTxns.reverse();
 
       // Resolve token names for mints not in current portfolio
       const unknownMints: string[] = [];
       for (const tx of swapTxns) {
-        for (const bc of tx.balanceChanges) {
+        for (const tt of tx.tokenTransfers) {
           if (
-            !SOL_MINTS.has(bc.mint) &&
-            !isStableMint(bc.mint, chainId) &&
-            !symbolMap.has(bc.mint)
+            !SOL_MINTS.has(tt.mint) &&
+            !isStableMint(tt.mint, chainId) &&
+            !symbolMap.has(tt.mint)
           ) {
-            unknownMints.push(bc.mint);
+            unknownMints.push(tt.mint);
           }
         }
       }
@@ -174,13 +197,17 @@ export async function POST(request: Request) {
       }
 
       for (const tx of swapTxns) {
-        if (tx.error || !tx.timestamp) continue;
+        if (!tx.timestamp) continue;
 
-        // Aggregate balance changes by mint for this transaction
+        // Compute net token flows per mint for this wallet
         const netChanges = new Map<string, number>();
-        for (const bc of tx.balanceChanges) {
-          const cur = netChanges.get(bc.mint) ?? 0;
-          netChanges.set(bc.mint, cur + bc.amount);
+        for (const tt of tx.tokenTransfers) {
+          let delta = 0;
+          if (tt.toUserAccount === walletAddress) delta += tt.tokenAmount;
+          if (tt.fromUserAccount === walletAddress) delta -= tt.tokenAmount;
+          if (delta !== 0) {
+            netChanges.set(tt.mint, (netChanges.get(tt.mint) ?? 0) + delta);
+          }
         }
 
         // Identify what was bought (positive non-SOL, non-stable token)
@@ -193,7 +220,14 @@ export async function POST(request: Request) {
         let receivedUsd = 0;
 
         for (const [mint, amount] of netChanges) {
-          if (SOL_MINTS.has(mint)) continue; // skip SOL intermediaries
+          // Track SOL flows as USD cost/proceeds
+          if (SOL_MINTS.has(mint)) {
+            if (amount < 0)
+              costUsd += Math.abs(amount) * solPriceUsd; // SOL spent = cost
+            if (amount > 0)
+              receivedUsd += amount * solPriceUsd; // SOL received = proceeds
+            continue; // still skip SOL for buy/sell token identification
+          }
 
           if (amount > 0 && !isStableMint(mint, chainId)) {
             // Bought a token
@@ -217,9 +251,22 @@ export async function POST(request: Request) {
           }
         }
 
-        // If we received a stablecoin (sold token → got stables) = sell
+        // If we received SOL/stables (sold token → got SOL/stables) = sell
         if (soldMint && receivedUsd > 0) {
           const symbol = symbolMap.get(soldMint) ?? soldMint.slice(0, 6);
+
+          // Compute real PnL using average cost basis
+          const entry = costLedger.get(soldMint);
+          let costBasis = 0;
+          if (entry && entry.totalBoughtAmount > 0) {
+            const avgCost = entry.totalCostUsd / entry.totalBoughtAmount;
+            costBasis = soldAmount * avgCost;
+            // Deduct sold amount from ledger
+            entry.totalBoughtAmount -= soldAmount;
+            entry.totalCostUsd -= costBasis;
+          }
+          const realizedPnl = receivedUsd - costBasis;
+
           recentActivity.push({
             txHash: tx.signature,
             timestamp: tx.timestamp,
@@ -232,25 +279,32 @@ export async function POST(request: Request) {
             tokenAddress: soldMint,
             symbol,
             chain: chainId,
-            realizedPnl: receivedUsd,
+            realizedPnl,
             timestamp: tx.timestamp,
             side: "sell",
             amount: soldAmount,
           });
 
-          // 7d sell tracking
+          mintTotalSoldUsd.set(soldMint, (mintTotalSoldUsd.get(soldMint) ?? 0) + receivedUsd);
+
+          // 7d sell tracking (existence used by freshBuys7d)
           if (tx.timestamp >= sevenDaysAgoSec) {
             sells7d.set(soldMint, (sells7d.get(soldMint) ?? 0) + receivedUsd);
+            pnl7dAccum += realizedPnl;
+          }
+          // Windowed PnL: add realized profit from this sell
+          if (tx.timestamp >= thirtyDaysAgoSec) {
+            pnl30dAccum += realizedPnl;
           }
           // Best single-trade tracking (30d and 7d)
           if (tx.timestamp >= thirtyDaysAgoSec) {
-            if (!bestTrade30d || receivedUsd > bestTrade30d.pnl) {
-              bestTrade30d = { symbol, pnl: receivedUsd };
+            if (!bestTrade30d || realizedPnl > bestTrade30d.pnl) {
+              bestTrade30d = { symbol, pnl: realizedPnl };
             }
           }
           if (tx.timestamp >= sevenDaysAgoSec) {
-            if (!bestTrade7d || receivedUsd > bestTrade7d.pnl) {
-              bestTrade7d = { symbol, pnl: receivedUsd };
+            if (!bestTrade7d || realizedPnl > bestTrade7d.pnl) {
+              bestTrade7d = { symbol, pnl: realizedPnl };
             }
           }
         }
@@ -277,12 +331,32 @@ export async function POST(request: Request) {
             amount: boughtAmount,
           });
 
-          // 7d buy tracking
+          mintTotalBoughtUsd.set(boughtMint, (mintTotalBoughtUsd.get(boughtMint) ?? 0) + buyUsd);
+
+          // Record cost basis for this buy
+          const ledgerEntry = costLedger.get(boughtMint) ?? {
+            totalBoughtAmount: 0,
+            totalCostUsd: 0,
+          };
+          ledgerEntry.totalBoughtAmount += boughtAmount;
+          ledgerEntry.totalCostUsd += buyUsd;
+          costLedger.set(boughtMint, ledgerEntry);
+
+          // 7d buy tracking (per-mint, used by freshBuys7d)
           if (tx.timestamp >= sevenDaysAgoSec) {
             buys7d.set(boughtMint, (buys7d.get(boughtMint) ?? 0) + buyUsd);
           }
         }
       }
+
+    }
+
+    // Enrich active positions with buy/sell totals and unrealized PnL
+    for (const pos of activePositions) {
+      pos.totalBoughtUsd = mintTotalBoughtUsd.get(pos.tokenAddress) ?? 0;
+      pos.totalSoldUsd = mintTotalSoldUsd.get(pos.tokenAddress) ?? 0;
+      // Total PnL = current value + what you cashed out − what you put in
+      pos.unrealizedPnl = pos.balanceUsd + pos.totalSoldUsd - pos.totalBoughtUsd;
     }
 
     // Sort activity by timestamp desc
@@ -303,7 +377,7 @@ export async function POST(request: Request) {
       pnlByDay.set(key, 0);
     }
 
-    // Aggregate sell PNLs by day
+    // Aggregate realized PnL by day (sell proceeds − cost basis)
     for (const entry of recentPnls) {
       const date = new Date(entry.timestamp * 1000)
         .toISOString()
@@ -321,13 +395,8 @@ export async function POST(request: Request) {
       pnlHistory.push({ date, pnl: cumPnl });
     }
 
-    const pnl30d = cumPnl;
-
-    // Compute 7d PnL (sum of all sells in 7d window)
-    let pnl7d = 0;
-    for (const usd of sells7d.values()) {
-      pnl7d += usd;
-    }
+    const pnl30d = pnl30dAccum;
+    const pnl7d = pnl7dAccum;
 
     // Fresh buys: tokens bought in 7d with no sells in 7d, still held
     const heldMints = new Set(activePositions.map((p) => p.tokenAddress));

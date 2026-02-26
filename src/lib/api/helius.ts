@@ -302,6 +302,90 @@ export async function getWalletHistoryAll(
   return allTxns;
 }
 
+// ─── Parsed Transactions (v0 REST) ───
+
+export interface ParsedTokenTransfer {
+  fromUserAccount: string;
+  toUserAccount: string;
+  fromTokenAccount: string;
+  toTokenAccount: string;
+  tokenAmount: number;
+  mint: string;
+}
+
+export interface ParsedTransaction {
+  signature: string;
+  timestamp: number;
+  slot: number;
+  fee: number;
+  feePayer: string;
+  type: string;
+  source: string;
+  tokenTransfers: ParsedTokenTransfer[];
+  description: string;
+}
+
+/**
+ * Fetch parsed transaction history using
+ * GET https://api.helius.xyz/v0/addresses/{address}/transactions
+ *
+ * Returns enriched transactions with proper type classification and tokenTransfers.
+ * Pagination via `before` (last signature from previous page).
+ */
+async function getParsedTransactions(
+  walletAddress: string,
+  options?: { limit?: number; before?: string }
+): Promise<ParsedTransaction[]> {
+  const key = getApiKey();
+  if (!key) return [];
+  await rateLimit("helius");
+  try {
+    const params = new URLSearchParams({ "api-key": key });
+    if (options?.limit) params.set("limit", options.limit.toString());
+    if (options?.before) params.set("before", options.before);
+
+    const res = await fetch(
+      `https://api.helius.xyz/v0/addresses/${walletAddress}/transactions?${params}`,
+      { headers: { Accept: "application/json" } }
+    );
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetch multiple pages of parsed transactions, keeping only SWAPs.
+ * No type filter on the API (it misses older swaps); we filter client-side.
+ */
+export async function getParsedSwapsAll(
+  walletAddress: string,
+  options?: { maxPages?: number; limit?: number }
+): Promise<ParsedTransaction[]> {
+  const maxPages = options?.maxPages ?? 10;
+  const limit = options?.limit ?? 100;
+  const swaps: ParsedTransaction[] = [];
+  let cursor: string | undefined;
+
+  for (let page = 0; page < maxPages; page++) {
+    const txns = await getParsedTransactions(walletAddress, {
+      limit,
+      before: cursor,
+    });
+    if (txns.length === 0) break;
+
+    for (const tx of txns) {
+      if (tx.type === "SWAP") swaps.push(tx);
+    }
+
+    cursor = txns[txns.length - 1].signature;
+    if (txns.length < limit) break; // last page
+  }
+
+  return swaps;
+}
+
 // ─── Wallet Balances (v1 REST) ───
 
 export interface HeliusWalletBalance {

@@ -120,6 +120,9 @@ export interface WalletPosition {
   pnlPercent: number;
   entryPrice: number | null;
   currentPrice: number | null;
+  totalBoughtUsd: number;
+  totalSoldUsd: number;
+  unrealizedPnl: number;
 }
 
 export interface PnlHistoryEntry {

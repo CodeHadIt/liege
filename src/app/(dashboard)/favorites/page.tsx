@@ -11,6 +11,7 @@ import {
   ArrowSquareOut,
   CaretDown,
   CaretUp,
+  Copy,
 } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
@@ -425,29 +426,55 @@ function FavoriteWalletCard({
                   <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-2">
                     Active Positions
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {quickView.activePositions.map((pos) => (
-                      <div
+                      <Link
                         key={pos.tokenAddress}
-                        className="rounded-lg bg-white/[0.03] border border-white/[0.04] px-3 py-2 flex items-center gap-2"
+                        href={`/token/${pos.chain}/${pos.tokenAddress}`}
+                        target="_blank"
+                        className="rounded-lg bg-white/[0.03] border border-white/[0.04] px-3 py-2.5 hover:bg-white/[0.06] hover:border-white/[0.08] transition-colors block"
                       >
-                        {pos.logoUrl ? (
-                          <img
-                            src={pos.logoUrl}
-                            alt={pos.symbol}
-                            className="h-5 w-5 rounded-full shrink-0"
-                            onError={(e) => { e.currentTarget.style.display = "none"; }}
-                          />
-                        ) : (
-                          <div className="h-5 w-5 rounded-full bg-white/[0.06] shrink-0" />
-                        )}
-                        <span className="text-[11px] font-mono font-semibold text-[#E8E8ED] truncate">
-                          {pos.symbol}
-                        </span>
-                        <span className="text-[10px] font-mono text-[#6B6B80] whitespace-nowrap ml-auto">
-                          {formatUsdCompact(pos.balanceUsd)}
-                        </span>
-                      </div>
+                        <div className="flex items-center gap-2 mb-1.5">
+                          {pos.logoUrl ? (
+                            <img
+                              src={pos.logoUrl}
+                              alt={pos.symbol}
+                              className="h-5 w-5 rounded-full shrink-0"
+                              onError={(e) => { e.currentTarget.style.display = "none"; }}
+                            />
+                          ) : (
+                            <div className="h-5 w-5 rounded-full bg-white/[0.06] shrink-0" />
+                          )}
+                          <span className="text-[11px] font-mono font-semibold text-[#E8E8ED] truncate">
+                            {pos.symbol}
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              navigator.clipboard.writeText(pos.tokenAddress);
+                            }}
+                            className="text-[#6B6B80] hover:text-[#E8E8ED] transition-colors shrink-0"
+                            title="Copy token address"
+                          >
+                            <Copy size={12} />
+                          </button>
+                          <span className="text-[10px] font-mono text-[#6B6B80] whitespace-nowrap ml-auto">
+                            {formatUsdCompact(pos.balanceUsd)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3 text-[9px] font-mono">
+                          <span className="text-[#6B6B80]">
+                            🛒 Bought <span className="text-[#00C48C]">{formatUsdCompact(pos.totalBoughtUsd)}</span>
+                          </span>
+                          <span className="text-[#6B6B80]">
+                            💰 Sold <span className="text-[#FF3B5C]">{formatUsdCompact(pos.totalSoldUsd)}</span>
+                          </span>
+                          <span className={`ml-auto font-semibold ${pos.unrealizedPnl >= 0 ? "text-[#00C48C]" : "text-[#FF3B5C]"}`}>
+                            📊 {pos.unrealizedPnl >= 0 ? "+" : ""}{formatUsdCompact(pos.unrealizedPnl)}
+                          </span>
+                        </div>
+                      </Link>
                     ))}
                   </div>
                 </div>

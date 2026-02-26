@@ -12,6 +12,7 @@ import {
   Pulse,
   Trophy,
   ChartBar,
+  Copy,
 } from "@phosphor-icons/react";
 import {
   Dialog,
@@ -346,21 +347,30 @@ function PositionsTab({
 
   return (
     <div className="space-y-1">
-      <div className="grid grid-cols-[1fr_80px_80px] gap-2 px-2 py-1">
+      <div className="grid grid-cols-[1fr_60px_60px_60px_60px] gap-2 px-2 py-1">
         <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80]">
           Token
         </span>
         <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">
-          Balance
+          💵 Value
         </span>
         <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">
-          Value
+          🛒 Bought
+        </span>
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">
+          💰 Sold
+        </span>
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">
+          📊 PnL
         </span>
       </div>
       {positions.map((pos) => (
-        <div
+        <a
           key={pos.tokenAddress}
-          className="grid grid-cols-[1fr_80px_80px] gap-2 px-2 py-1.5 rounded-md hover:bg-white/[0.02] transition-colors"
+          href={`/token/${pos.chain}/${pos.tokenAddress}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="grid grid-cols-[1fr_60px_60px_60px_60px] gap-2 px-2 py-1.5 rounded-md hover:bg-white/[0.04] transition-colors"
         >
           <div className="flex items-center gap-2 min-w-0">
             {pos.logoUrl ? (
@@ -377,14 +387,31 @@ function PositionsTab({
             <span className="text-[11px] font-mono font-semibold text-[#E8E8ED] truncate">
               {pos.symbol}
             </span>
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                navigator.clipboard.writeText(pos.tokenAddress);
+              }}
+              className="text-[#6B6B80] hover:text-[#E8E8ED] transition-colors shrink-0"
+              title="Copy token address"
+            >
+              <Copy size={12} />
+            </button>
           </div>
-          <span className="text-[10px] font-mono text-[#E8E8ED] text-right">
-            {formatNumber(pos.balance)}
-          </span>
           <span className="text-[10px] font-mono text-[#E8E8ED] text-right">
             {formatUsdCompact(pos.balanceUsd)}
           </span>
-        </div>
+          <span className="text-[10px] font-mono text-[#00C48C] text-right">
+            {formatUsdCompact(pos.totalBoughtUsd)}
+          </span>
+          <span className="text-[10px] font-mono text-[#FF3B5C] text-right">
+            {formatUsdCompact(pos.totalSoldUsd)}
+          </span>
+          <span className={`text-[10px] font-mono font-semibold text-right ${pos.unrealizedPnl >= 0 ? "text-[#00C48C]" : "text-[#FF3B5C]"}`}>
+            {pos.unrealizedPnl >= 0 ? "+" : ""}{formatUsdCompact(pos.unrealizedPnl)}
+          </span>
+        </a>
       ))}
     </div>
   );
