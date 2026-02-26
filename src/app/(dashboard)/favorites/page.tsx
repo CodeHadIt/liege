@@ -15,6 +15,9 @@ import {
   XLogo,
   TelegramLogo,
   Globe,
+  Pencil,
+  Check,
+  X,
 } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
@@ -257,8 +260,10 @@ function FavoriteWalletCard({
   summary: FavoriteSummary | null;
   summaryLoading: boolean;
 }) {
-  const { removeFavorite, isRemoving } = useFavorites();
+  const { removeFavorite, isRemoving, updateFavorite, isUpdating } = useFavorites();
   const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editLabel, setEditLabel] = useState("");
 
   const { data: quickView, isLoading: quickViewLoading } = useWalletQuickView(
     { walletAddress: favorite.wallet_address, chain: favorite.chain as ChainId },
@@ -275,24 +280,105 @@ function FavoriteWalletCard({
           <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-[#00F0FF]/20 to-[#A855F7]/20 border border-[#00F0FF]/10 flex items-center justify-center">
             <Wallet className="h-4 w-4 text-[#00F0FF]" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <Link
-                href={`/wallet/${favorite.chain}/${favorite.wallet_address}`}
-                className="font-mono text-sm text-[#E8E8ED] hover:text-[#00F0FF] transition-colors"
-                style={{ cursor: "pointer" }}
-              >
-                {shortenAddress(favorite.wallet_address, 6)}
-                <ArrowSquareOut className="inline h-3 w-3 ml-1 opacity-50" />
-              </Link>
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#00F0FF]/10 text-[#00F0FF]/70">
-                {chainLabel(favorite.chain)}
-              </span>
-            </div>
-            {favorite.label && (
-              <span className="text-[10px] text-[#6B6B80] font-mono">
-                {favorite.label}
-              </span>
+          <div className="min-w-0">
+            {editing ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  autoFocus
+                  value={editLabel}
+                  onChange={(e) => setEditLabel(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      const trimmed = editLabel.trim();
+                      updateFavorite({ id: favorite.id, label: trimmed || null });
+                      setEditing(false);
+                    }
+                    if (e.key === "Escape") {
+                      setEditing(false);
+                    }
+                  }}
+                  placeholder="Name this wallet"
+                  className="h-7 px-2 rounded-md bg-white/[0.06] border border-[#00F0FF]/20 text-sm font-mono text-[#E8E8ED] placeholder:text-[#6B6B80]/50 outline-none focus:border-[#00F0FF]/40 w-40"
+                />
+                <button
+                  onClick={() => {
+                    const trimmed = editLabel.trim();
+                    updateFavorite({ id: favorite.id, label: trimmed || null });
+                    setEditing(false);
+                  }}
+                  className="h-7 w-7 rounded-md border border-[#00FF88]/20 bg-[#00FF88]/[0.06] text-[#00FF88] hover:bg-[#00FF88]/[0.12] transition-all flex items-center justify-center"
+                  title="Save"
+                >
+                  <Check className="h-3.5 w-3.5" weight="bold" />
+                </button>
+                <button
+                  onClick={() => setEditing(false)}
+                  className="h-7 w-7 rounded-md border border-white/[0.06] bg-white/[0.03] text-[#6B6B80] hover:text-[#FF3B5C] hover:border-[#FF3B5C]/20 transition-all flex items-center justify-center"
+                  title="Cancel"
+                >
+                  <X className="h-3.5 w-3.5" weight="bold" />
+                </button>
+              </div>
+            ) : favorite.label ? (
+              <>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm font-semibold text-[#E8E8ED] truncate">
+                    {favorite.label}
+                  </span>
+                  <button
+                    onClick={() => {
+                      setEditLabel(favorite.label || "");
+                      setEditing(true);
+                    }}
+                    className="text-[#6B6B80] hover:text-[#00F0FF] transition-colors shrink-0"
+                    title="Edit name"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Link
+                    href={`/wallet/${favorite.chain}/${favorite.wallet_address}`}
+                    className="font-mono text-[11px] text-[#6B6B80] hover:text-[#00F0FF] transition-colors"
+                  >
+                    {shortenAddress(favorite.wallet_address, 6)}
+                  </Link>
+                  <button
+                    onClick={() => navigator.clipboard.writeText(favorite.wallet_address)}
+                    className="text-[#6B6B80] hover:text-[#E8E8ED] transition-colors shrink-0"
+                    title="Copy address"
+                  >
+                    <Copy size={11} />
+                  </button>
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#00F0FF]/10 text-[#00F0FF]/70">
+                    {chainLabel(favorite.chain)}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Link
+                  href={`/wallet/${favorite.chain}/${favorite.wallet_address}`}
+                  className="font-mono text-sm text-[#E8E8ED] hover:text-[#00F0FF] transition-colors"
+                  style={{ cursor: "pointer" }}
+                >
+                  {shortenAddress(favorite.wallet_address, 6)}
+                  <ArrowSquareOut className="inline h-3 w-3 ml-1 opacity-50" />
+                </Link>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#00F0FF]/10 text-[#00F0FF]/70">
+                  {chainLabel(favorite.chain)}
+                </span>
+                <button
+                  onClick={() => {
+                    setEditLabel("");
+                    setEditing(true);
+                  }}
+                  className="text-[#6B6B80] hover:text-[#00F0FF] transition-colors shrink-0"
+                  title="Name this wallet"
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+              </div>
             )}
           </div>
         </div>

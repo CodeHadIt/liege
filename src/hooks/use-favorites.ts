@@ -79,6 +79,25 @@ export function useFavorites() {
     },
   });
 
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, label }: { id: string; label: string | null }) => {
+      const token = await getAccessToken();
+      const res = await fetch(`/api/favorites/${id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ label }),
+      });
+      if (!res.ok) throw new Error("Failed to update favorite");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["favorites"] });
+    },
+  });
+
   const isFavorited = useCallback(
     (address: string, chain: ChainId): boolean => {
       return favorites.some(
@@ -108,8 +127,10 @@ export function useFavorites() {
     error,
     addFavorite: addMutation.mutate,
     removeFavorite: removeMutation.mutate,
+    updateFavorite: updateMutation.mutate,
     isAdding: addMutation.isPending,
     isRemoving: removeMutation.isPending,
+    isUpdating: updateMutation.isPending,
     isFavorited,
     getFavoriteId,
   };
