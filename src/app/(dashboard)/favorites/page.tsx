@@ -429,12 +429,22 @@ function FavoriteWalletCard({
                     {quickView.activePositions.map((pos) => (
                       <div
                         key={pos.tokenAddress}
-                        className="rounded-lg bg-white/[0.03] border border-white/[0.04] px-3 py-2 flex items-center justify-between gap-2"
+                        className="rounded-lg bg-white/[0.03] border border-white/[0.04] px-3 py-2 flex items-center gap-2"
                       >
+                        {pos.logoUrl ? (
+                          <img
+                            src={pos.logoUrl}
+                            alt={pos.symbol}
+                            className="h-5 w-5 rounded-full shrink-0"
+                            onError={(e) => { e.currentTarget.style.display = "none"; }}
+                          />
+                        ) : (
+                          <div className="h-5 w-5 rounded-full bg-white/[0.06] shrink-0" />
+                        )}
                         <span className="text-[11px] font-mono font-semibold text-[#E8E8ED] truncate">
                           {pos.symbol}
                         </span>
-                        <span className="text-[10px] font-mono text-[#6B6B80] whitespace-nowrap">
+                        <span className="text-[10px] font-mono text-[#6B6B80] whitespace-nowrap ml-auto">
                           {formatUsdCompact(pos.balanceUsd)}
                         </span>
                       </div>
