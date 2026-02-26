@@ -433,6 +433,7 @@ export interface AssetInfo {
   symbol: string;
   name: string;
   logoUrl: string | null;
+  jsonUri: string | null;
 }
 
 /**
@@ -472,6 +473,7 @@ export async function getAssetBatch(
             symbol: item.content.metadata.symbol || "???",
             name: item.content.metadata.name || "Unknown",
             logoUrl: item.content?.links?.image ?? null,
+            jsonUri: item.content?.json_uri ?? null,
           });
         }
       }
@@ -481,4 +483,31 @@ export async function getAssetBatch(
   }
 
   return result;
+}
+
+// ─── Token Socials (off-chain metadata) ───
+
+export interface TokenSocials {
+  twitter: string | null;
+  telegram: string | null;
+  website: string | null;
+}
+
+export async function fetchTokenSocials(
+  jsonUri: string
+): Promise<TokenSocials> {
+  const empty: TokenSocials = { twitter: null, telegram: null, website: null };
+  try {
+    const res = await fetch(jsonUri, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return empty;
+    const json = await res.json();
+    const ext = json.extensions ?? {};
+    return {
+      twitter: ext.twitter ?? ext.x ?? null,
+      telegram: ext.telegram ?? null,
+      website: ext.website ?? null,
+    };
+  } catch {
+    return empty;
+  }
 }

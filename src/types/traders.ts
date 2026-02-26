@@ -147,7 +147,16 @@ export interface WalletQuickViewData {
   pnl7d: number;
   bestTrade30d: { symbol: string; pnl: number } | null;
   bestTrade7d: { symbol: string; pnl: number } | null;
-  freshBuys7d: { tokenAddress: string; symbol: string; boughtUsd: number }[];
+  freshBuys7d: {
+    tokenAddress: string;
+    symbol: string;
+    boughtUsd: number;
+    logoUrl: string | null;
+    buyTimestamp: number;
+    twitter: string | null;
+    telegram: string | null;
+    website: string | null;
+  }[];
   pnlHistory: { date: string; pnl: number }[];
   activePositions: WalletPosition[];
   recentPnls: PnlHistoryEntry[];

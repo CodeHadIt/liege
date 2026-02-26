@@ -140,11 +140,13 @@ export async function POST(request: Request) {
     const thirtyDaysAgoSec = Math.floor((nowMs - 30 * 24 * 60 * 60 * 1000) / 1000);
     // Per-mint buy USD within 7d
     const buys7d = new Map<string, number>();
+    // Per-mint first buy timestamp within 7d
+    const buys7dFirstTs = new Map<string, number>();
     // Per-mint sell USD within 7d
     const sells7d = new Map<string, number>();
-    // Best single sell PnL in 30d / 7d
-    let bestTrade30d: { symbol: string; pnl: number } | null = null;
-    let bestTrade7d: { symbol: string; pnl: number } | null = null;
+    // Per-mint aggregated realized PnL in 30d / 7d (for best trade)
+    const mintPnl30d = new Map<string, { symbol: string; pnl: number }>();
+    const mintPnl7d = new Map<string, { symbol: string; pnl: number }>();
     // Windowed PnL accumulators (realized profit: sell proceeds − cost basis)
     let pnl7dAccum = 0;
     let pnl30dAccum = 0;
@@ -291,21 +293,22 @@ export async function POST(request: Request) {
           if (tx.timestamp >= sevenDaysAgoSec) {
             sells7d.set(soldMint, (sells7d.get(soldMint) ?? 0) + receivedUsd);
             pnl7dAccum += realizedPnl;
+            // Aggregate per-mint PnL for best trade (7d)
+            const prev7 = mintPnl7d.get(soldMint);
+            mintPnl7d.set(soldMint, {
+              symbol,
+              pnl: (prev7?.pnl ?? 0) + realizedPnl,
+            });
           }
           // Windowed PnL: add realized profit from this sell
           if (tx.timestamp >= thirtyDaysAgoSec) {
             pnl30dAccum += realizedPnl;
-          }
-          // Best single-trade tracking (30d and 7d)
-          if (tx.timestamp >= thirtyDaysAgoSec) {
-            if (!bestTrade30d || realizedPnl > bestTrade30d.pnl) {
-              bestTrade30d = { symbol, pnl: realizedPnl };
-            }
-          }
-          if (tx.timestamp >= sevenDaysAgoSec) {
-            if (!bestTrade7d || realizedPnl > bestTrade7d.pnl) {
-              bestTrade7d = { symbol, pnl: realizedPnl };
-            }
+            // Aggregate per-mint PnL for best trade (30d)
+            const prev30 = mintPnl30d.get(soldMint);
+            mintPnl30d.set(soldMint, {
+              symbol,
+              pnl: (prev30?.pnl ?? 0) + realizedPnl,
+            });
           }
         }
 
@@ -345,10 +348,27 @@ export async function POST(request: Request) {
           // 7d buy tracking (per-mint, used by freshBuys7d)
           if (tx.timestamp >= sevenDaysAgoSec) {
             buys7d.set(boughtMint, (buys7d.get(boughtMint) ?? 0) + buyUsd);
+            if (!buys7dFirstTs.has(boughtMint)) {
+              buys7dFirstTs.set(boughtMint, tx.timestamp);
+            }
           }
         }
       }
 
+    }
+
+    // Derive best trade per window from aggregated per-mint PnL
+    let bestTrade30d: { symbol: string; pnl: number } | null = null;
+    for (const entry of mintPnl30d.values()) {
+      if (!bestTrade30d || entry.pnl > bestTrade30d.pnl) {
+        bestTrade30d = { symbol: entry.symbol, pnl: entry.pnl };
+      }
+    }
+    let bestTrade7d: { symbol: string; pnl: number } | null = null;
+    for (const entry of mintPnl7d.values()) {
+      if (!bestTrade7d || entry.pnl > bestTrade7d.pnl) {
+        bestTrade7d = { symbol: entry.symbol, pnl: entry.pnl };
+      }
     }
 
     // Enrich active positions with buy/sell totals and unrealized PnL
@@ -404,10 +424,44 @@ export async function POST(request: Request) {
     for (const [mint, boughtUsd] of buys7d) {
       if (!sells7d.has(mint) && heldMints.has(mint)) {
         const symbol = symbolMap.get(mint) ?? mint.slice(0, 6);
-        freshBuys7d.push({ tokenAddress: mint, symbol, boughtUsd });
+        freshBuys7d.push({
+          tokenAddress: mint,
+          symbol,
+          boughtUsd,
+          logoUrl: null,
+          buyTimestamp: buys7dFirstTs.get(mint) ?? 0,
+          twitter: null,
+          telegram: null,
+          website: null,
+        });
       }
     }
     freshBuys7d.sort((a, b) => b.boughtUsd - a.boughtUsd);
+
+    // Enrich fresh buys with logo + socials from DAS API
+    if (freshBuys7d.length > 0) {
+      const freshMints = freshBuys7d.map((fb) => fb.tokenAddress);
+      const freshAssets = await helius.getAssetBatch(freshMints);
+
+      const socialsPromises = freshBuys7d.map(async (fb) => {
+        const asset = freshAssets.get(fb.tokenAddress);
+        if (asset?.jsonUri) {
+          return helius.fetchTokenSocials(asset.jsonUri);
+        }
+        return { twitter: null, telegram: null, website: null };
+      });
+      const socialsResults = await Promise.all(socialsPromises);
+
+      for (let i = 0; i < freshBuys7d.length; i++) {
+        const fb = freshBuys7d[i];
+        const asset = freshAssets.get(fb.tokenAddress);
+        const pos = activePositions.find((p) => p.tokenAddress === fb.tokenAddress);
+        fb.logoUrl = pos?.logoUrl ?? asset?.logoUrl ?? null;
+        fb.twitter = socialsResults[i].twitter;
+        fb.telegram = socialsResults[i].telegram;
+        fb.website = socialsResults[i].website;
+      }
+    }
 
     const result: WalletQuickViewData = {
       address: walletAddress,

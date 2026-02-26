@@ -12,6 +12,9 @@ import {
   CaretDown,
   CaretUp,
   Copy,
+  XLogo,
+  TelegramLogo,
+  Globe,
 } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
@@ -33,6 +36,24 @@ function formatUsdCompact(value: number): string {
   if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(1)}K`;
   if (abs >= 1) return `${sign}$${abs.toFixed(0)}`;
   return `${sign}$${abs.toFixed(2)}`;
+}
+
+function formatRelativeTime(epochSec: number): string {
+  if (!epochSec) return "—";
+  const diffSec = Math.floor(Date.now() / 1000) - epochSec;
+  if (diffSec < 3600) return `${Math.max(1, Math.floor(diffSec / 60))}m ago`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+  return `${Math.floor(diffSec / 86400)}d ago`;
+}
+
+function formatHoldDuration(epochSec: number): string {
+  if (!epochSec) return "—";
+  const diffSec = Math.floor(Date.now() / 1000) - epochSec;
+  const days = Math.floor(diffSec / 86400);
+  const hours = Math.floor((diffSec % 86400) / 3600);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h`;
+  return `${Math.max(1, Math.floor(diffSec / 60))}m`;
 }
 
 function useFavoriteInsights(favorites: Favorite[]) {
@@ -486,14 +507,92 @@ function FavoriteWalletCard({
                   <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-2">
                     Fresh Buys (7d, no sells)
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {quickView.freshBuys7d.map((fb) => (
-                      <span
+                      <Link
                         key={fb.tokenAddress}
-                        className="text-[10px] font-mono font-semibold px-2 py-1 rounded-md bg-[#00FF88]/[0.08] border border-[#00FF88]/[0.12] text-[#00FF88]"
+                        href={`/token/solana/${fb.tokenAddress}`}
+                        target="_blank"
+                        className="rounded-lg bg-[#00FF88]/[0.04] border border-[#00FF88]/[0.08] px-3 py-2.5 hover:bg-[#00FF88]/[0.08] transition-colors block"
                       >
-                        {fb.symbol} {formatUsdCompact(fb.boughtUsd)}
-                      </span>
+                        <div className="flex items-center gap-2 mb-1.5">
+                          {fb.logoUrl ? (
+                            <img
+                              src={fb.logoUrl}
+                              alt={fb.symbol}
+                              className="h-5 w-5 rounded-full shrink-0"
+                              onError={(e) => { e.currentTarget.style.display = "none"; }}
+                            />
+                          ) : (
+                            <div className="h-5 w-5 rounded-full bg-[#00FF88]/[0.12] flex items-center justify-center text-[8px] font-bold text-[#00FF88] shrink-0">
+                              {fb.symbol.slice(0, 2)}
+                            </div>
+                          )}
+                          <span className="text-[11px] font-mono font-semibold text-[#E8E8ED] truncate">
+                            {fb.symbol}
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              navigator.clipboard.writeText(fb.tokenAddress);
+                            }}
+                            className="text-[#6B6B80] hover:text-[#E8E8ED] transition-colors shrink-0"
+                            title="Copy token address"
+                          >
+                            <Copy size={12} />
+                          </button>
+                          <div className="flex items-center gap-1 ml-auto shrink-0">
+                            {fb.twitter && (
+                              <a
+                                href={fb.twitter}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-[#6B6B80] hover:text-[#1DA1F2] transition-colors"
+                                title="Twitter / X"
+                              >
+                                <XLogo size={12} />
+                              </a>
+                            )}
+                            {fb.telegram && (
+                              <a
+                                href={fb.telegram}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-[#6B6B80] hover:text-[#26A5E4] transition-colors"
+                                title="Telegram"
+                              >
+                                <TelegramLogo size={12} />
+                              </a>
+                            )}
+                            {fb.website && (
+                              <a
+                                href={fb.website}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-[#6B6B80] hover:text-[#E8E8ED] transition-colors"
+                                title="Website"
+                              >
+                                <Globe size={12} />
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 text-[9px] font-mono">
+                          <span className="text-[#6B6B80]">
+                            🛒 Bought <span className="text-[#00FF88]">{formatUsdCompact(fb.boughtUsd)}</span>
+                          </span>
+                          <span className="text-[#6B6B80]">
+                            🕐 {formatRelativeTime(fb.buyTimestamp)}
+                          </span>
+                          <span className="text-[#6B6B80]">
+                            ⏳ Held {formatHoldDuration(fb.buyTimestamp)}
+                          </span>
+                        </div>
+                      </Link>
                     ))}
                   </div>
                 </div>
