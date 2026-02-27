@@ -7,6 +7,7 @@ import { ChainProvider } from "@/providers/chain-provider";
 import { WalletDialogProvider } from "@/providers/wallet-dialog-provider";
 import { WalletDialog } from "@/components/shared/wallet-dialog";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ToastProvider } from "@/providers/toast-provider";
 import "./globals.css";
 
 const outfit = Outfit({
@@ -43,8 +44,10 @@ export default function RootLayout({
               <ChainProvider>
                 <WalletDialogProvider>
                   <TooltipProvider>
-                    {children}
-                    <WalletDialog />
+                    <ToastProvider>
+                      {children}
+                      <WalletDialog />
+                    </ToastProvider>
                   </TooltipProvider>
                 </WalletDialogProvider>
               </ChainProvider>

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getChainProvider, isChainSupported } from "@/lib/chains/registry";
 import { CHAIN_CONFIGS } from "@/config/chains";
 import * as helius from "@/lib/api/helius";
+import { getTokenPairs } from "@/lib/api/dexscreener";
 import { serverCache, CACHE_TTL } from "@/lib/cache";
 import type { ChainId } from "@/types/chain";
 import type {
@@ -144,6 +145,14 @@ export async function POST(request: Request) {
     const buys7dFirstTs = new Map<string, number>();
     // Per-mint sell USD within 7d
     const sells7d = new Map<string, number>();
+    // Per-mint buy USD within exclusive 7d-30d window (not overlapping 7d)
+    const buys30d = new Map<string, number>();
+    // Per-mint first buy timestamp within exclusive 7d-30d window
+    const buys30dFirstTs = new Map<string, number>();
+    // Per-mint sell USD within full 0-30d window (any sell disqualifies)
+    const sells30d = new Map<string, number>();
+    // Per-mint cumulative buy USD within full 0-30d window (for display totals)
+    const cumulativeBuys30d = new Map<string, number>();
     // Per-mint aggregated realized PnL in 30d / 7d (for best trade)
     const mintPnl30d = new Map<string, { symbol: string; pnl: number }>();
     const mintPnl7d = new Map<string, { symbol: string; pnl: number }>();
@@ -167,9 +176,9 @@ export async function POST(request: Request) {
         { totalBoughtAmount: number; totalCostUsd: number }
       >();
 
-      // Fetch parsed swap history via v0 API (filters SWAP client-side, up to 10 pages)
+      // Fetch parsed swap history via v0 API (filters SWAP client-side, up to 30 pages to cover 30d)
       const swapTxns = await helius.getParsedSwapsAll(walletAddress, {
-        maxPages: 10,
+        maxPages: 30,
         limit: 100,
       });
 
@@ -303,6 +312,7 @@ export async function POST(request: Request) {
           // Windowed PnL: add realized profit from this sell
           if (tx.timestamp >= thirtyDaysAgoSec) {
             pnl30dAccum += realizedPnl;
+            sells30d.set(soldMint, (sells30d.get(soldMint) ?? 0) + receivedUsd);
             // Aggregate per-mint PnL for best trade (30d)
             const prev30 = mintPnl30d.get(soldMint);
             mintPnl30d.set(soldMint, {
@@ -345,11 +355,22 @@ export async function POST(request: Request) {
           ledgerEntry.totalCostUsd += buyUsd;
           costLedger.set(boughtMint, ledgerEntry);
 
+          // Cumulative buy tracking: all buys within 30d (for display totals)
+          if (tx.timestamp >= thirtyDaysAgoSec) {
+            cumulativeBuys30d.set(boughtMint, (cumulativeBuys30d.get(boughtMint) ?? 0) + buyUsd);
+          }
           // 7d buy tracking (per-mint, used by freshBuys7d)
           if (tx.timestamp >= sevenDaysAgoSec) {
             buys7d.set(boughtMint, (buys7d.get(boughtMint) ?? 0) + buyUsd);
             if (!buys7dFirstTs.has(boughtMint)) {
               buys7dFirstTs.set(boughtMint, tx.timestamp);
+            }
+          }
+          // 30d buy tracking — exclusive window: bought 7d-30d ago only
+          if (tx.timestamp >= thirtyDaysAgoSec && tx.timestamp < sevenDaysAgoSec) {
+            buys30d.set(boughtMint, (buys30d.get(boughtMint) ?? 0) + buyUsd);
+            if (!buys30dFirstTs.has(boughtMint)) {
+              buys30dFirstTs.set(boughtMint, tx.timestamp);
             }
           }
         }
@@ -418,32 +439,61 @@ export async function POST(request: Request) {
     const pnl30d = pnl30dAccum;
     const pnl7d = pnl7dAccum;
 
+    // All tokens with non-zero balance (regardless of USD value — tokens with null price still count)
+    const heldMints = new Set(
+      walletBalance.tokens
+        .filter((tok) => tok.balance > 0)
+        .map((tok) => tok.tokenAddress)
+    );
+
     // Fresh buys: tokens bought in 7d with no sells in 7d, still held
-    const heldMints = new Set(activePositions.map((p) => p.tokenAddress));
     const freshBuys7d: WalletQuickViewData["freshBuys7d"] = [];
-    for (const [mint, boughtUsd] of buys7d) {
+    for (const [mint] of buys7d) {
       if (!sells7d.has(mint) && heldMints.has(mint)) {
         const symbol = symbolMap.get(mint) ?? mint.slice(0, 6);
         freshBuys7d.push({
           tokenAddress: mint,
           symbol,
-          boughtUsd,
+          boughtUsd: cumulativeBuys30d.get(mint) ?? buys7d.get(mint) ?? 0,
           logoUrl: null,
           buyTimestamp: buys7dFirstTs.get(mint) ?? 0,
           twitter: null,
           telegram: null,
           website: null,
+          marketCap: null,
         });
       }
     }
     freshBuys7d.sort((a, b) => b.boughtUsd - a.boughtUsd);
 
-    // Enrich fresh buys with logo + socials from DAS API
-    if (freshBuys7d.length > 0) {
-      const freshMints = freshBuys7d.map((fb) => fb.tokenAddress);
+    // Fresh buys 30d: tokens bought in 30d with no sells in 30d, still held, excluding 7d tokens
+    const freshBuys7dMints = new Set(freshBuys7d.map((fb) => fb.tokenAddress));
+    const freshBuys30d: WalletQuickViewData["freshBuys30d"] = [];
+    for (const [mint] of buys30d) {
+      if (!sells30d.has(mint) && heldMints.has(mint) && !freshBuys7dMints.has(mint)) {
+        const symbol = symbolMap.get(mint) ?? mint.slice(0, 6);
+        freshBuys30d.push({
+          tokenAddress: mint,
+          symbol,
+          boughtUsd: cumulativeBuys30d.get(mint) ?? buys30d.get(mint) ?? 0,
+          logoUrl: null,
+          buyTimestamp: buys30dFirstTs.get(mint) ?? 0,
+          twitter: null,
+          telegram: null,
+          website: null,
+          marketCap: null,
+        });
+      }
+    }
+    freshBuys30d.sort((a, b) => b.boughtUsd - a.boughtUsd);
+
+    // Enrich fresh buys (7d + 30d) with logo + socials from DAS API
+    const allFreshBuys = [...freshBuys7d, ...freshBuys30d];
+    if (allFreshBuys.length > 0) {
+      const freshMints = allFreshBuys.map((fb) => fb.tokenAddress);
       const freshAssets = await helius.getAssetBatch(freshMints);
 
-      const socialsPromises = freshBuys7d.map(async (fb) => {
+      const socialsPromises = allFreshBuys.map(async (fb) => {
         const asset = freshAssets.get(fb.tokenAddress);
         if (asset?.jsonUri) {
           return helius.fetchTokenSocials(asset.jsonUri);
@@ -452,14 +502,35 @@ export async function POST(request: Request) {
       });
       const socialsResults = await Promise.all(socialsPromises);
 
-      for (let i = 0; i < freshBuys7d.length; i++) {
-        const fb = freshBuys7d[i];
+      for (let i = 0; i < allFreshBuys.length; i++) {
+        const fb = allFreshBuys[i];
         const asset = freshAssets.get(fb.tokenAddress);
         const pos = activePositions.find((p) => p.tokenAddress === fb.tokenAddress);
         fb.logoUrl = pos?.logoUrl ?? asset?.logoUrl ?? null;
         fb.twitter = socialsResults[i].twitter;
         fb.telegram = socialsResults[i].telegram;
         fb.website = socialsResults[i].website;
+      }
+
+      // Enrich with market cap from DexScreener (batch up to 30 per call)
+      const dexChainId = chainId === "solana" ? "solana" : chainId;
+      const BATCH_SIZE = 30;
+      const mcMap = new Map<string, number>();
+      for (let i = 0; i < freshMints.length; i += BATCH_SIZE) {
+        const batch = freshMints.slice(i, i + BATCH_SIZE);
+        try {
+          const pairs = await getTokenPairs(dexChainId, batch.join(","));
+          for (const pair of pairs) {
+            const addr = pair.baseToken.address;
+            const mc = pair.marketCap ?? pair.fdv ?? null;
+            if (mc && (!mcMap.has(addr) || mc > (mcMap.get(addr) ?? 0))) {
+              mcMap.set(addr, mc);
+            }
+          }
+        } catch { /* skip on failure */ }
+      }
+      for (const fb of allFreshBuys) {
+        fb.marketCap = mcMap.get(fb.tokenAddress) ?? null;
       }
     }
 
@@ -476,6 +547,7 @@ export async function POST(request: Request) {
       bestTrade30d,
       bestTrade7d,
       freshBuys7d,
+      freshBuys30d,
       pnlHistory,
       activePositions,
       recentPnls: recentPnls.slice(0, 20),

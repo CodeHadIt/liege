@@ -11,6 +11,7 @@ export interface Favorite {
   wallet_address: string;
   chain: ChainId;
   label: string | null;
+  emoji: string | null;
   created_at: string;
 }
 
@@ -80,15 +81,18 @@ export function useFavorites() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, label }: { id: string; label: string | null }) => {
+    mutationFn: async ({ id, label, emoji }: { id: string; label?: string | null; emoji?: string | null }) => {
       const token = await getAccessToken();
+      const body: Record<string, unknown> = {};
+      if (label !== undefined) body.label = label;
+      if (emoji !== undefined) body.emoji = emoji;
       const res = await fetch(`/api/favorites/${id}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ label }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error("Failed to update favorite");
       return res.json();

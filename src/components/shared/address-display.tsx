@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Copy, Check, ArrowSquareOut } from "@phosphor-icons/react";
 import { shortenAddress } from "@/lib/utils";
 import { useWalletDialog } from "@/providers/wallet-dialog-provider";
+import { useToast } from "@/providers/toast-provider";
 import { getExplorerAddressUrl } from "@/config/chains";
 import type { ChainId } from "@/types/chain";
 
@@ -24,9 +25,11 @@ export function AddressDisplay({
 }: AddressDisplayProps) {
   const [copied, setCopied] = useState(false);
   const { openWalletDialog } = useWalletDialog();
+  const showToast = useToast();
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(address);
+    showToast("Copied address successfully");
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

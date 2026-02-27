@@ -156,6 +156,18 @@ export interface WalletQuickViewData {
     twitter: string | null;
     telegram: string | null;
     website: string | null;
+    marketCap: number | null;
+  }[];
+  freshBuys30d: {
+    tokenAddress: string;
+    symbol: string;
+    boughtUsd: number;
+    logoUrl: string | null;
+    buyTimestamp: number;
+    twitter: string | null;
+    telegram: string | null;
+    website: string | null;
+    marketCap: number | null;
   }[];
   pnlHistory: { date: string; pnl: number }[];
   activePositions: WalletPosition[];

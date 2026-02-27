@@ -13,11 +13,22 @@ export async function PATCH(
 
   const { id } = await params;
   const body = await request.json();
-  const label = body.label === "" || body.label === undefined ? null : body.label;
+
+  const updates: Record<string, unknown> = {};
+  if (body.label !== undefined) {
+    updates.label = body.label === "" ? null : body.label;
+  }
+  if (body.emoji !== undefined) {
+    updates.emoji = body.emoji === "" ? null : body.emoji;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: "No fields to update" }, { status: 400 });
+  }
 
   const { data, error } = await supabase
     .from("favorite_wallets")
-    .update({ label })
+    .update(updates)
     .eq("id", id)
     .eq("user_id", user.id)
     .select()

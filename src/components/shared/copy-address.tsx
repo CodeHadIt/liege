@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Copy, Check } from "@phosphor-icons/react";
+import { useToast } from "@/providers/toast-provider";
 
 interface CopyAddressProps {
   address: string;
@@ -10,11 +11,13 @@ interface CopyAddressProps {
 
 export function CopyAddress({ address, className }: CopyAddressProps) {
   const [copied, setCopied] = useState(false);
+  const showToast = useToast();
 
   const handleCopy = async (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
     await navigator.clipboard.writeText(address);
+    showToast("Copied address successfully");
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

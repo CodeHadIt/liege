@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import {
   Star,
   Wallet,
@@ -18,6 +19,7 @@ import {
   Pencil,
   Check,
   X,
+  Smiley,
 } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
@@ -28,8 +30,18 @@ import {
   formatNumber,
   chainLabel,
 } from "@/lib/utils";
+import { useToast } from "@/providers/toast-provider";
 import type { FavoriteSummary } from "@/app/api/favorites/insights/route";
 import type { ChainId } from "@/types/chain";
+
+const EmojiPicker = dynamic(() => import("@emoji-mart/react").then((mod) => mod.default), {
+  ssr: false,
+  loading: () => (
+    <div className="flex items-center justify-center p-8">
+      <CircleNotch className="h-5 w-5 animate-spin text-[#00F0FF]" />
+    </div>
+  ),
+});
 
 function formatUsdCompact(value: number): string {
   if (value === 0) return "$0";
@@ -261,9 +273,23 @@ function FavoriteWalletCard({
   summaryLoading: boolean;
 }) {
   const { removeFavorite, isRemoving, updateFavorite, isUpdating } = useFavorites();
+  const showToast = useToast();
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editLabel, setEditLabel] = useState("");
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const emojiPickerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!emojiPickerOpen) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(e.target as Node)) {
+        setEmojiPickerOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [emojiPickerOpen]);
 
   const { data: quickView, isLoading: quickViewLoading } = useWalletQuickView(
     { walletAddress: favorite.wallet_address, chain: favorite.chain as ChainId },
@@ -273,12 +299,53 @@ function FavoriteWalletCard({
   const isSolana = favorite.chain === "solana";
 
   return (
-    <div className="glow-card rounded-xl overflow-hidden animate-fade-up">
+    <div className={`glow-card rounded-xl animate-fade-up ${emojiPickerOpen ? "overflow-visible z-50 relative" : "overflow-hidden"}`}>
       {/* Card header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.04]">
         <div className="flex items-center gap-3">
-          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-[#00F0FF]/20 to-[#A855F7]/20 border border-[#00F0FF]/10 flex items-center justify-center">
-            <Wallet className="h-4 w-4 text-[#00F0FF]" />
+          <div className="relative" ref={emojiPickerRef}>
+            <button
+              onClick={() => setEmojiPickerOpen((v) => !v)}
+              className="h-8 w-8 rounded-lg bg-gradient-to-br from-[#00F0FF]/20 to-[#A855F7]/20 border border-[#00F0FF]/10 flex items-center justify-center hover:border-[#00F0FF]/30 transition-all group"
+              title={favorite.emoji ? "Change emoji" : "Set emoji"}
+            >
+              {favorite.emoji ? (
+                <span className="text-lg leading-none">{favorite.emoji}</span>
+              ) : (
+                <>
+                  <Wallet className="h-4 w-4 text-[#00F0FF]" />
+                  <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full bg-[#1A1A2E] border border-[#00F0FF]/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Smiley className="h-2.5 w-2.5 text-[#00F0FF]" />
+                  </span>
+                </>
+              )}
+            </button>
+            {emojiPickerOpen && (
+              <div className="absolute top-10 left-0 z-[9999]">
+                <EmojiPicker
+                  data={async () => (await import("@emoji-mart/data")).default}
+                  theme="dark"
+                  onEmojiSelect={(emoji: { native: string }) => {
+                    updateFavorite({ id: favorite.id, emoji: emoji.native });
+                    setEmojiPickerOpen(false);
+                  }}
+                  previewPosition="none"
+                  skinTonePosition="search"
+                  maxFrequentRows={1}
+                />
+                {favorite.emoji && (
+                  <button
+                    onClick={() => {
+                      updateFavorite({ id: favorite.id, emoji: null });
+                      setEmojiPickerOpen(false);
+                    }}
+                    className="w-full py-2 text-xs font-mono text-[#FF3B5C] bg-[#1A1A2E] border border-white/[0.06] border-t-0 rounded-b-lg hover:bg-[#FF3B5C]/10 transition-colors"
+                  >
+                    Remove emoji
+                  </button>
+                )}
+              </div>
+            )}
           </div>
           <div className="min-w-0">
             {editing ? (
@@ -344,7 +411,7 @@ function FavoriteWalletCard({
                     {shortenAddress(favorite.wallet_address, 6)}
                   </Link>
                   <button
-                    onClick={() => navigator.clipboard.writeText(favorite.wallet_address)}
+                    onClick={() => { navigator.clipboard.writeText(favorite.wallet_address); showToast("Copied wallet address successfully"); }}
                     className="text-[#6B6B80] hover:text-[#E8E8ED] transition-colors shrink-0"
                     title="Copy address"
                   >
@@ -560,6 +627,7 @@ function FavoriteWalletCard({
                               e.preventDefault();
                               e.stopPropagation();
                               navigator.clipboard.writeText(pos.tokenAddress);
+                              showToast("Copied token address successfully");
                             }}
                             className="text-[#6B6B80] hover:text-[#E8E8ED] transition-colors shrink-0"
                             title="Copy token address"
@@ -587,7 +655,7 @@ function FavoriteWalletCard({
                 </div>
               )}
 
-              {/* Fresh buys — Solana only */}
+              {/* Fresh buys 7d — Solana only */}
               {isSolana && quickView.freshBuys7d.length > 0 && (
                 <div>
                   <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-2">
@@ -622,6 +690,7 @@ function FavoriteWalletCard({
                               e.preventDefault();
                               e.stopPropagation();
                               navigator.clipboard.writeText(fb.tokenAddress);
+                              showToast("Copied token address successfully");
                             }}
                             className="text-[#6B6B80] hover:text-[#E8E8ED] transition-colors shrink-0"
                             title="Copy token address"
@@ -667,10 +736,118 @@ function FavoriteWalletCard({
                             )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-3 text-[9px] font-mono">
+                        <div className="flex items-center gap-3 flex-wrap text-[9px] font-mono">
                           <span className="text-[#6B6B80]">
                             🛒 Bought <span className="text-[#00FF88]">{formatUsdCompact(fb.boughtUsd)}</span>
                           </span>
+                          {fb.marketCap != null && (
+                            <span className="text-[#6B6B80]">
+                              📊 MC <span className="text-[#A855F7]">{formatUsdCompact(fb.marketCap)}</span>
+                            </span>
+                          )}
+                          <span className="text-[#6B6B80]">
+                            🕐 {formatRelativeTime(fb.buyTimestamp)}
+                          </span>
+                          <span className="text-[#6B6B80]">
+                            ⏳ Held {formatHoldDuration(fb.buyTimestamp)}
+                          </span>
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Fresh buys 30d — Solana only */}
+              {isSolana && quickView.freshBuys30d.length > 0 && (
+                <div>
+                  <div className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] mb-2">
+                    Fresh Buys (30d, no sells)
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {quickView.freshBuys30d.map((fb) => (
+                      <Link
+                        key={fb.tokenAddress}
+                        href={`/token/solana/${fb.tokenAddress}`}
+                        target="_blank"
+                        className="rounded-lg bg-[#00F0FF]/[0.04] border border-[#00F0FF]/[0.08] px-3 py-2.5 hover:bg-[#00F0FF]/[0.08] transition-colors block"
+                      >
+                        <div className="flex items-center gap-2 mb-1.5">
+                          {fb.logoUrl ? (
+                            <img
+                              src={fb.logoUrl}
+                              alt={fb.symbol}
+                              className="h-5 w-5 rounded-full shrink-0"
+                              onError={(e) => { e.currentTarget.style.display = "none"; }}
+                            />
+                          ) : (
+                            <div className="h-5 w-5 rounded-full bg-[#00F0FF]/[0.12] flex items-center justify-center text-[8px] font-bold text-[#00F0FF] shrink-0">
+                              {fb.symbol.slice(0, 2)}
+                            </div>
+                          )}
+                          <span className="text-[11px] font-mono font-semibold text-[#E8E8ED] truncate">
+                            {fb.symbol}
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              navigator.clipboard.writeText(fb.tokenAddress);
+                              showToast("Copied token address successfully");
+                            }}
+                            className="text-[#6B6B80] hover:text-[#E8E8ED] transition-colors shrink-0"
+                            title="Copy token address"
+                          >
+                            <Copy size={12} />
+                          </button>
+                          <div className="flex items-center gap-1 ml-auto shrink-0">
+                            {fb.twitter && (
+                              <a
+                                href={fb.twitter}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-[#6B6B80] hover:text-[#1DA1F2] transition-colors"
+                                title="Twitter / X"
+                              >
+                                <XLogo size={12} />
+                              </a>
+                            )}
+                            {fb.telegram && (
+                              <a
+                                href={fb.telegram}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-[#6B6B80] hover:text-[#26A5E4] transition-colors"
+                                title="Telegram"
+                              >
+                                <TelegramLogo size={12} />
+                              </a>
+                            )}
+                            {fb.website && (
+                              <a
+                                href={fb.website}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-[#6B6B80] hover:text-[#E8E8ED] transition-colors"
+                                title="Website"
+                              >
+                                <Globe size={12} />
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 flex-wrap text-[9px] font-mono">
+                          <span className="text-[#6B6B80]">
+                            🛒 Bought <span className="text-[#00F0FF]">{formatUsdCompact(fb.boughtUsd)}</span>
+                          </span>
+                          {fb.marketCap != null && (
+                            <span className="text-[#6B6B80]">
+                              📊 MC <span className="text-[#A855F7]">{formatUsdCompact(fb.marketCap)}</span>
+                            </span>
+                          )}
                           <span className="text-[#6B6B80]">
                             🕐 {formatRelativeTime(fb.buyTimestamp)}
                           </span>

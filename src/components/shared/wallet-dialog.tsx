@@ -30,6 +30,7 @@ import {
 } from "@/lib/utils";
 import { getExplorerAddressUrl } from "@/config/chains";
 import { FavoriteButton } from "@/components/shared/favorite-button";
+import { useToast } from "@/providers/toast-provider";
 import type { ChainId } from "@/types/chain";
 import {
   AreaChart,
@@ -337,6 +338,7 @@ function PositionsTab({
 }: {
   positions: WalletQuickViewDataPositions;
 }) {
+  const showToast = useToast();
   if (positions.length === 0) {
     return (
       <div className="text-center py-8 text-[#6B6B80] text-xs font-mono">
@@ -392,6 +394,7 @@ function PositionsTab({
                 e.preventDefault();
                 e.stopPropagation();
                 navigator.clipboard.writeText(pos.tokenAddress);
+                showToast("Copied token address successfully");
               }}
               className="text-[#6B6B80] hover:text-[#E8E8ED] transition-colors shrink-0"
               title="Copy token address"
