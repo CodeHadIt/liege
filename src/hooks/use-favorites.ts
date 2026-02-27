@@ -12,6 +12,7 @@ export interface Favorite {
   chain: ChainId;
   label: string | null;
   emoji: string | null;
+  folder_id: string | null;
   created_at: string;
 }
 
@@ -43,10 +44,14 @@ export function useFavorites() {
       walletAddress,
       chain,
       label,
+      emoji,
+      folder_id,
     }: {
       walletAddress: string;
       chain: ChainId;
       label?: string;
+      emoji?: string;
+      folder_id?: string;
     }) => {
       const token = await getAccessToken();
       const res = await fetch("/api/favorites", {
@@ -55,7 +60,7 @@ export function useFavorites() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ walletAddress, chain, label }),
+        body: JSON.stringify({ walletAddress, chain, label, emoji, folder_id }),
       });
       if (!res.ok) throw new Error("Failed to add favorite");
       return res.json();
@@ -81,11 +86,12 @@ export function useFavorites() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, label, emoji }: { id: string; label?: string | null; emoji?: string | null }) => {
+    mutationFn: async ({ id, label, emoji, folder_id }: { id: string; label?: string | null; emoji?: string | null; folder_id?: string | null }) => {
       const token = await getAccessToken();
       const body: Record<string, unknown> = {};
       if (label !== undefined) body.label = label;
       if (emoji !== undefined) body.emoji = emoji;
+      if (folder_id !== undefined) body.folder_id = folder_id;
       const res = await fetch(`/api/favorites/${id}`, {
         method: "PATCH",
         headers: {

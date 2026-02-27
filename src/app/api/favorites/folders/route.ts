@@ -9,14 +9,14 @@ export async function GET(request: Request) {
   }
 
   const { data, error } = await supabase
-    .from("favorite_wallets")
+    .from("favorite_folders")
     .select("*")
     .eq("user_id", user.id)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: true });
 
   if (error) {
     return NextResponse.json(
-      { error: "Failed to fetch favorites" },
+      { error: "Failed to fetch folders" },
       { status: 500 }
     );
   }
@@ -31,45 +31,29 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { walletAddress, chain, label, emoji, folder_id } = body as {
-    walletAddress: string;
-    chain: string;
-    label?: string;
-    emoji?: string;
-    folder_id?: string;
-  };
+  const { name, color } = body as { name: string; color?: string };
 
-  if (!walletAddress || !chain) {
+  if (!name || !name.trim()) {
     return NextResponse.json(
-      { error: "walletAddress and chain are required" },
+      { error: "Folder name is required" },
       { status: 400 }
     );
   }
 
-  if (!["solana", "base", "bsc"].includes(chain)) {
-    return NextResponse.json({ error: "Invalid chain" }, { status: 400 });
-  }
-
   const { data, error } = await supabase
-    .from("favorite_wallets")
-    .upsert(
-      {
-        user_id: user.id,
-        wallet_address: walletAddress,
-        chain,
-        label: label || null,
-        emoji: emoji || null,
-        folder_id: folder_id || null,
-      },
-      { onConflict: "user_id,wallet_address,chain" }
-    )
+    .from("favorite_folders")
+    .insert({
+      user_id: user.id,
+      name: name.trim(),
+      color: color || null,
+    })
     .select()
     .single();
 
   if (error) {
-    console.error("Favorite upsert error:", error);
+    console.error("Folder creation error:", error);
     return NextResponse.json(
-      { error: "Failed to save favorite" },
+      { error: "Failed to create folder" },
       { status: 500 }
     );
   }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import {
@@ -20,10 +20,14 @@ import {
   Check,
   X,
   Smiley,
+  FolderSimple,
+  FolderPlus,
+  Plus,
 } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
 import { useFavorites, type Favorite } from "@/hooks/use-favorites";
+import { useFolders, type Folder } from "@/hooks/use-folders";
 import { useWalletQuickView } from "@/hooks/use-wallet-quick-view";
 import {
   shortenAddress,
@@ -31,6 +35,13 @@ import {
   chainLabel,
 } from "@/lib/utils";
 import { useToast } from "@/providers/toast-provider";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import type { FavoriteSummary } from "@/app/api/favorites/insights/route";
 import type { ChainId } from "@/types/chain";
 
@@ -97,11 +108,49 @@ function useFavoriteInsights(favorites: Favorite[]) {
   });
 }
 
+const FOLDER_COLORS = [
+  "#FFB800", "#FF3B5C", "#00F0FF", "#00FF88", "#A855F7",
+  "#FF8C42", "#0052FF", "#E8E8ED",
+];
+
 export default function FavoritesPage() {
   const { ready, authenticated, signIn } = useAuth();
   const { favorites, isLoading } = useFavorites();
+  const { folders, createFolder, deleteFolder, updateFolder, isCreating } = useFolders();
   const { data: insights, isLoading: insightsLoading } =
     useFavoriteInsights(favorites);
+
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [newFolderColor, setNewFolderColor] = useState(FOLDER_COLORS[0]);
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+
+  const favoritesByFolder = useMemo(() => {
+    const grouped: Record<string, Favorite[]> = { unfiled: [] };
+    for (const folder of folders) grouped[folder.id] = [];
+    for (const fav of favorites) {
+      const key = fav.folder_id && grouped[fav.folder_id] ? fav.folder_id : "unfiled";
+      grouped[key].push(fav);
+    }
+    return grouped;
+  }, [favorites, folders]);
+
+  function toggleCollapse(id: string) {
+    setCollapsedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function handleCreateFolder() {
+    if (!newFolderName.trim()) return;
+    createFolder({ name: newFolderName.trim(), color: newFolderColor });
+    setNewFolderName("");
+    setNewFolderColor(FOLDER_COLORS[0]);
+    setNewFolderOpen(false);
+  }
 
   if (!ready) {
     return (
@@ -208,17 +257,72 @@ export default function FavoritesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#FFB800]/20 to-[#FF8C42]/20 border border-[#FFB800]/10 flex items-center justify-center">
-          <Star className="h-5 w-5 text-[#FFB800]" weight="fill" />
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#FFB800]/20 to-[#FF8C42]/20 border border-[#FFB800]/10 flex items-center justify-center">
+            <Star className="h-5 w-5 text-[#FFB800]" weight="fill" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-[#E8E8ED]">Favorites</h1>
+            <p className="text-xs text-[#6B6B80] font-mono">
+              {favorites.length} wallet{favorites.length !== 1 ? "s" : ""}
+              {folders.length > 0 && ` · ${folders.length} folder${folders.length !== 1 ? "s" : ""}`}
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-xl font-bold text-[#E8E8ED]">Favorites</h1>
-          <p className="text-xs text-[#6B6B80] font-mono">
-            {favorites.length} wallet{favorites.length !== 1 ? "s" : ""}
-          </p>
-        </div>
+        <button
+          onClick={() => setNewFolderOpen((v) => !v)}
+          className="h-8 px-3 rounded-lg border border-white/[0.06] bg-white/[0.03] text-[#6B6B80] hover:text-[#00F0FF] hover:border-[#00F0FF]/20 hover:bg-[#00F0FF]/[0.06] transition-all flex items-center gap-1.5 text-xs font-mono"
+          title="New Folder"
+        >
+          <FolderPlus className="h-3.5 w-3.5" />
+          New Folder
+        </button>
       </div>
+
+      {/* New folder form */}
+      {newFolderOpen && (
+        <div className="glow-card rounded-xl p-4 animate-fade-up">
+          <div className="flex items-center gap-3">
+            <input
+              autoFocus
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCreateFolder();
+                if (e.key === "Escape") setNewFolderOpen(false);
+              }}
+              placeholder="Folder name"
+              className="flex-1 h-8 px-2.5 rounded-lg bg-white/[0.06] border border-white/[0.08] text-sm font-mono text-[#E8E8ED] placeholder:text-[#6B6B80]/50 outline-none focus:border-[#00F0FF]/30 transition-colors"
+            />
+            <div className="flex items-center gap-1">
+              {FOLDER_COLORS.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setNewFolderColor(c)}
+                  className={`h-5 w-5 rounded-full border-2 transition-all ${
+                    newFolderColor === c ? "border-white scale-110" : "border-transparent"
+                  }`}
+                  style={{ backgroundColor: c }}
+                />
+              ))}
+            </div>
+            <button
+              onClick={handleCreateFolder}
+              disabled={isCreating || !newFolderName.trim()}
+              className="h-8 px-3 rounded-lg bg-[#00F0FF]/10 border border-[#00F0FF]/20 text-[#00F0FF] text-xs font-mono font-semibold hover:bg-[#00F0FF]/20 transition-all disabled:opacity-50"
+            >
+              {isCreating ? <CircleNotch className="h-3.5 w-3.5 animate-spin" /> : "Create"}
+            </button>
+            <button
+              onClick={() => setNewFolderOpen(false)}
+              className="h-8 w-8 rounded-lg border border-white/[0.06] bg-white/[0.03] text-[#6B6B80] hover:text-[#FF3B5C] transition-all flex items-center justify-center"
+            >
+              <X className="h-3.5 w-3.5" weight="bold" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Stats row */}
       <div className="grid grid-cols-3 gap-3">
@@ -248,17 +352,182 @@ export default function FavoritesPage() {
         ))}
       </div>
 
-      {/* Favorite cards */}
-      <div className="space-y-3">
-        {favorites.map((fav) => (
-          <FavoriteWalletCard
-            key={fav.id}
-            favorite={fav}
-            summary={insights?.[`${fav.chain}:${fav.wallet_address}`] ?? null}
-            summaryLoading={insightsLoading}
+      {/* Folder sections */}
+      {folders.map((folder) => {
+        const folderFavs = favoritesByFolder[folder.id] || [];
+        const isCollapsed = collapsedFolders.has(folder.id);
+        return (
+          <FolderSection
+            key={folder.id}
+            folder={folder}
+            favorites={folderFavs}
+            insights={insights}
+            insightsLoading={insightsLoading}
+            isCollapsed={isCollapsed}
+            onToggle={() => toggleCollapse(folder.id)}
+            onDelete={() => deleteFolder(folder.id)}
+            onUpdate={updateFolder}
+            allFolders={folders}
           />
-        ))}
+        );
+      })}
+
+      {/* Unfiled section */}
+      {favoritesByFolder.unfiled.length > 0 && (
+        <div className="space-y-3">
+          {folders.length > 0 && (
+            <div className="flex items-center gap-2 px-1">
+              <FolderSimple className="h-4 w-4 text-[#6B6B80]" />
+              <span className="text-xs font-mono font-semibold text-[#6B6B80] uppercase tracking-widest">
+                Unfiled
+              </span>
+              <span className="text-[10px] font-mono text-[#6B6B80]/60">
+                ({favoritesByFolder.unfiled.length})
+              </span>
+            </div>
+          )}
+          {favoritesByFolder.unfiled.map((fav) => (
+            <FavoriteWalletCard
+              key={fav.id}
+              favorite={fav}
+              summary={insights?.[`${fav.chain}:${fav.wallet_address}`] ?? null}
+              summaryLoading={insightsLoading}
+              allFolders={folders}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FolderSection({
+  folder,
+  favorites,
+  insights,
+  insightsLoading,
+  isCollapsed,
+  onToggle,
+  onDelete,
+  onUpdate,
+  allFolders,
+}: {
+  folder: Folder;
+  favorites: Favorite[];
+  insights: Record<string, FavoriteSummary> | undefined;
+  insightsLoading: boolean;
+  isCollapsed: boolean;
+  onToggle: () => void;
+  onDelete: () => void;
+  onUpdate: (params: { id: string; name?: string; color?: string | null }) => void;
+  allFolders: Folder[];
+}) {
+  const [editingName, setEditingName] = useState(false);
+  const [editName, setEditName] = useState(folder.name);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between px-1">
+        <button
+          onClick={onToggle}
+          className="flex items-center gap-2 group"
+        >
+          <div
+            className="h-4 w-4 rounded-sm"
+            style={{ backgroundColor: folder.color || "#6B6B80" }}
+          />
+          {editingName ? (
+            <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+              <input
+                autoFocus
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    onUpdate({ id: folder.id, name: editName.trim() || folder.name });
+                    setEditingName(false);
+                  }
+                  if (e.key === "Escape") {
+                    setEditName(folder.name);
+                    setEditingName(false);
+                  }
+                }}
+                className="h-6 px-1.5 rounded bg-white/[0.06] border border-[#00F0FF]/20 text-xs font-mono font-semibold text-[#E8E8ED] outline-none w-32"
+              />
+              <button
+                onClick={() => {
+                  onUpdate({ id: folder.id, name: editName.trim() || folder.name });
+                  setEditingName(false);
+                }}
+                className="text-[#00FF88] hover:text-[#00FF88]/80"
+              >
+                <Check className="h-3 w-3" weight="bold" />
+              </button>
+              <button
+                onClick={() => {
+                  setEditName(folder.name);
+                  setEditingName(false);
+                }}
+                className="text-[#6B6B80] hover:text-[#FF3B5C]"
+              >
+                <X className="h-3 w-3" weight="bold" />
+              </button>
+            </div>
+          ) : (
+            <>
+              <span className="text-xs font-mono font-semibold text-[#E8E8ED] uppercase tracking-widest group-hover:text-[#00F0FF] transition-colors">
+                {folder.name}
+              </span>
+              <span className="text-[10px] font-mono text-[#6B6B80]/60">
+                ({favorites.length})
+              </span>
+              {isCollapsed ? (
+                <CaretDown className="h-3 w-3 text-[#6B6B80]" />
+              ) : (
+                <CaretUp className="h-3 w-3 text-[#6B6B80]" />
+              )}
+            </>
+          )}
+        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => {
+              setEditName(folder.name);
+              setEditingName(true);
+            }}
+            className="h-6 w-6 rounded text-[#6B6B80] hover:text-[#00F0FF] transition-colors flex items-center justify-center"
+            title="Rename folder"
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+          <button
+            onClick={onDelete}
+            className="h-6 w-6 rounded text-[#6B6B80] hover:text-[#FF3B5C] transition-colors flex items-center justify-center"
+            title="Delete folder"
+          >
+            <Trash className="h-3 w-3" />
+          </button>
+        </div>
       </div>
+      {!isCollapsed && (
+        <div className="space-y-3">
+          {favorites.length === 0 ? (
+            <div className="text-center py-4 text-[#6B6B80] text-xs font-mono">
+              No wallets in this folder
+            </div>
+          ) : (
+            favorites.map((fav) => (
+              <FavoriteWalletCard
+                key={fav.id}
+                favorite={fav}
+                summary={insights?.[`${fav.chain}:${fav.wallet_address}`] ?? null}
+                summaryLoading={insightsLoading}
+                allFolders={allFolders}
+              />
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -267,10 +536,12 @@ function FavoriteWalletCard({
   favorite,
   summary,
   summaryLoading,
+  allFolders,
 }: {
   favorite: Favorite;
   summary: FavoriteSummary | null;
   summaryLoading: boolean;
+  allFolders: Folder[];
 }) {
   const { removeFavorite, isRemoving, updateFavorite, isUpdating } = useFavorites();
   const showToast = useToast();
@@ -450,6 +721,47 @@ function FavoriteWalletCard({
           </div>
         </div>
         <div className="flex items-center gap-1.5">
+          {/* Folder assignment dropdown */}
+          {allFolders.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  className="h-8 w-8 rounded-lg border border-white/[0.06] bg-white/[0.03] text-[#6B6B80] hover:text-[#A855F7] hover:border-[#A855F7]/20 hover:bg-[#A855F7]/[0.06] transition-all flex items-center justify-center"
+                  title="Move to folder"
+                >
+                  <FolderSimple className="h-3.5 w-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="bg-[#1A1A2E] border-white/[0.08] min-w-[10rem]"
+              >
+                <DropdownMenuItem
+                  onClick={() => updateFavorite({ id: favorite.id, folder_id: null })}
+                  className={`text-xs font-mono cursor-pointer ${!favorite.folder_id ? "text-[#00F0FF]" : "text-[#E8E8ED]"}`}
+                >
+                  <FolderSimple className="h-3.5 w-3.5 mr-2" />
+                  Unfiled
+                  {!favorite.folder_id && <Check className="h-3 w-3 ml-auto" />}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator className="bg-white/[0.06]" />
+                {allFolders.map((f) => (
+                  <DropdownMenuItem
+                    key={f.id}
+                    onClick={() => updateFavorite({ id: favorite.id, folder_id: f.id })}
+                    className={`text-xs font-mono cursor-pointer ${favorite.folder_id === f.id ? "text-[#00F0FF]" : "text-[#E8E8ED]"}`}
+                  >
+                    <div
+                      className="h-3 w-3 rounded-sm mr-2 shrink-0"
+                      style={{ backgroundColor: f.color || "#6B6B80" }}
+                    />
+                    {f.name}
+                    {favorite.folder_id === f.id && <Check className="h-3 w-3 ml-auto" />}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           <button
             onClick={() => setExpanded((v) => !v)}
             className="h-8 w-8 rounded-lg border border-white/[0.06] bg-white/[0.03] text-[#6B6B80] hover:text-[#00F0FF] hover:border-[#00F0FF]/20 hover:bg-[#00F0FF]/[0.06] transition-all flex items-center justify-center"

@@ -15,14 +15,11 @@ export async function PATCH(
   const body = await request.json();
 
   const updates: Record<string, unknown> = {};
-  if (body.label !== undefined) {
-    updates.label = body.label === "" ? null : body.label;
+  if (body.name !== undefined) {
+    updates.name = body.name.trim() || null;
   }
-  if (body.emoji !== undefined) {
-    updates.emoji = body.emoji === "" ? null : body.emoji;
-  }
-  if (body.folder_id !== undefined) {
-    updates.folder_id = body.folder_id || null;
+  if (body.color !== undefined) {
+    updates.color = body.color || null;
   }
 
   if (Object.keys(updates).length === 0) {
@@ -30,7 +27,7 @@ export async function PATCH(
   }
 
   const { data, error } = await supabase
-    .from("favorite_wallets")
+    .from("favorite_folders")
     .update(updates)
     .eq("id", id)
     .eq("user_id", user.id)
@@ -39,7 +36,7 @@ export async function PATCH(
 
   if (error) {
     return NextResponse.json(
-      { error: "Failed to update favorite" },
+      { error: "Failed to update folder" },
       { status: 500 }
     );
   }
@@ -59,14 +56,14 @@ export async function DELETE(
   const { id } = await params;
 
   const { error } = await supabase
-    .from("favorite_wallets")
+    .from("favorite_folders")
     .delete()
     .eq("id", id)
     .eq("user_id", user.id);
 
   if (error) {
     return NextResponse.json(
-      { error: "Failed to delete favorite" },
+      { error: "Failed to delete folder" },
       { status: 500 }
     );
   }
