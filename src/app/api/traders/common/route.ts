@@ -1,26 +1,31 @@
 import { NextResponse } from "next/server";
 import { getChainProvider } from "@/lib/chains/registry";
+import { scrapeTopTraders } from "@/lib/api/dexscreener-scraper";
 import * as helius from "@/lib/api/helius";
 import { serverCache, CACHE_TTL } from "@/lib/cache";
 import type { ChainId } from "@/types/chain";
-import type { HolderEntry } from "@/types/token";
 import type {
   CommonTrader,
+  CommonTraderToken,
   CommonTradersRequest,
   CommonTradersResponse,
   TokenMeta,
 } from "@/types/traders";
 
-interface HolderWithOwner {
-  ownerAddress: string;
-  tokenAccountAddress: string;
-  balance: number;
-  percentage: number;
-  tokenAddress: string;
-  chain: ChainId;
-  symbol: string;
-  priceUsd: number | null;
+/** Per-wallet trading stats for one token */
+interface WalletPnl {
+  walletAddress: string;
+  totalBought: number;
+  totalSold: number;
+  pnl: number;
+  pnlUsd: number;
 }
+
+const ZERO_ADDRESSES = new Set([
+  "0x0000000000000000000000000000000000000000",
+  "0x000000000000000000000000000000000000dead",
+  "11111111111111111111111111111111",
+]);
 
 export async function POST(request: Request) {
   try {
@@ -34,139 +39,243 @@ export async function POST(request: Request) {
       );
     }
 
-    // Phase 1: Fetch holders + pair data for each token in parallel
-    const tokenResults = await Promise.all(
-      tokens.map(async ({ chain, address, symbol: clientSymbol }) => {
-        const cacheKey = `common-holders:${chain}:${address}`;
+    // Phase 1: Fetch top traders + price per token (sequential to avoid rate-limiting)
+    const tokenResults = [];
+    for (const { chain, address, symbol: clientSymbol } of tokens) {
+      const result = await (async () => {
+        const cacheKey = `common-traders-pnl-v2:${chain}:${address}`;
         const cached = serverCache.get<{
-          holders: HolderEntry[];
+          walletPnls: WalletPnl[];
           symbol: string;
           priceUsd: number | null;
         }>(cacheKey);
         if (cached) return { chain, address, ...cached };
 
         const provider = getChainProvider(chain);
-        const [holders, pairData, metadata] = await Promise.all([
-          provider.getTopHolders(address, 50),
+        const [pairData, metadata] = await Promise.all([
           provider.getPairData(address),
           provider.getTokenMetadata(address),
         ]);
 
-        const result = {
-          holders,
-          symbol: metadata?.symbol || clientSymbol || "???",
-          priceUsd: pairData?.priceUsd ?? null,
-        };
-        serverCache.set(cacheKey, result, CACHE_TTL.HOLDERS);
+        const symbol = metadata?.symbol || clientSymbol || "???";
+        const priceUsd = pairData?.priceUsd ?? null;
 
-        return { chain, address, ...result };
-      })
-    );
+        // Build per-wallet buy/sell totals
+        const walletStats = new Map<
+          string,
+          { totalBought: number; totalSold: number }
+        >();
 
-    // Phase 2: Resolve Solana token account PDAs to owner wallets
-    const solanaTokenAccounts: string[] = [];
+        if (chain === "solana") {
+          // Helius: fetch parsed swaps for the token mint address
+          const swaps = await helius.getParsedSwapsAll(address, {
+            maxPages: 5,
+            limit: 100,
+          });
+
+          for (const tx of swaps) {
+            for (const transfer of tx.tokenTransfers) {
+              if (transfer.mint !== address) continue;
+              const amount = transfer.tokenAmount;
+              if (amount <= 0) continue;
+
+              const buyer = transfer.toUserAccount;
+              if (buyer && !ZERO_ADDRESSES.has(buyer)) {
+                const stats = walletStats.get(buyer) || {
+                  totalBought: 0,
+                  totalSold: 0,
+                };
+                stats.totalBought += amount;
+                walletStats.set(buyer, stats);
+              }
+
+              const seller = transfer.fromUserAccount;
+              if (seller && !ZERO_ADDRESSES.has(seller)) {
+                const stats = walletStats.get(seller) || {
+                  totalBought: 0,
+                  totalSold: 0,
+                };
+                stats.totalSold += amount;
+                walletStats.set(seller, stats);
+              }
+            }
+          }
+        } else {
+          // EVM: scrape top traders from DexScreener
+          const topTraders = await scrapeTopTraders(chain, address);
+
+          for (const trader of topTraders) {
+            const key = trader.wallet.toLowerCase();
+            if (ZERO_ADDRESSES.has(key)) continue;
+
+            walletStats.set(key, {
+              totalBought: trader.tokensBought,
+              totalSold: trader.tokensSold,
+            });
+          }
+        }
+
+        // Compute PnL per wallet
+        const walletPnls: WalletPnl[] = [];
+        const DEBUG_WALLET = "0xacaf65505d9a48cd7a9be7eba5f25d886792354a";
+        for (const [walletAddress, stats] of walletStats) {
+          const pnl = stats.totalSold - stats.totalBought;
+          const pnlUsd = priceUsd ? pnl * priceUsd : 0;
+          const remaining = stats.totalBought - stats.totalSold;
+          const unrealizedUsd =
+            remaining > 0 && priceUsd ? remaining * priceUsd : 0;
+
+          if (walletAddress.toLowerCase() === DEBUG_WALLET) {
+            console.log(
+              `\n=== DEBUG WALLET ${DEBUG_WALLET} on ${symbol} (${address}) ===`
+            );
+            console.log(`  Price USD:       $${priceUsd}`);
+            console.log(
+              `  Total Bought:    ${stats.totalBought.toLocaleString()} tokens`
+            );
+            console.log(
+              `  Total Sold:      ${stats.totalSold.toLocaleString()} tokens`
+            );
+            console.log(
+              `  Remaining:       ${remaining.toLocaleString()} tokens`
+            );
+            console.log(
+              `  Realized PnL:    ${pnl.toLocaleString()} tokens ($${pnlUsd.toFixed(2)})`
+            );
+            console.log(
+              `  Unrealized:      ${remaining > 0 ? remaining.toLocaleString() : 0} tokens ($${unrealizedUsd.toFixed(2)})`
+            );
+            console.log(`===\n`);
+          }
+
+          walletPnls.push({
+            walletAddress,
+            totalBought: stats.totalBought,
+            totalSold: stats.totalSold,
+            pnl,
+            pnlUsd,
+          });
+        }
+
+        const resultData = { walletPnls, symbol, priceUsd };
+        serverCache.set(cacheKey, resultData, CACHE_TTL.HOLDERS);
+
+        return { chain, address, ...resultData };
+      })();
+      tokenResults.push(result);
+    }
+
+    // Phase 2: Build tokensMeta
+    const tokensMeta: TokenMeta[] = tokenResults.map((tr) => ({
+      address: tr.address,
+      symbol: tr.symbol,
+      chain: tr.chain,
+      priceUsd: tr.priceUsd,
+    }));
+
+    // Phase 3: Intersect wallets across tokens
+    const walletMap = new Map<
+      string,
+      Map<string, { token: CommonTraderToken; originalAddress: string }>
+    >();
+
     for (const tr of tokenResults) {
-      if (tr.chain === "solana") {
-        for (const h of tr.holders) {
-          solanaTokenAccounts.push(h.address);
+      const tokenKey = `${tr.chain}:${tr.address}`;
+      for (const wp of tr.walletPnls) {
+        const key =
+          tr.chain === "solana"
+            ? wp.walletAddress
+            : wp.walletAddress.toLowerCase();
+
+        if (!walletMap.has(key)) {
+          walletMap.set(key, new Map());
+        }
+
+        const existing = walletMap.get(key)!.get(tokenKey);
+        if (!existing) {
+          walletMap.get(key)!.set(tokenKey, {
+            token: {
+              address: tr.address,
+              symbol: tr.symbol,
+              chain: tr.chain,
+              totalBought: wp.totalBought,
+              totalSold: wp.totalSold,
+              pnl: wp.pnl,
+              pnlUsd: wp.pnlUsd,
+            },
+            originalAddress: wp.walletAddress,
+          });
         }
       }
     }
 
-    const ownerMap =
-      solanaTokenAccounts.length > 0
-        ? await helius.getMultipleAccountOwners(solanaTokenAccounts)
-        : new Map<string, string>();
-
-    // Build unified holder list with resolved owner addresses
-    const allHolders: HolderWithOwner[] = [];
-    const tokensMeta: TokenMeta[] = [];
-
-    for (const tr of tokenResults) {
-      tokensMeta.push({
-        address: tr.address,
-        symbol: tr.symbol,
-        chain: tr.chain,
-        priceUsd: tr.priceUsd,
-      });
-
-      for (const h of tr.holders) {
-        // For Solana, resolve PDA to owner; for EVM, address IS the owner
-        const ownerAddress =
-          tr.chain === "solana"
-            ? ownerMap.get(h.address) ?? h.address
-            : h.address;
-
-        allHolders.push({
-          ownerAddress,
-          tokenAccountAddress: h.address,
-          balance: h.balance,
-          percentage: h.percentage,
-          tokenAddress: tr.address,
-          chain: tr.chain,
-          symbol: tr.symbol,
-          priceUsd: tr.priceUsd,
-        });
-      }
-    }
-
-    // Phase 3: Group by owner wallet, find intersections
-    const walletMap = new Map<
-      string,
-      Map<string, HolderWithOwner>
-    >();
-
-    for (const holder of allHolders) {
-      // Key by ownerAddress (lowercased for EVM dedup)
-      const key = holder.ownerAddress.toLowerCase();
-      if (!walletMap.has(key)) {
-        walletMap.set(key, new Map());
-      }
-      // Key inner map by tokenAddress to deduplicate
-      const tokenKey = `${holder.chain}:${holder.tokenAddress}`;
-      const existing = walletMap.get(key)!.get(tokenKey);
-      // Keep the entry with the larger balance (in case of duplicates)
-      if (!existing || holder.balance > existing.balance) {
-        walletMap.get(key)!.set(tokenKey, holder);
-      }
-    }
-
-    // Filter to wallets appearing in 2+ tokens
+    // Filter to wallets appearing in 2+ token trade lists
     const traders: CommonTrader[] = [];
-    const inputTokenCount = tokens.length;
 
-    for (const [, holdersByToken] of walletMap) {
-      if (holdersByToken.size < 2) continue;
+    for (const [, tokenEntries] of walletMap) {
+      if (tokenEntries.size < 2) continue;
 
-      const tokenEntries = Array.from(holdersByToken.values());
-      let totalValueUsd = 0;
-
-      const traderTokens = tokenEntries.map((h) => {
-        const balanceUsd = h.priceUsd ? h.balance * h.priceUsd : 0;
-        totalValueUsd += balanceUsd;
-        return {
-          address: h.tokenAddress,
-          symbol: h.symbol,
-          chain: h.chain,
-          balance: h.balance,
-          balanceUsd,
-          percentage: h.percentage,
-        };
-      });
+      const entries = Array.from(tokenEntries.values());
+      const traderTokens = entries.map((e) => e.token);
+      const totalPnlUsd = traderTokens.reduce((sum, t) => sum + t.pnlUsd, 0);
 
       traders.push({
-        // Use the original-case address from the first entry
-        walletAddress: tokenEntries[0].ownerAddress,
+        walletAddress: entries[0].originalAddress,
         tokens: traderTokens,
-        totalValueUsd,
-        tokenCount: holdersByToken.size,
+        totalPnlUsd,
+        tokenCount: tokenEntries.size,
       });
     }
 
-    // Sort: most tokens first, then by total USD value
-    traders.sort((a, b) => {
-      if (b.tokenCount !== a.tokenCount) return b.tokenCount - a.tokenCount;
-      return b.totalValueUsd - a.totalValueUsd;
+    // Sort by total PnL descending (most profitable first)
+    traders.sort((a, b) => b.totalPnlUsd - a.totalPnlUsd);
+
+    // Debug: check if target wallet made it as common trader
+    const DEBUG_WALLET = "0xacaf65505d9a48cd7a9be7eba5f25d886792354a";
+    const debugTrader = traders.find(
+      (t) => t.walletAddress.toLowerCase() === DEBUG_WALLET
+    );
+    if (debugTrader) {
+      const rank = traders.indexOf(debugTrader) + 1;
+      console.log(`\n=== DEBUG: ${DEBUG_WALLET} IS A COMMON TRADER ===`);
+      console.log(`  Rank: #${rank} of ${traders.length}`);
+      console.log(`  Token Count: ${debugTrader.tokenCount}`);
+      console.log(`  Total PnL USD: $${debugTrader.totalPnlUsd.toFixed(2)}`);
+      for (const t of debugTrader.tokens) {
+        console.log(
+          `  ${t.symbol}: bought=${t.totalBought.toLocaleString()} sold=${t.totalSold.toLocaleString()} pnl=$${t.pnlUsd.toFixed(2)}`
+        );
+      }
+      console.log(`===\n`);
+    } else {
+      console.log(
+        `\n=== DEBUG: ${DEBUG_WALLET} NOT found as common trader ===`
+      );
+      console.log(`  Total common traders: ${traders.length}`);
+      for (const tr of tokenResults) {
+        const found = tr.walletPnls.find(
+          (wp) => wp.walletAddress.toLowerCase() === DEBUG_WALLET
+        );
+        console.log(
+          `  ${tr.symbol} (${tr.address}): ${found ? `FOUND - bought=${found.totalBought} sold=${found.totalSold}` : "NOT found"}`
+        );
+      }
+      console.log(`===\n`);
+    }
+
+    // Temporary debug: check target wallet presence per token
+    const DEBUG_TARGET = "0xacaf65505d9a48cd7a9be7eba5f25d886792354a";
+    const debugPerToken = tokenResults.map((tr) => {
+      const found = tr.walletPnls.find(
+        (wp) => wp.walletAddress.toLowerCase() === DEBUG_TARGET
+      );
+      return {
+        symbol: tr.symbol,
+        address: tr.address,
+        totalWallets: tr.walletPnls.length,
+        targetFound: !!found,
+        targetData: found || null,
+      };
     });
 
     const response: CommonTradersResponse = {
@@ -174,7 +283,7 @@ export async function POST(request: Request) {
       tokensMeta,
     };
 
-    return NextResponse.json(response);
+    return NextResponse.json({ ...response, _debug: debugPerToken });
   } catch (error) {
     console.error("Common traders error:", error);
     return NextResponse.json(

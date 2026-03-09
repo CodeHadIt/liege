@@ -151,12 +151,23 @@ export class EvmChainProvider implements ChainProvider {
   }
 
   async getTopHolders(
-    _tokenAddress: string,
-    _limit = 20
+    tokenAddress: string,
+    limit = 20
   ): Promise<HolderEntry[]> {
-    // Etherscan free tier doesn't provide top holder data
-    // This would require paid API or on-chain RPC calls
-    return [];
+    const holders = await this.etherscan.getTokenHolderList(tokenAddress, limit);
+    if (!holders || holders.length === 0) return [];
+
+    // Get decimals from DexScreener metadata (already cached), default to 18
+    const metadata = await this.getTokenMetadata(tokenAddress);
+    const decimals = metadata?.decimals ?? 18;
+
+    return holders.map((holder) => ({
+      address: holder.TokenHolderAddress,
+      balance: parseFloat(holder.TokenHolderQuantity) / Math.pow(10, decimals),
+      percentage: 0,
+      isContract: null,
+      label: null,
+    }));
   }
 
   async getSafetySignals(tokenAddress: string): Promise<SafetySignals> {

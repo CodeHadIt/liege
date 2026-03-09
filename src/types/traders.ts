@@ -4,15 +4,16 @@ export interface CommonTraderToken {
   address: string;
   symbol: string;
   chain: ChainId;
-  balance: number;
-  balanceUsd: number;
-  percentage: number;
+  totalBought: number;
+  totalSold: number;
+  pnl: number;
+  pnlUsd: number;
 }
 
 export interface CommonTrader {
   walletAddress: string;
   tokens: CommonTraderToken[];
-  totalValueUsd: number;
+  totalPnlUsd: number;
   tokenCount: number;
 }
 

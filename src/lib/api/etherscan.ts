@@ -41,6 +41,11 @@ export interface EtherscanTokenBalance {
   TokenQuantity: string;
 }
 
+export interface EtherscanTokenHolder {
+  TokenHolderAddress: string;
+  TokenHolderQuantity: string;
+}
+
 export interface EtherscanSourceCode {
   SourceCode: string;
   ABI: string;
@@ -140,6 +145,33 @@ export function createEtherscanClient(config: EtherscanConfig) {
         page: "1",
         offset: limit.toString(),
         sort: "desc",
+      });
+    },
+
+    async getTokenTransfersByContract(
+      contractAddress: string,
+      page = 1,
+      limit = 1000
+    ): Promise<EtherscanTokenTx[] | null> {
+      return fetchEtherscan<EtherscanTokenTx[]>(config, {
+        module: "account",
+        action: "tokentx",
+        contractaddress: contractAddress,
+        startblock: "0",
+        endblock: "99999999",
+        page: page.toString(),
+        offset: limit.toString(),
+        sort: "desc",
+      });
+    },
+
+    async getTokenHolderList(contractAddress: string, limit = 50): Promise<EtherscanTokenHolder[] | null> {
+      return fetchEtherscan<EtherscanTokenHolder[]>(config, {
+        module: "token",
+        action: "tokenholderlist",
+        contractaddress: contractAddress,
+        page: "1",
+        offset: limit.toString(),
       });
     },
 

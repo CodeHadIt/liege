@@ -20,6 +20,7 @@ interface TokenMultiInputProps {
   onAdd: (token: SelectedToken) => void;
   onRemove: (index: number) => void;
   maxTokens?: number;
+  chainFilter?: ChainId | null;
 }
 
 export function TokenMultiInput({
@@ -27,6 +28,7 @@ export function TokenMultiInput({
   onAdd,
   onRemove,
   maxTokens = 10,
+  chainFilter,
 }: TokenMultiInputProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<TokenSearchResult[]>([]);
@@ -46,11 +48,21 @@ export function TokenMultiInput({
       const trimmed = q.trim();
       const chainType = detectChainFromAddress(trimmed);
       if (chainType) {
+        // If chain filter is set and address doesn't match, reject it
+        if (chainFilter) {
+          const isEvm = chainFilter !== "solana";
+          const addressIsEvm = chainType === "evm";
+          if (isEvm !== addressIsEvm) {
+            setResults([]);
+            return;
+          }
+        }
         // It's an address — try to resolve via search
         setIsLoading(true);
         try {
+          const chainParam = chainFilter ? `&chain=${chainFilter}` : "";
           const res = await fetch(
-            `/api/token/search?q=${encodeURIComponent(trimmed)}`
+            `/api/token/search?q=${encodeURIComponent(trimmed)}${chainParam}`
           );
           const json = await res.json();
           const data = (json.data || []) as TokenSearchResult[];
@@ -109,8 +121,9 @@ export function TokenMultiInput({
       // Regular text search
       setIsLoading(true);
       try {
+        const chainParam = chainFilter ? `&chain=${chainFilter}` : "";
         const res = await fetch(
-          `/api/token/search?q=${encodeURIComponent(q)}`
+          `/api/token/search?q=${encodeURIComponent(q)}${chainParam}`
         );
         const json = await res.json();
         setResults(json.data || []);
@@ -120,7 +133,7 @@ export function TokenMultiInput({
         setIsLoading(false);
       }
     },
-    [tokens, maxTokens, onAdd]
+    [tokens, maxTokens, onAdd, chainFilter]
   );
 
   useEffect(() => {

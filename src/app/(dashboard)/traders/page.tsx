@@ -9,11 +9,19 @@ import {
 } from "@/features/common-traders/components/token-multi-input";
 import { CommonTradersTable } from "@/features/common-traders/components/common-traders-table";
 import { useCommonTraders } from "@/features/common-traders/hooks/use-common-traders";
+import { CHAIN_CONFIGS, SUPPORTED_CHAINS } from "@/config/chains";
+import type { ChainId } from "@/types/chain";
 
 export default function TradersPage() {
+  const [selectedChain, setSelectedChain] = useState<ChainId | null>(null);
   const [tokens, setTokens] = useState<SelectedToken[]>([]);
   const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>("usd");
   const { mutate, data, isPending } = useCommonTraders();
+
+  const handleChainChange = useCallback((chain: ChainId | null) => {
+    setSelectedChain(chain);
+    setTokens([]);
+  }, []);
 
   const handleAdd = useCallback((token: SelectedToken) => {
     setTokens((prev) => [...prev, token]);
@@ -51,10 +59,43 @@ export default function TradersPage() {
 
       {/* Input card */}
       <div className="glow-card rounded-xl overflow-visible">
-        <div className="px-5 py-3 border-b border-white/[0.04] rounded-t-xl">
+        <div className="px-5 py-3 border-b border-white/[0.04] rounded-t-xl flex items-center justify-between">
           <span className="text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80]">
             Select Tokens
           </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => handleChainChange(null)}
+              className={`px-2.5 py-1 rounded-md text-[10px] font-mono font-semibold uppercase tracking-wider transition-all ${
+                selectedChain === null
+                  ? "bg-white/[0.08] text-[#E8E8ED] border border-white/[0.1]"
+                  : "text-[#6B6B80] hover:text-[#E8E8ED] hover:bg-white/[0.04] border border-transparent"
+              }`}
+            >
+              All
+            </button>
+            {SUPPORTED_CHAINS.map((chainId) => {
+              const config = CHAIN_CONFIGS[chainId];
+              return (
+                <button
+                  key={chainId}
+                  onClick={() => handleChainChange(chainId)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-mono font-semibold uppercase tracking-wider transition-all ${
+                    selectedChain === chainId
+                      ? "bg-[#00F0FF]/10 text-[#00F0FF] border border-[#00F0FF]/20"
+                      : "text-[#6B6B80] hover:text-[#E8E8ED] hover:bg-white/[0.04] border border-transparent"
+                  }`}
+                >
+                  <img
+                    src={config.logo}
+                    alt={config.name}
+                    className="h-3.5 w-3.5 rounded-full"
+                  />
+                  {config.shortName}
+                </button>
+              );
+            })}
+          </div>
         </div>
         <div className="p-5 space-y-4 relative">
           <TokenMultiInput
@@ -62,6 +103,7 @@ export default function TradersPage() {
             onAdd={handleAdd}
             onRemove={handleRemove}
             maxTokens={10}
+            chainFilter={selectedChain}
           />
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-mono text-[#6B6B80]">

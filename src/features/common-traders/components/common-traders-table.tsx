@@ -34,10 +34,12 @@ interface CommonTradersTableProps {
 }
 
 function formatUsdCompact(value: number): string {
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
-  if (value >= 1) return `$${value.toFixed(0)}`;
-  return `$${value.toFixed(2)}`;
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(1)}K`;
+  if (abs >= 1) return `${sign}$${abs.toFixed(0)}`;
+  return `${sign}$${abs.toFixed(2)}`;
 }
 
 function formatBalance(value: number): string {
@@ -49,6 +51,12 @@ function formatBalance(value: number): string {
 
 function getWalletChain(trader: CommonTrader): ChainId {
   return trader.tokens[0]?.chain ?? "solana";
+}
+
+function pnlColor(value: number): string {
+  if (value > 0) return "text-[#00FF88]";
+  if (value < 0) return "text-[#FF4444]";
+  return "text-[#6B6B80]";
 }
 
 function TraderRow({
@@ -81,7 +89,7 @@ function TraderRow({
             chain: t.chain,
             address: t.address,
             symbol: t.symbol,
-            currentBalance: t.balance,
+            currentBalance: 0,
             priceUsd: meta?.priceUsd ?? null,
           };
         }),
@@ -131,9 +139,11 @@ function TraderRow({
             / {tokensMeta.length}
           </span>
         </div>
-        <span className="text-[11px] font-mono font-semibold text-[#E8E8ED] text-right">
-          {trader.totalValueUsd > 0
-            ? formatUsdCompact(trader.totalValueUsd)
+        <span
+          className={`text-[11px] font-mono font-semibold text-right ${pnlColor(trader.totalPnlUsd)}`}
+        >
+          {trader.totalPnlUsd !== 0
+            ? `${trader.totalPnlUsd > 0 ? "+" : ""}${formatUsdCompact(trader.totalPnlUsd)}`
             : "\u2014"}
         </span>
         <div className="flex items-center justify-center">
@@ -149,7 +159,7 @@ function TraderRow({
       {isExpanded && (
         <div className="px-4 pb-3 pl-14">
           <div className="rounded-lg bg-white/[0.02] border border-white/[0.04]">
-            {/* Per-token balance summary */}
+            {/* Per-token PnL breakdown */}
             <div className="divide-y divide-white/[0.04]">
               {trader.tokens.map((t) => (
                 <div
@@ -165,15 +175,27 @@ function TraderRow({
                     </span>
                   </div>
                   <div className="flex items-center gap-4">
-                    <span className="text-[10px] font-mono text-[#6B6B80]">
-                      {formatBalance(t.balance)}
-                    </span>
-                    <span className="text-[10px] font-mono text-[#A855F7] font-semibold">
-                      {t.percentage.toFixed(1)}%
-                    </span>
-                    <span className="text-[10px] font-mono text-[#E8E8ED] w-16 text-right">
-                      {t.balanceUsd > 0
-                        ? formatUsdCompact(t.balanceUsd)
+                    <div className="flex items-center gap-1">
+                      <span className="text-[9px] font-mono text-[#6B6B80]">
+                        B
+                      </span>
+                      <span className="text-[10px] font-mono text-[#6B6B80]">
+                        {formatBalance(t.totalBought)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[9px] font-mono text-[#6B6B80]">
+                        S
+                      </span>
+                      <span className="text-[10px] font-mono text-[#6B6B80]">
+                        {formatBalance(t.totalSold)}
+                      </span>
+                    </div>
+                    <span
+                      className={`text-[10px] font-mono font-semibold w-16 text-right ${pnlColor(t.pnlUsd)}`}
+                    >
+                      {t.pnlUsd !== 0
+                        ? `${t.pnlUsd > 0 ? "+" : ""}${formatUsdCompact(t.pnlUsd)}`
                         : "\u2014"}
                     </span>
                   </div>
@@ -205,7 +227,7 @@ export function CommonTradersTable({
   onToggleCurrency,
 }: CommonTradersTableProps) {
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
-  const [sortBy, setSortBy] = useState<"tokens" | "value">("tokens");
+  const [sortBy, setSortBy] = useState<"tokens" | "pnl">("pnl");
 
   if (isLoading) {
     return (
@@ -237,10 +259,10 @@ export function CommonTradersTable({
         <div className="text-center py-14 text-[#6B6B80]">
           <SearchIcon className="h-8 w-8 mx-auto mb-3 opacity-20" />
           <p className="text-sm font-medium text-[#E8E8ED]/60">
-            No common holders found
+            No common traders found
           </p>
           <p className="text-xs mt-1 opacity-50">
-            These tokens don&apos;t share any top holders
+            No wallets found trading multiple selected tokens
           </p>
         </div>
       </div>
@@ -250,9 +272,9 @@ export function CommonTradersTable({
   const sorted = [...traders].sort((a, b) => {
     if (sortBy === "tokens") {
       if (b.tokenCount !== a.tokenCount) return b.tokenCount - a.tokenCount;
-      return b.totalValueUsd - a.totalValueUsd;
+      return b.totalPnlUsd - a.totalPnlUsd;
     }
-    return b.totalValueUsd - a.totalValueUsd;
+    return b.totalPnlUsd - a.totalPnlUsd;
   });
 
   return (
@@ -280,14 +302,14 @@ export function CommonTradersTable({
             By Tokens
           </button>
           <button
-            onClick={() => setSortBy("value")}
+            onClick={() => setSortBy("pnl")}
             className={`px-2 py-1 rounded text-[10px] font-mono transition-colors ${
-              sortBy === "value"
+              sortBy === "pnl"
                 ? "bg-[#00F0FF]/10 text-[#00F0FF]"
                 : "text-[#6B6B80] hover:text-[#E8E8ED]"
             }`}
           >
-            By Value
+            By PnL
           </button>
           <div className="w-px h-4 bg-white/[0.06] mx-1" />
           <button
@@ -320,7 +342,7 @@ export function CommonTradersTable({
           Tokens
         </span>
         <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">
-          Total Value
+          Total PnL
         </span>
         <span />
       </div>
