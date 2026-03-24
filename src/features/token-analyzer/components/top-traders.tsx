@@ -249,6 +249,8 @@ export function TopTraders({ chain, address }: TopTradersProps) {
   const { data, isLoading, error } = useTopTraders(chain, address);
   const [displayMode, setDisplayMode] = useState<DisplayMode>("usd");
 
+  const isEvm = chain !== "solana";
+
   if (isLoading) {
     return (
       <div className="glow-card rounded-xl overflow-hidden">
@@ -258,10 +260,17 @@ export function TopTraders({ chain, address }: TopTradersProps) {
             Top Traders
           </span>
         </div>
-        <div className="p-4 space-y-3">
-          <div className="flex items-center gap-2 py-4 justify-center text-[#6B6B80]">
+        <div className="p-4">
+          <div className="flex flex-col items-center gap-2 py-6 text-[#6B6B80]">
             <CircleNotch className="h-4 w-4 animate-spin text-[#00F0FF]" />
-            <span className="text-xs font-mono">Loading top traders...</span>
+            <span className="text-xs font-mono">
+              {isEvm ? "Scraping top traders from GMGN…" : "Loading top traders…"}
+            </span>
+            {isEvm && (
+              <span className="text-[10px] font-mono text-[#6B6B80]/60">
+                First load takes ~20–30s
+              </span>
+            )}
           </div>
         </div>
       </div>

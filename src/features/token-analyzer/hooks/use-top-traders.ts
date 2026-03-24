@@ -19,6 +19,9 @@ export function useTopTraders(chain: ChainId, address: string) {
     queryKey: ["top-traders", chain, address],
     queryFn: () => fetchTopTraders(chain, address),
     staleTime: 2 * 60 * 1000,
+    // EVM scraping takes ~20-30s on first load; give it 90s before timing out
+    gcTime: 5 * 60 * 1000,
+    retry: 1,
     enabled: !!chain && !!address,
   });
 }

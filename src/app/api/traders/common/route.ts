@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { getChainProvider } from "@/lib/chains/registry";
-import { scrapeTopTraders } from "@/lib/api/dexscreener-scraper";
+import { getMoralisTopTraders } from "@/lib/api/moralis-traders";
+import { getTokenTopTraders } from "@/lib/api/coingecko";
+import { scrapeGmgnTopTraders } from "@/lib/api/gmgn-scraper";
 import * as helius from "@/lib/api/helius";
 import { serverCache, CACHE_TTL } from "@/lib/cache";
+import { getChainConfig } from "@/config/chains";
 import type { ChainId } from "@/types/chain";
 import type {
   CommonTrader,
@@ -43,7 +46,7 @@ export async function POST(request: Request) {
     const tokenResults = [];
     for (const { chain, address, symbol: clientSymbol } of tokens) {
       const result = await (async () => {
-        const cacheKey = `common-traders-pnl-v2:${chain}:${address}`;
+        const cacheKey = `common-traders-dex-v1:${chain}:${address}`;
         const cached = serverCache.get<{
           walletPnls: WalletPnl[];
           symbol: string;
@@ -101,53 +104,60 @@ export async function POST(request: Request) {
             }
           }
         } else {
-          // EVM: scrape top traders from DexScreener
-          const topTraders = await scrapeTopTraders(chain, address);
+          // EVM: GMGN scraper (primary, exact historical PnL)
+          //      → Moralis (fallback) → GeckoTerminal (last resort)
+          const geckoNetwork = getChainConfig(chain as ChainId).geckoTerminalNetwork;
 
-          for (const trader of topTraders) {
-            const key = trader.wallet.toLowerCase();
-            if (ZERO_ADDRESSES.has(key)) continue;
+          type TraderEntry = { address: string; tokensBought: number; tokensSold: number };
+          let traders: TraderEntry[] = [];
 
-            walletStats.set(key, {
+          // Primary: GMGN scraper — returns true top-100 traders with exact historical PnL
+          const gmgnTraders = await scrapeGmgnTopTraders(chain, address).catch(() => []);
+          if (gmgnTraders.length > 0) {
+            console.log(`[common-traders] GMGN: ${gmgnTraders.length} traders for ${address}`);
+            traders = gmgnTraders.map((t) => ({
+              address: t.walletAddress.toLowerCase(),
+              tokensBought: t.avgCostUsd > 0 ? t.historyBoughtCostUsd / t.avgCostUsd : 0,
+              tokensSold: t.avgSoldUsd > 0 ? t.historySoldIncomeUsd / t.avgSoldUsd : 0,
+            }));
+          }
+
+          // Fallback: Moralis paginated ERC-20 transfer history
+          if (traders.length === 0) {
+            console.log(`[common-traders] GMGN returned 0, trying Moralis for ${address}`);
+            const moralisTraders = await getMoralisTopTraders(chain, geckoNetwork, address).catch(() => []);
+            traders = moralisTraders.map((t) => ({
+              address: t.address,
+              tokensBought: t.tokensBought,
+              tokensSold: t.tokensSold,
+            }));
+          }
+
+          // Last resort: GeckoTerminal recent trades (~300)
+          if (traders.length === 0) {
+            console.log(`[common-traders] Moralis returned 0, trying GeckoTerminal for ${address}`);
+            const geckoTraders = await getTokenTopTraders(geckoNetwork, address).catch(() => []);
+            traders = geckoTraders.map((t) => ({
+              address: t.address,
+              tokensBought: t.tokensBought,
+              tokensSold: t.tokensSold,
+            }));
+          }
+
+          for (const trader of traders) {
+            if (ZERO_ADDRESSES.has(trader.address)) continue;
+            walletStats.set(trader.address, {
               totalBought: trader.tokensBought,
               totalSold: trader.tokensSold,
             });
           }
         }
 
-        // Compute PnL per wallet
+        // Compute PnL per wallet using current price (approximate — historical prices unavailable)
         const walletPnls: WalletPnl[] = [];
-        const DEBUG_WALLET = "0xacaf65505d9a48cd7a9be7eba5f25d886792354a";
         for (const [walletAddress, stats] of walletStats) {
           const pnl = stats.totalSold - stats.totalBought;
           const pnlUsd = priceUsd ? pnl * priceUsd : 0;
-          const remaining = stats.totalBought - stats.totalSold;
-          const unrealizedUsd =
-            remaining > 0 && priceUsd ? remaining * priceUsd : 0;
-
-          if (walletAddress.toLowerCase() === DEBUG_WALLET) {
-            console.log(
-              `\n=== DEBUG WALLET ${DEBUG_WALLET} on ${symbol} (${address}) ===`
-            );
-            console.log(`  Price USD:       $${priceUsd}`);
-            console.log(
-              `  Total Bought:    ${stats.totalBought.toLocaleString()} tokens`
-            );
-            console.log(
-              `  Total Sold:      ${stats.totalSold.toLocaleString()} tokens`
-            );
-            console.log(
-              `  Remaining:       ${remaining.toLocaleString()} tokens`
-            );
-            console.log(
-              `  Realized PnL:    ${pnl.toLocaleString()} tokens ($${pnlUsd.toFixed(2)})`
-            );
-            console.log(
-              `  Unrealized:      ${remaining > 0 ? remaining.toLocaleString() : 0} tokens ($${unrealizedUsd.toFixed(2)})`
-            );
-            console.log(`===\n`);
-          }
-
           walletPnls.push({
             walletAddress,
             totalBought: stats.totalBought,
@@ -230,60 +240,12 @@ export async function POST(request: Request) {
     // Sort by total PnL descending (most profitable first)
     traders.sort((a, b) => b.totalPnlUsd - a.totalPnlUsd);
 
-    // Debug: check if target wallet made it as common trader
-    const DEBUG_WALLET = "0xacaf65505d9a48cd7a9be7eba5f25d886792354a";
-    const debugTrader = traders.find(
-      (t) => t.walletAddress.toLowerCase() === DEBUG_WALLET
-    );
-    if (debugTrader) {
-      const rank = traders.indexOf(debugTrader) + 1;
-      console.log(`\n=== DEBUG: ${DEBUG_WALLET} IS A COMMON TRADER ===`);
-      console.log(`  Rank: #${rank} of ${traders.length}`);
-      console.log(`  Token Count: ${debugTrader.tokenCount}`);
-      console.log(`  Total PnL USD: $${debugTrader.totalPnlUsd.toFixed(2)}`);
-      for (const t of debugTrader.tokens) {
-        console.log(
-          `  ${t.symbol}: bought=${t.totalBought.toLocaleString()} sold=${t.totalSold.toLocaleString()} pnl=$${t.pnlUsd.toFixed(2)}`
-        );
-      }
-      console.log(`===\n`);
-    } else {
-      console.log(
-        `\n=== DEBUG: ${DEBUG_WALLET} NOT found as common trader ===`
-      );
-      console.log(`  Total common traders: ${traders.length}`);
-      for (const tr of tokenResults) {
-        const found = tr.walletPnls.find(
-          (wp) => wp.walletAddress.toLowerCase() === DEBUG_WALLET
-        );
-        console.log(
-          `  ${tr.symbol} (${tr.address}): ${found ? `FOUND - bought=${found.totalBought} sold=${found.totalSold}` : "NOT found"}`
-        );
-      }
-      console.log(`===\n`);
-    }
-
-    // Temporary debug: check target wallet presence per token
-    const DEBUG_TARGET = "0xacaf65505d9a48cd7a9be7eba5f25d886792354a";
-    const debugPerToken = tokenResults.map((tr) => {
-      const found = tr.walletPnls.find(
-        (wp) => wp.walletAddress.toLowerCase() === DEBUG_TARGET
-      );
-      return {
-        symbol: tr.symbol,
-        address: tr.address,
-        totalWallets: tr.walletPnls.length,
-        targetFound: !!found,
-        targetData: found || null,
-      };
-    });
-
     const response: CommonTradersResponse = {
       traders: traders.slice(0, 100),
       tokensMeta,
     };
 
-    return NextResponse.json({ ...response, _debug: debugPerToken });
+    return NextResponse.json(response);
   } catch (error) {
     console.error("Common traders error:", error);
     return NextResponse.json(
