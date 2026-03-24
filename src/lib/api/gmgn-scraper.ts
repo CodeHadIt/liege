@@ -110,18 +110,25 @@ export async function scrapeGmgnTopTraders(
   let holdersBody: Record<string, unknown> | null = null;
 
   try {
-    // Wait for the page's automatic token_holders call — this fires once the
-    // session/cookies are established, so it's a reliable "ready" signal.
-    // Cap at 25s; if it never fires we try the manual fetch anyway.
+    // Wait for the page's automatic token_holders call as a "session ready"
+    // signal, then add a short fixed delay to let GMGN's auth cookies fully
+    // settle before we fire our own credentialed fetch.
+    // Cap the waitForResponse at 20s; fall back to a straight 8s wait if it
+    // never fires (e.g. GMGN changes the request pattern).
     const sessionReady = page
       .waitForResponse(
         (res) => res.url().includes("/vas/api/v1/token_holders/"),
-        { timeout: 25_000 }
+        { timeout: 20_000 }
       )
       .catch(() => null);
 
     await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+
+    const readyAt = Date.now();
     await sessionReady;
+    // Ensure at least 6s have elapsed since navigation so auth is stable.
+    const elapsed = Date.now() - readyAt;
+    if (elapsed < 6_000) await new Promise((r) => setTimeout(r, 6_000 - elapsed));
 
     // Fire the realized_profit-sorted fetch from within the browser context
     // so it carries the session cookies. Retry up to 3 times on failure.
