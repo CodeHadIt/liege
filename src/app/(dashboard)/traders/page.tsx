@@ -16,7 +16,7 @@ export default function TradersPage() {
   const [selectedChain, setSelectedChain] = useState<ChainId | null>(null);
   const [tokens, setTokens] = useState<SelectedToken[]>([]);
   const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>("usd");
-  const { mutate, data, isPending } = useCommonTraders();
+  const { mutate, data, isPending, error } = useCommonTraders();
 
   const handleChainChange = useCallback((chain: ChainId | null) => {
     setSelectedChain(chain);
@@ -131,6 +131,13 @@ export default function TradersPage() {
           </div>
         </div>
       </div>
+
+      {/* Fetch error */}
+      {error && !isPending && (
+        <div className="glow-card rounded-xl px-5 py-4 border border-red-500/20 bg-red-500/[0.04]">
+          <p className="text-sm font-mono text-red-400">{error.message}</p>
+        </div>
+      )}
 
       {/* Results */}
       {(data || isPending) && (

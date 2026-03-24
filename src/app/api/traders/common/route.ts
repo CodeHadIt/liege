@@ -1,11 +1,8 @@
 import { NextResponse } from "next/server";
 import { getChainProvider } from "@/lib/chains/registry";
-import { getMoralisTopTraders } from "@/lib/api/moralis-traders";
-import { getTokenTopTraders } from "@/lib/api/coingecko";
 import { scrapeGmgnTopTraders } from "@/lib/api/gmgn-scraper";
 import * as helius from "@/lib/api/helius";
 import { serverCache, CACHE_TTL } from "@/lib/cache";
-import { getChainConfig } from "@/config/chains";
 import type { ChainId } from "@/types/chain";
 import type {
   CommonTrader,
@@ -85,9 +82,8 @@ export async function POST(request: Request) {
           unrealizedPnlUsd?: number;
         }>();
 
-        // Tracks whether authoritative GMGN data was used (vs Moralis/GeckoTerminal fallback).
-        // Fallback data lacks fully-exited wallets — cache it briefly so GMGN is retried soon.
-        let usedGmgn = chain === "solana"; // Solana path always uses authoritative Helius data
+        // Whether authoritative GMGN data was fetched (Solana uses Helius, always authoritative).
+        let usedGmgn = chain === "solana";
 
         if (chain === "solana") {
           // Helius: fetch parsed swaps for the token mint address
@@ -124,82 +120,31 @@ export async function POST(request: Request) {
             }
           }
         } else {
-          // EVM: GMGN scraper (primary, exact historical PnL)
-          //      → Moralis (fallback) → GeckoTerminal (last resort)
-          const geckoNetwork = getChainConfig(chain as ChainId).geckoTerminalNetwork;
-
-          type TraderEntry = {
-            address: string;
-            tokensBought: number;
-            tokensSold: number;
-            boughtUsd?: number;
-            soldUsd?: number;
-            avgBuyPrice?: number;
-            avgSellPrice?: number;
-            buyCount?: number;
-            sellCount?: number;
-            realizedPnlUsd?: number;
-            unrealizedPnlUsd?: number;
-          };
-          let traders: TraderEntry[] = [];
-
-          // Primary: GMGN scraper — returns true top-100 traders with exact historical PnL
+          // EVM: GMGN scraper — exact historical PnL including fully-exited wallets.
+          // No fallback; if GMGN fails the token is surfaced as an error to the caller.
           const gmgnTraders = await scrapeGmgnTopTraders(chain, address).catch(() => []);
           if (gmgnTraders.length > 0) {
             console.log(`[common-traders] GMGN: ${gmgnTraders.length} traders for ${address}`);
             usedGmgn = true;
-            traders = gmgnTraders.map((t) => ({
-              address: t.walletAddress.toLowerCase(),
-              tokensBought: t.avgCostUsd > 0 ? t.historyBoughtCostUsd / t.avgCostUsd : t.balance,
-              tokensSold: t.avgSoldUsd > 0 ? t.historySoldIncomeUsd / t.avgSoldUsd : 0,
-              // Pass rich fields through for UI display
-              boughtUsd: t.historyBoughtCostUsd,
-              soldUsd: t.historySoldIncomeUsd,
-              avgBuyPrice: t.avgCostUsd,
-              avgSellPrice: t.avgSoldUsd,
-              buyCount: t.buyCount,
-              sellCount: t.sellCount,
-              realizedPnlUsd: t.realizedProfitUsd,
-              unrealizedPnlUsd: t.unrealizedProfitUsd,
-            }));
-          }
-
-          // Fallback: Moralis paginated ERC-20 transfer history
-          if (traders.length === 0) {
-            console.log(`[common-traders] GMGN returned 0, trying Moralis for ${address}`);
-            const moralisTraders = await getMoralisTopTraders(chain, geckoNetwork, address).catch(() => []);
-            traders = moralisTraders.map((t) => ({
-              address: t.address,
-              tokensBought: t.tokensBought,
-              tokensSold: t.tokensSold,
-            }));
-          }
-
-          // Last resort: GeckoTerminal recent trades (~300)
-          if (traders.length === 0) {
-            console.log(`[common-traders] Moralis returned 0, trying GeckoTerminal for ${address}`);
-            const geckoTraders = await getTokenTopTraders(geckoNetwork, address).catch(() => []);
-            traders = geckoTraders.map((t) => ({
-              address: t.address,
-              tokensBought: t.tokensBought,
-              tokensSold: t.tokensSold,
-            }));
-          }
-
-          for (const trader of traders) {
-            if (ZERO_ADDRESSES.has(trader.address)) continue;
-            walletStats.set(trader.address, {
-              totalBought: trader.tokensBought,
-              totalSold: trader.tokensSold,
-              boughtUsd: trader.boughtUsd,
-              soldUsd: trader.soldUsd,
-              avgBuyPrice: trader.avgBuyPrice,
-              avgSellPrice: trader.avgSellPrice,
-              buyCount: trader.buyCount,
-              sellCount: trader.sellCount,
-              realizedPnlUsd: trader.realizedPnlUsd,
-              unrealizedPnlUsd: trader.unrealizedPnlUsd,
-            });
+            for (const t of gmgnTraders) {
+              const addr = t.walletAddress.toLowerCase();
+              if (ZERO_ADDRESSES.has(addr)) continue;
+              walletStats.set(addr, {
+                totalBought: t.avgCostUsd > 0 ? t.historyBoughtCostUsd / t.avgCostUsd : t.balance,
+                totalSold: t.avgSoldUsd > 0 ? t.historySoldIncomeUsd / t.avgSoldUsd : 0,
+                boughtUsd: t.historyBoughtCostUsd,
+                soldUsd: t.historySoldIncomeUsd,
+                avgBuyPrice: t.avgCostUsd,
+                avgSellPrice: t.avgSoldUsd,
+                buyCount: t.buyCount,
+                sellCount: t.sellCount,
+                realizedPnlUsd: t.realizedProfitUsd,
+                unrealizedPnlUsd: t.unrealizedProfitUsd,
+              });
+            }
+          } else {
+            console.log(`[common-traders] GMGN returned 0 for ${address} — marking as failed`);
+            return { chain, address, walletPnls: [], symbol: clientSymbol ?? "???", priceUsd: null, fetchError: true };
           }
         }
 
@@ -226,15 +171,26 @@ export async function POST(request: Request) {
         }
 
         const resultData = { walletPnls, symbol, priceUsd };
-        // Only cache with full TTL when GMGN data was used.
-        // Fallback (Moralis/GeckoTerminal) data is incomplete — cache briefly
-        // so GMGN is retried on the next request rather than stale data persisting.
-        const cacheTtl = usedGmgn ? CACHE_TTL.HOLDERS : 15_000;
-        serverCache.set(cacheKey, resultData, cacheTtl);
+        // Only cache when GMGN data was used; Solana is always authoritative.
+        if (usedGmgn) {
+          serverCache.set(cacheKey, resultData, CACHE_TTL.HOLDERS);
+        }
 
-        return { chain, address, ...resultData };
+        return { chain, address, ...resultData, fetchError: false };
       })();
       tokenResults.push(result);
+    }
+
+    // Surface per-token fetch failures
+    const failedTokens = tokenResults.filter((tr) => tr.fetchError);
+    if (failedTokens.length > 0) {
+      const names = failedTokens
+        .map((tr) => `${tr.symbol !== "???" ? tr.symbol : tr.address.slice(0, 10) + "…"} (${tr.chain})`)
+        .join(", ");
+      return NextResponse.json(
+        { error: `Could not fetch trader data for: ${names}. GMGN may be temporarily unavailable — please try again in a moment.` },
+        { status: 503 }
+      );
     }
 
     // Phase 2: Build tokensMeta
