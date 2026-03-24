@@ -173,7 +173,7 @@ export async function POST(request: Request) {
         const resultData = { walletPnls, symbol, priceUsd };
         // Only cache when GMGN data was used; Solana is always authoritative.
         if (usedGmgn) {
-          serverCache.set(cacheKey, resultData, CACHE_TTL.HOLDERS);
+          serverCache.set(cacheKey, resultData, CACHE_TTL.GMGN_TRADERS);
         }
 
         return { chain, address, ...resultData, fetchError: false };

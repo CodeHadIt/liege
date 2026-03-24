@@ -58,6 +58,7 @@ export const CACHE_TTL = {
   SEARCH: 30_000,
   TRADE_HISTORY: 120_000,
   TOP_TRADERS: 120_000,
+  GMGN_TRADERS: 1_800_000,   // 30 minutes — scraping is expensive; top traders change slowly
   WALLET_QUICK: 60_000,
   PUMP_FUN: 30_000,
   DEX_ORDERS: 3_600_000,
