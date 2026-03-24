@@ -22,6 +22,14 @@ interface WalletPnl {
   totalSold: number;
   pnl: number;
   pnlUsd: number;
+  // Rich fields from GMGN (optional)
+  boughtUsd?: number;
+  soldUsd?: number;
+  avgBuyPrice?: number;
+  avgSellPrice?: number;
+  buyCount?: number;
+  sellCount?: number;
+  unrealizedPnlUsd?: number;
 }
 
 const ZERO_ADDRESSES = new Set([
@@ -64,10 +72,18 @@ export async function POST(request: Request) {
         const priceUsd = pairData?.priceUsd ?? null;
 
         // Build per-wallet buy/sell totals
-        const walletStats = new Map<
-          string,
-          { totalBought: number; totalSold: number }
-        >();
+        const walletStats = new Map<string, {
+          totalBought: number;
+          totalSold: number;
+          boughtUsd?: number;
+          soldUsd?: number;
+          avgBuyPrice?: number;
+          avgSellPrice?: number;
+          buyCount?: number;
+          sellCount?: number;
+          realizedPnlUsd?: number;
+          unrealizedPnlUsd?: number;
+        }>();
 
         if (chain === "solana") {
           // Helius: fetch parsed swaps for the token mint address
@@ -108,7 +124,19 @@ export async function POST(request: Request) {
           //      → Moralis (fallback) → GeckoTerminal (last resort)
           const geckoNetwork = getChainConfig(chain as ChainId).geckoTerminalNetwork;
 
-          type TraderEntry = { address: string; tokensBought: number; tokensSold: number };
+          type TraderEntry = {
+            address: string;
+            tokensBought: number;
+            tokensSold: number;
+            boughtUsd?: number;
+            soldUsd?: number;
+            avgBuyPrice?: number;
+            avgSellPrice?: number;
+            buyCount?: number;
+            sellCount?: number;
+            realizedPnlUsd?: number;
+            unrealizedPnlUsd?: number;
+          };
           let traders: TraderEntry[] = [];
 
           // Primary: GMGN scraper — returns true top-100 traders with exact historical PnL
@@ -117,8 +145,17 @@ export async function POST(request: Request) {
             console.log(`[common-traders] GMGN: ${gmgnTraders.length} traders for ${address}`);
             traders = gmgnTraders.map((t) => ({
               address: t.walletAddress.toLowerCase(),
-              tokensBought: t.avgCostUsd > 0 ? t.historyBoughtCostUsd / t.avgCostUsd : 0,
+              tokensBought: t.avgCostUsd > 0 ? t.historyBoughtCostUsd / t.avgCostUsd : t.balance,
               tokensSold: t.avgSoldUsd > 0 ? t.historySoldIncomeUsd / t.avgSoldUsd : 0,
+              // Pass rich fields through for UI display
+              boughtUsd: t.historyBoughtCostUsd,
+              soldUsd: t.historySoldIncomeUsd,
+              avgBuyPrice: t.avgCostUsd,
+              avgSellPrice: t.avgSoldUsd,
+              buyCount: t.buyCount,
+              sellCount: t.sellCount,
+              realizedPnlUsd: t.realizedProfitUsd,
+              unrealizedPnlUsd: t.unrealizedProfitUsd,
             }));
           }
 
@@ -149,21 +186,37 @@ export async function POST(request: Request) {
             walletStats.set(trader.address, {
               totalBought: trader.tokensBought,
               totalSold: trader.tokensSold,
+              boughtUsd: trader.boughtUsd,
+              soldUsd: trader.soldUsd,
+              avgBuyPrice: trader.avgBuyPrice,
+              avgSellPrice: trader.avgSellPrice,
+              buyCount: trader.buyCount,
+              sellCount: trader.sellCount,
+              realizedPnlUsd: trader.realizedPnlUsd,
+              unrealizedPnlUsd: trader.unrealizedPnlUsd,
             });
           }
         }
 
-        // Compute PnL per wallet using current price (approximate — historical prices unavailable)
+        // Compute PnL per wallet — use exact realizedPnlUsd from GMGN when available,
+        // otherwise approximate via current price × net token position
         const walletPnls: WalletPnl[] = [];
         for (const [walletAddress, stats] of walletStats) {
           const pnl = stats.totalSold - stats.totalBought;
-          const pnlUsd = priceUsd ? pnl * priceUsd : 0;
+          const pnlUsd = stats.realizedPnlUsd ?? (priceUsd ? pnl * priceUsd : 0);
           walletPnls.push({
             walletAddress,
             totalBought: stats.totalBought,
             totalSold: stats.totalSold,
             pnl,
             pnlUsd,
+            boughtUsd: stats.boughtUsd,
+            soldUsd: stats.soldUsd,
+            avgBuyPrice: stats.avgBuyPrice,
+            avgSellPrice: stats.avgSellPrice,
+            buyCount: stats.buyCount,
+            sellCount: stats.sellCount,
+            unrealizedPnlUsd: stats.unrealizedPnlUsd,
           });
         }
 
@@ -212,6 +265,13 @@ export async function POST(request: Request) {
               totalSold: wp.totalSold,
               pnl: wp.pnl,
               pnlUsd: wp.pnlUsd,
+              boughtUsd: wp.boughtUsd,
+              soldUsd: wp.soldUsd,
+              avgBuyPrice: wp.avgBuyPrice,
+              avgSellPrice: wp.avgSellPrice,
+              buyCount: wp.buyCount,
+              sellCount: wp.sellCount,
+              unrealizedPnlUsd: wp.unrealizedPnlUsd,
             },
             originalAddress: wp.walletAddress,
           });

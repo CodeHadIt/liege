@@ -164,40 +164,80 @@ function TraderRow({
               {trader.tokens.map((t) => (
                 <div
                   key={`${t.chain}:${t.address}`}
-                  className="flex items-center justify-between px-3 py-2"
+                  className="px-3 py-2.5 space-y-1.5"
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] font-mono font-semibold text-[#E8E8ED]">
-                      {t.symbol}
-                    </span>
-                    <span className="text-[10px] font-mono uppercase tracking-wider text-[#00F0FF]/60">
-                      {chainLabel(t.chain)}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-1">
-                      <span className="text-[9px] font-mono text-[#6B6B80]">
-                        B
+                  {/* Token header row */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-mono font-semibold text-[#E8E8ED]">
+                        {t.symbol}
                       </span>
-                      <span className="text-[10px] font-mono text-[#6B6B80]">
-                        {formatBalance(t.totalBought)}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="text-[9px] font-mono text-[#6B6B80]">
-                        S
-                      </span>
-                      <span className="text-[10px] font-mono text-[#6B6B80]">
-                        {formatBalance(t.totalSold)}
+                      <span className="text-[10px] font-mono uppercase tracking-wider text-[#00F0FF]/60">
+                        {chainLabel(t.chain)}
                       </span>
                     </div>
                     <span
-                      className={`text-[10px] font-mono font-semibold w-16 text-right ${pnlColor(t.pnlUsd)}`}
+                      className={`text-[10px] font-mono font-semibold ${pnlColor(t.pnlUsd)}`}
                     >
                       {t.pnlUsd !== 0
-                        ? `${t.pnlUsd > 0 ? "+" : ""}${formatUsdCompact(t.pnlUsd)}`
+                        ? `${t.pnlUsd > 0 ? "+" : ""}${formatUsdCompact(t.pnlUsd)} realized`
                         : "\u2014"}
                     </span>
+                  </div>
+
+                  {/* Rich stats grid */}
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+                    {/* Bought */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] font-mono uppercase tracking-wider text-[#6B6B80]">Bought</span>
+                      <span className="text-[10px] font-mono text-[#E8E8ED]/80">
+                        {t.boughtUsd != null
+                          ? formatUsdCompact(t.boughtUsd)
+                          : formatBalance(t.totalBought)}
+                        {t.buyCount != null && (
+                          <span className="text-[#6B6B80] ml-1">×{t.buyCount}</span>
+                        )}
+                      </span>
+                    </div>
+                    {/* Avg buy */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] font-mono uppercase tracking-wider text-[#6B6B80]">Avg Buy</span>
+                      <span className="text-[10px] font-mono text-[#E8E8ED]/80">
+                        {t.avgBuyPrice != null && t.avgBuyPrice > 0
+                          ? `$${t.avgBuyPrice < 0.001 ? t.avgBuyPrice.toExponential(2) : t.avgBuyPrice.toPrecision(4)}`
+                          : "\u2014"}
+                      </span>
+                    </div>
+                    {/* Sold */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] font-mono uppercase tracking-wider text-[#6B6B80]">Sold</span>
+                      <span className="text-[10px] font-mono text-[#E8E8ED]/80">
+                        {t.soldUsd != null
+                          ? formatUsdCompact(t.soldUsd)
+                          : formatBalance(t.totalSold)}
+                        {t.sellCount != null && (
+                          <span className="text-[#6B6B80] ml-1">×{t.sellCount}</span>
+                        )}
+                      </span>
+                    </div>
+                    {/* Avg sell */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] font-mono uppercase tracking-wider text-[#6B6B80]">Avg Sell</span>
+                      <span className="text-[10px] font-mono text-[#E8E8ED]/80">
+                        {t.avgSellPrice != null && t.avgSellPrice > 0
+                          ? `$${t.avgSellPrice < 0.001 ? t.avgSellPrice.toExponential(2) : t.avgSellPrice.toPrecision(4)}`
+                          : "\u2014"}
+                      </span>
+                    </div>
+                    {/* Unrealized PnL (if any) */}
+                    {t.unrealizedPnlUsd != null && t.unrealizedPnlUsd !== 0 && (
+                      <div className="flex items-center justify-between col-span-2">
+                        <span className="text-[9px] font-mono uppercase tracking-wider text-[#6B6B80]">Unrealized</span>
+                        <span className={`text-[10px] font-mono ${pnlColor(t.unrealizedPnlUsd)}`}>
+                          {t.unrealizedPnlUsd > 0 ? "+" : ""}{formatUsdCompact(t.unrealizedPnlUsd)}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}

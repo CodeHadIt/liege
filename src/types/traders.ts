@@ -8,6 +8,14 @@ export interface CommonTraderToken {
   totalSold: number;
   pnl: number;
   pnlUsd: number;
+  // Rich fields populated when GMGN data is available
+  boughtUsd?: number;
+  soldUsd?: number;
+  avgBuyPrice?: number;
+  avgSellPrice?: number;
+  buyCount?: number;
+  sellCount?: number;
+  unrealizedPnlUsd?: number;
 }
 
 export interface CommonTrader {
