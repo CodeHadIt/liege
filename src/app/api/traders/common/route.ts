@@ -54,7 +54,7 @@ export async function POST(request: Request) {
     const tokenResults = [];
     for (const { chain, address, symbol: clientSymbol } of tokens) {
       const result = await (async () => {
-        const cacheKey = `common-traders-dex-v1:${chain}:${address}`;
+        const cacheKey = `common-traders-gmgn-v2:${chain}:${address}`;
         const cached = serverCache.get<{
           walletPnls: WalletPnl[];
           symbol: string;
@@ -84,6 +84,10 @@ export async function POST(request: Request) {
           realizedPnlUsd?: number;
           unrealizedPnlUsd?: number;
         }>();
+
+        // Tracks whether authoritative GMGN data was used (vs Moralis/GeckoTerminal fallback).
+        // Fallback data lacks fully-exited wallets — cache it briefly so GMGN is retried soon.
+        let usedGmgn = chain === "solana"; // Solana path always uses authoritative Helius data
 
         if (chain === "solana") {
           // Helius: fetch parsed swaps for the token mint address
@@ -143,6 +147,7 @@ export async function POST(request: Request) {
           const gmgnTraders = await scrapeGmgnTopTraders(chain, address).catch(() => []);
           if (gmgnTraders.length > 0) {
             console.log(`[common-traders] GMGN: ${gmgnTraders.length} traders for ${address}`);
+            usedGmgn = true;
             traders = gmgnTraders.map((t) => ({
               address: t.walletAddress.toLowerCase(),
               tokensBought: t.avgCostUsd > 0 ? t.historyBoughtCostUsd / t.avgCostUsd : t.balance,
@@ -221,7 +226,11 @@ export async function POST(request: Request) {
         }
 
         const resultData = { walletPnls, symbol, priceUsd };
-        serverCache.set(cacheKey, resultData, CACHE_TTL.HOLDERS);
+        // Only cache with full TTL when GMGN data was used.
+        // Fallback (Moralis/GeckoTerminal) data is incomplete — cache briefly
+        // so GMGN is retried on the next request rather than stale data persisting.
+        const cacheTtl = usedGmgn ? CACHE_TTL.HOLDERS : 15_000;
+        serverCache.set(cacheKey, resultData, cacheTtl);
 
         return { chain, address, ...resultData };
       })();
