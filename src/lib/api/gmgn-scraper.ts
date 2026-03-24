@@ -39,7 +39,7 @@ async function getBrowser(): Promise<Browser> {
   if (browserLaunchPromise) return browserLaunchPromise;
   browserLaunchPromise = chromium
     .launch({
-      headless: false,
+      headless: true,
       args: ["--disable-blink-features=AutomationControlled"],
     })
     .then((b) => {
