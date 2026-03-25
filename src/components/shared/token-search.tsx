@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { MagnifyingGlass, ArrowRight } from "@phosphor-icons/react";
 import { CopyAddress } from "@/components/shared/copy-address";
 import { detectChainFromAddress, formatUsd, chainLabel } from "@/lib/utils";
+import { TokenImage } from "@/components/shared/token-image";
 import type { TokenSearchResult } from "@/types/token";
 
 export function TokenSearch() {
@@ -21,9 +22,8 @@ export function TokenSearch() {
     }
 
     const detectedChain = detectChainFromAddress(q);
-    if (detectedChain) {
-      const chain = detectedChain === "evm" ? "base" : "solana";
-      router.push(`/token/${chain}/${q}`);
+    if (detectedChain === "solana") {
+      router.push(`/token/solana/${q}`);
       setQuery("");
       setIsOpen(false);
       return;
@@ -35,9 +35,29 @@ export function TokenSearch() {
         `/api/token/search?q=${encodeURIComponent(q)}`
       );
       const json = await res.json();
-      setResults(json.data || []);
+      const results: TokenSearchResult[] = json.data || [];
+
+      if (detectedChain === "evm") {
+        // EVM address pasted — use search result to determine actual chain (base vs bsc)
+        const match = results.find(
+          (r) => r.address.toLowerCase() === q.toLowerCase()
+        );
+        const chain = match?.chain ?? "base";
+        router.push(`/token/${chain}/${q}`);
+        setQuery("");
+        setIsOpen(false);
+        return;
+      }
+
+      setResults(results);
     } catch {
-      setResults([]);
+      if (detectedChain === "evm") {
+        router.push(`/token/base/${q}`);
+        setQuery("");
+        setIsOpen(false);
+      } else {
+        setResults([]);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -90,17 +110,12 @@ export function TokenSearch() {
               onMouseDown={() => handleSelect(result)}
               style={{ animationDelay: `${i * 30}ms` }}
             >
-              {result.logoUrl ? (
-                <img
-                  src={result.logoUrl}
-                  alt={result.symbol}
-                  className="h-8 w-8 rounded-full ring-1 ring-white/[0.06]"
-                />
-              ) : (
-                <div className="h-8 w-8 rounded-full bg-gradient-to-br from-[#00F0FF]/20 to-[#A855F7]/20 flex items-center justify-center text-xs font-bold text-[#00F0FF]">
-                  {result.symbol.slice(0, 2)}
-                </div>
-              )}
+              <TokenImage
+                logoUrl={result.logoUrl}
+                symbol={result.symbol}
+                chain={result.chain}
+                className="h-8 w-8 rounded-full"
+              />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-sm text-[#E8E8ED]">

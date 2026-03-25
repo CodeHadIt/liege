@@ -4,7 +4,8 @@ import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ChainBadge } from "@/components/shared/chain-badge";
+import { ChainTag } from "@/components/shared/chain-badge";
+import { TokenImage } from "@/components/shared/token-image";
 import { formatUsd } from "@/lib/utils";
 import { CopyAddress } from "@/components/shared/copy-address";
 import { MagnifyingGlass, ArrowRight, Scan } from "@phosphor-icons/react";
@@ -87,19 +88,12 @@ export default function SearchPage() {
               <div className="glow-card rounded-xl p-4 table-row-hover transition-all">
                 <div className="flex items-center gap-4">
                   {/* Token avatar */}
-                  {token.logoUrl ? (
-                    <img
-                      src={token.logoUrl}
-                      alt={token.symbol}
-                      className="h-10 w-10 rounded-xl border border-white/[0.06]"
-                    />
-                  ) : (
-                    <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#00F0FF]/20 to-[#00FF88]/20 border border-white/[0.06] flex items-center justify-center">
-                      <span className="text-sm font-bold font-mono text-[#E8E8ED]">
-                        {token.symbol.slice(0, 2)}
-                      </span>
-                    </div>
-                  )}
+                  <TokenImage
+                    logoUrl={token.logoUrl}
+                    symbol={token.symbol}
+                    chain={token.chain as ChainId}
+                    className="h-10 w-10 rounded-xl"
+                  />
 
                   {/* Token info */}
                   <div className="flex-1 min-w-0">
@@ -110,7 +104,7 @@ export default function SearchPage() {
                       <span className="text-xs text-[#6B6B80] truncate">
                         {token.name}
                       </span>
-                      <ChainBadge chain={token.chain as ChainId} />
+                      <ChainTag chain={token.chain as ChainId} />
                     </div>
                     <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-[#6B6B80]">
                       <CopyAddress address={token.address} />

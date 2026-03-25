@@ -5,7 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PriceChange } from "@/components/shared/price-change";
-import { ChainBadge } from "@/components/shared/chain-badge";
+import { ChainTag } from "@/components/shared/chain-badge";
+import { TokenImage } from "@/components/shared/token-image";
 import { useChain } from "@/providers/chain-provider";
 import { CopyAddress } from "@/components/shared/copy-address";
 import { formatUsd, formatTimeAgo } from "@/lib/utils";
@@ -207,7 +208,7 @@ function TrendingTable({
         <table className="w-full">
           <thead>
             <tr className="border-b border-white/[0.04]">
-              {["#", "Token", "Chain", "Mcap", "24h", "Volume", "Liquidity", ""].map(
+              {["#", "Token", "Mcap", "24h", "Volume", "Liquidity", ""].map(
                 (h) => (
                   <th
                     key={h}
@@ -262,21 +263,19 @@ function TrendingTable({
                         href={`/token/${token.chain}/${token.address}`}
                         className="flex items-center gap-3"
                       >
-                        {token.logoUrl ? (
-                          <img
-                            src={token.logoUrl}
-                            alt={token.symbol}
-                            className="h-8 w-8 rounded-full ring-1 ring-white/[0.06]"
-                          />
-                        ) : (
-                          <div className="h-8 w-8 rounded-full bg-gradient-to-br from-[#00F0FF]/15 to-[#A855F7]/15 flex items-center justify-center text-[10px] font-bold text-[#00F0FF] ring-1 ring-white/[0.06]">
-                            {token.symbol.slice(0, 2)}
-                          </div>
-                        )}
+                        <TokenImage
+                          logoUrl={token.logoUrl}
+                          symbol={token.symbol}
+                          chain={token.chain as ChainId}
+                          className="h-8 w-8 rounded-full"
+                        />
                         <div>
-                          <span className="font-semibold text-sm text-[#E8E8ED] group-hover:text-[#00F0FF] transition-colors">
-                            {token.symbol}
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold text-sm text-[#E8E8ED] group-hover:text-[#00F0FF] transition-colors">
+                              {token.symbol}
+                            </span>
+                            <ChainTag chain={token.chain as ChainId} />
+                          </div>
                           <div className="flex items-center gap-2 mt-0.5">
                             <span className="text-[10px] text-[#6B6B80] truncate max-w-[120px]">
                               {token.name}
@@ -285,9 +284,6 @@ function TrendingTable({
                           </div>
                         </div>
                       </Link>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <ChainBadge chain={token.chain as ChainId} />
                     </td>
                     <td className="px-5 py-3.5 text-right">
                       <span className="text-sm font-mono font-medium text-[#E8E8ED]">
@@ -353,7 +349,7 @@ function NewLaunchesTable({
         <table className="w-full">
           <thead>
             <tr className="border-b border-white/[0.04]">
-              {["Token", "Chain", "Mcap", "24h", "Volume", "Liquidity", "Age", ""].map(
+              {["Token", "Mcap", "24h", "Volume", "Liquidity", "Age", ""].map(
                 (h) => (
                   <th
                     key={h}
@@ -405,29 +401,24 @@ function NewLaunchesTable({
                           href={`/token/${token.chain}/${token.address}`}
                           className="flex items-center gap-3"
                         >
-                          {token.logoUrl ? (
-                            <img
-                              src={token.logoUrl}
-                              alt={token.symbol}
-                              className="h-8 w-8 rounded-full ring-1 ring-white/[0.06]"
-                            />
-                          ) : (
-                            <div className="h-8 w-8 rounded-full bg-gradient-to-br from-[#FFB800]/15 to-[#FF3B5C]/15 flex items-center justify-center text-[10px] font-bold text-[#FFB800] ring-1 ring-white/[0.06]">
-                              {token.symbol.slice(0, 2)}
-                            </div>
-                          )}
+                          <TokenImage
+                            logoUrl={token.logoUrl}
+                            symbol={token.symbol}
+                            chain={token.chain}
+                            className="h-8 w-8 rounded-full"
+                          />
                           <div>
-                            <span className="font-semibold text-sm text-[#E8E8ED] group-hover:text-[#00F0FF] transition-colors">
-                              {token.symbol}
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold text-sm text-[#E8E8ED] group-hover:text-[#00F0FF] transition-colors">
+                                {token.symbol}
+                              </span>
+                              <ChainTag chain={token.chain} />
+                            </div>
                             <div className="text-[10px] text-[#6B6B80] truncate max-w-[160px]">
                               {token.name}
                             </div>
                           </div>
                         </Link>
-                      </td>
-                      <td className="px-5 py-3.5">
-                        <ChainBadge chain={token.chain} />
                       </td>
                       <td className="px-5 py-3.5 text-right">
                         <span className="text-sm font-mono font-medium text-[#E8E8ED]">

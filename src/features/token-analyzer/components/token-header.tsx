@@ -1,7 +1,8 @@
 "use client";
 
 import { ArrowSquareOut, Globe, XLogo } from "@phosphor-icons/react";
-import { ChainBadge } from "@/components/shared/chain-badge";
+import { ChainTag } from "@/components/shared/chain-badge";
+import { TokenImage } from "@/components/shared/token-image";
 import { AddressDisplay } from "@/components/shared/address-display";
 import { PriceChange } from "@/components/shared/price-change";
 import { formatUsd } from "@/lib/utils";
@@ -17,33 +18,19 @@ export function TokenHeader({ token }: TokenHeaderProps) {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         {/* Left: identity */}
         <div className="flex items-center gap-4">
-          {token.logoUrl ? (
-            <div className="relative">
-              <img
-                src={token.logoUrl}
-                alt={token.symbol}
-                className="h-12 w-12 rounded-xl ring-1 ring-white/[0.06]"
-              />
-              <div className="absolute -bottom-1 -right-1">
-                <ChainBadge chain={token.chain} />
-              </div>
-            </div>
-          ) : (
-            <div className="relative">
-              <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-[#00F0FF]/20 to-[#A855F7]/20 flex items-center justify-center text-lg font-bold text-[#00F0FF] ring-1 ring-white/[0.06]">
-                {token.symbol.slice(0, 2)}
-              </div>
-              <div className="absolute -bottom-1 -right-1">
-                <ChainBadge chain={token.chain} />
-              </div>
-            </div>
-          )}
+          <TokenImage
+            logoUrl={token.logoUrl}
+            symbol={token.symbol}
+            chain={token.chain}
+            className="h-12 w-12 rounded-xl"
+          />
           <div>
             <div className="flex items-center gap-2.5">
               <h1 className="text-xl font-bold text-[#E8E8ED]">{token.name}</h1>
               <span className="text-sm font-mono font-medium text-[#6B6B80]">
                 {token.symbol}
               </span>
+              <ChainTag chain={token.chain} />
             </div>
             <div className="mt-1">
               <AddressDisplay address={token.address} chain={token.chain} chars={6} />

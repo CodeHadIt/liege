@@ -24,10 +24,9 @@ export function ClipboardIndicator() {
 
   const isToken = detected.type === "token";
   const iconColor = isToken ? "#00F0FF" : "#A855F7";
-  const chainRoute = detected.chain === "solana" ? "solana" : "base";
   const href = isToken
-    ? `/token/${chainRoute}/${detected.address}`
-    : `/wallet/${chainRoute}/${detected.address}`;
+    ? `/token/${detected.chain}/${detected.address}`
+    : `/wallet/${detected.chain}/${detected.address}`;
 
   return (
     <div className="hidden sm:flex items-center gap-1.5 max-w-[180px]">

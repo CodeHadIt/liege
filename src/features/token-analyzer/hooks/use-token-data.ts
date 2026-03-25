@@ -5,7 +5,11 @@ import type { UnifiedTokenData } from "@/types/token";
 import type { ChainId } from "@/types/chain";
 import { REFETCH_INTERVALS } from "@/config/constants";
 
-export function useTokenData(chain: ChainId, address: string) {
+export function useTokenData(
+  chain: ChainId,
+  address: string,
+  options?: { enabled?: boolean }
+) {
   return useQuery<UnifiedTokenData | null>({
     queryKey: ["token", chain, address],
     queryFn: async () => {
@@ -14,7 +18,7 @@ export function useTokenData(chain: ChainId, address: string) {
       const json = await res.json();
       return json.data || null;
     },
-    enabled: !!chain && !!address,
+    enabled: (options?.enabled ?? true) && !!chain && !!address,
     refetchInterval: REFETCH_INTERVALS.PRICE,
   });
 }

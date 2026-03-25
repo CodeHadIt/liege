@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { detectChainFromAddress } from "@/lib/utils";
+import type { ChainId } from "@/types/chain";
 
 interface ClipboardAddress {
   address: string;
-  chain: "solana" | "evm";
+  chain: ChainId;
   type: "token" | "wallet";
   label: string;
 }
@@ -46,38 +47,43 @@ export function useClipboardAddress(): UseClipboardAddressReturn {
 
       if (dismissed.current.has(trimmed)) return;
 
-      const chain = detectChainFromAddress(trimmed);
-      if (!chain) return;
+      const detectedType = detectChainFromAddress(trimmed);
+      if (!detectedType) return;
 
       setLoading(true);
 
       try {
         const res = await fetch(`/api/token/search?q=${encodeURIComponent(trimmed)}`);
         const json = await res.json();
-        const results = json.data ?? [];
+        const results: { address: string; chain: ChainId; symbol?: string; name?: string }[] = json.data ?? [];
         const match = results.find(
-          (r: { address: string }) => r.address.toLowerCase() === trimmed.toLowerCase()
+          (r) => r.address.toLowerCase() === trimmed.toLowerCase()
         );
+
+        // For tokens: use the chain from DexScreener result (correctly identifies base vs bsc)
+        // For wallets: fall back to solana or base (can't distinguish base/bsc by address alone)
+        const resolvedChain: ChainId = match?.chain ?? (detectedType === "solana" ? "solana" : "base");
 
         if (match) {
           setDetected({
             address: trimmed,
-            chain,
+            chain: resolvedChain,
             type: "token",
-            label: match.symbol || match.name,
+            label: match.symbol || match.name || trimmed.slice(0, 8),
           });
         } else {
           setDetected({
             address: trimmed,
-            chain,
+            chain: resolvedChain,
             type: "wallet",
             label: `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`,
           });
         }
       } catch {
+        const fallbackChain: ChainId = detectedType === "solana" ? "solana" : "base";
         setDetected({
           address: trimmed,
-          chain,
+          chain: fallbackChain,
           type: "wallet",
           label: `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`,
         });

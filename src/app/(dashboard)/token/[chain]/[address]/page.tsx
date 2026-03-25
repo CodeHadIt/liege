@@ -1,7 +1,9 @@
 "use client";
 
-import { use } from "react";
+import { use, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useTokenData } from "@/features/token-analyzer/hooks/use-token-data";
+import { useResolvedChain } from "@/features/token-analyzer/hooks/use-resolved-chain";
 import { TokenHeader } from "@/features/token-analyzer/components/token-header";
 import { TokenStatsGrid } from "@/features/token-analyzer/components/token-stats-grid";
 import { CandlestickChart } from "@/features/token-analyzer/components/candlestick-chart";
@@ -22,12 +24,31 @@ export default function TokenPage({
   params: Promise<{ chain: string; address: string }>;
 }) {
   const { chain, address } = use(params);
-  const { data: token, isLoading, error } = useTokenData(
+  const router = useRouter();
+
+  // For EVM tokens (base/bsc), verify the actual chain via DexScreener.
+  // Both chains share the same 0x address format so the URL param alone is unreliable.
+  const { resolvedChain, isLoading: isResolvingChain } = useResolvedChain(
     chain as ChainId,
     address
   );
 
-  if (isLoading) {
+  // Silently correct the URL if the chain in params was wrong.
+  useEffect(() => {
+    if (!isResolvingChain && resolvedChain !== chain) {
+      router.replace(`/token/${resolvedChain}/${address}`);
+    }
+  }, [isResolvingChain, resolvedChain, chain, address, router]);
+
+  // Wait for chain resolution before firing any data fetches so everything
+  // (token data, top traders, chart, etc.) uses the correct chain from the start.
+  const { data: token, isLoading, error } = useTokenData(
+    resolvedChain,
+    address,
+    { enabled: !isResolvingChain }
+  );
+
+  if (isResolvingChain || isLoading) {
     return (
       <div className="space-y-6">
         {/* Header skeleton */}
@@ -65,7 +86,7 @@ export default function TokenPage({
         <p className="text-sm text-center max-w-md">
           Could not find data for{" "}
           <span className="font-mono text-[#00F0FF]">{address.slice(0, 8)}...{address.slice(-6)}</span>{" "}
-          on <span className="text-[#E8E8ED]">{chainLabel(chain)}</span>.
+          on <span className="text-[#E8E8ED]">{chainLabel(resolvedChain)}</span>.
         </p>
         <p className="text-xs mt-3 opacity-50">
           Verify the address is correct and the token has trading activity.
