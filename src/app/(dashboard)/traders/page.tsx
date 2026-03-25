@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import type { DisplayCurrency } from "@/features/common-traders/components/trade-history-detail";
 import { GitDiff, Lightning } from "@phosphor-icons/react";
 import {
   TokenMultiInput,
@@ -15,7 +14,6 @@ import type { ChainId } from "@/types/chain";
 export default function TradersPage() {
   const [selectedChain, setSelectedChain] = useState<ChainId | null>(null);
   const [tokens, setTokens] = useState<SelectedToken[]>([]);
-  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>("usd");
   const { mutate, data, isPending, error } = useCommonTraders();
 
   const handleChainChange = useCallback((chain: ChainId | null) => {
@@ -145,10 +143,6 @@ export default function TradersPage() {
           traders={data?.traders ?? []}
           tokensMeta={data?.tokensMeta ?? []}
           isLoading={isPending}
-          displayCurrency={displayCurrency}
-          onToggleCurrency={() =>
-            setDisplayCurrency((prev) => (prev === "usd" ? "token" : "usd"))
-          }
         />
       )}
     </div>

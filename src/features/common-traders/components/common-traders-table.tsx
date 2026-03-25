@@ -7,21 +7,11 @@ import {
   CaretUp,
   Users,
   MagnifyingGlass as SearchIcon,
-  CurrencyDollarSimple,
-  Coins,
 } from "@phosphor-icons/react";
 import { shortenAddress, chainLabel } from "@/lib/utils";
 import { getExplorerAddressUrl } from "@/config/chains";
 import { useWalletDialog } from "@/providers/wallet-dialog-provider";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  useTradeHistory,
-  type TradeHistoryInput,
-} from "@/features/common-traders/hooks/use-trade-history";
-import {
-  TradeHistoryDetail,
-  type DisplayCurrency,
-} from "@/features/common-traders/components/trade-history-detail";
 import type { CommonTrader, TokenMeta } from "@/types/traders";
 import type { ChainId } from "@/types/chain";
 
@@ -29,8 +19,6 @@ interface CommonTradersTableProps {
   traders: CommonTrader[];
   tokensMeta: TokenMeta[];
   isLoading: boolean;
-  displayCurrency: DisplayCurrency;
-  onToggleCurrency: () => void;
 }
 
 function formatUsdCompact(value: number): string {
@@ -42,11 +30,18 @@ function formatUsdCompact(value: number): string {
   return `${sign}$${abs.toFixed(2)}`;
 }
 
-function formatBalance(value: number): string {
-  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return value.toFixed(1);
+/** Format a per-token price (can be extremely small for meme coins) */
+function formatPrice(price: number): string {
+  if (!price || price <= 0) return "—";
+  if (price >= 1_000) return `$${price.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+  if (price >= 1) return `$${price.toFixed(4)}`;
+  if (price >= 0.01) return `$${price.toFixed(4)}`;
+  if (price >= 0.0001) return `$${price.toFixed(6)}`;
+  if (price >= 0.000001) return `$${price.toFixed(8)}`;
+  // Very tiny: use fixed with enough decimals to show 4 significant digits
+  const exp = Math.floor(Math.log10(price));
+  const decimals = Math.abs(exp) + 3;
+  return `$${price.toFixed(Math.min(decimals, 12))}`;
 }
 
 function getWalletChain(trader: CommonTrader): ChainId {
@@ -62,45 +57,17 @@ function pnlColor(value: number): string {
 function TraderRow({
   trader,
   index,
-  tokensMeta,
   isExpanded,
   onToggle,
-  displayCurrency,
 }: {
   trader: CommonTrader;
   index: number;
   tokensMeta: TokenMeta[];
   isExpanded: boolean;
   onToggle: () => void;
-  displayCurrency: DisplayCurrency;
 }) {
   const chain = getWalletChain(trader);
   const { openWalletDialog } = useWalletDialog();
-
-  // Build trade history input only when expanded
-  const historyInput: TradeHistoryInput | null = isExpanded
-    ? {
-        walletAddress: trader.walletAddress,
-        tokens: trader.tokens.map((t) => {
-          const meta = tokensMeta.find(
-            (m) => m.address === t.address && m.chain === t.chain
-          );
-          return {
-            chain: t.chain,
-            address: t.address,
-            symbol: t.symbol,
-            currentBalance: 0,
-            priceUsd: meta?.priceUsd ?? null,
-          };
-        }),
-      }
-    : null;
-
-  const {
-    data: history,
-    isLoading: historyLoading,
-    error: historyError,
-  } = useTradeHistory(historyInput);
 
   return (
     <div>
@@ -136,7 +103,7 @@ function TraderRow({
             {trader.tokenCount}
           </span>
           <span className="text-[10px] font-mono text-[#6B6B80]">
-            / {tokensMeta.length}
+            / {trader.tokens.length}
           </span>
         </div>
         <span
@@ -158,100 +125,95 @@ function TraderRow({
       {/* Expanded row */}
       {isExpanded && (
         <div className="px-4 pb-3 pl-14">
-          <div className="rounded-lg bg-white/[0.02] border border-white/[0.04]">
-            {/* Per-token PnL breakdown */}
-            <div className="divide-y divide-white/[0.04]">
-              {trader.tokens.map((t) => (
-                <div
-                  key={`${t.chain}:${t.address}`}
-                  className="px-3 py-2.5 space-y-1.5"
-                >
-                  {/* Token header row */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-mono font-semibold text-[#E8E8ED]">
-                        {t.symbol}
+          <div className="rounded-xl overflow-hidden border border-white/[0.06]">
+            {trader.tokens.map((t, idx) => (
+              <div
+                key={`${t.chain}:${t.address}`}
+                className={idx > 0 ? "border-t border-white/[0.06]" : ""}
+              >
+                {/* Token header */}
+                <div className="flex items-center justify-between px-3 py-2 bg-white/[0.025]">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-mono font-bold text-[#E8E8ED]">
+                      {t.symbol}
+                    </span>
+                    <span className="text-[9px] font-mono uppercase tracking-widest px-1.5 py-0.5 rounded bg-[#00F0FF]/10 text-[#00F0FF]/60">
+                      {chainLabel(t.chain)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {t.unrealizedPnlUsd != null && t.unrealizedPnlUsd !== 0 && (
+                      <span className={`text-[9px] font-mono ${pnlColor(t.unrealizedPnlUsd)}`}>
+                        {t.unrealizedPnlUsd > 0 ? "+" : ""}
+                        {formatUsdCompact(t.unrealizedPnlUsd)} unrealized
                       </span>
-                      <span className="text-[10px] font-mono uppercase tracking-wider text-[#00F0FF]/60">
-                        {chainLabel(t.chain)}
-                      </span>
-                    </div>
-                    <span
-                      className={`text-[10px] font-mono font-semibold ${pnlColor(t.pnlUsd)}`}
-                    >
+                    )}
+                    <span className={`text-[11px] font-mono font-bold ${pnlColor(t.pnlUsd)}`}>
                       {t.pnlUsd !== 0
-                        ? `${t.pnlUsd > 0 ? "+" : ""}${formatUsdCompact(t.pnlUsd)} realized`
+                        ? `${t.pnlUsd > 0 ? "+" : ""}${formatUsdCompact(t.pnlUsd)}`
                         : "\u2014"}
                     </span>
                   </div>
+                </div>
 
-                  {/* Rich stats grid */}
-                  <div className="grid grid-cols-2 gap-x-6 gap-y-1">
-                    {/* Bought */}
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-mono uppercase tracking-wider text-[#6B6B80]">Bought</span>
-                      <span className="text-[10px] font-mono text-[#E8E8ED]/80">
-                        {t.boughtUsd != null
-                          ? formatUsdCompact(t.boughtUsd)
-                          : formatBalance(t.totalBought)}
-                        {t.buyCount != null && (
-                          <span className="text-[#6B6B80] ml-1">×{t.buyCount}</span>
-                        )}
-                      </span>
-                    </div>
-                    {/* Avg buy */}
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-mono uppercase tracking-wider text-[#6B6B80]">Avg Buy</span>
-                      <span className="text-[10px] font-mono text-[#E8E8ED]/80">
-                        {t.avgBuyPrice != null && t.avgBuyPrice > 0
-                          ? `$${t.avgBuyPrice < 0.001 ? t.avgBuyPrice.toExponential(2) : t.avgBuyPrice.toPrecision(4)}`
-                          : "\u2014"}
-                      </span>
-                    </div>
-                    {/* Sold */}
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-mono uppercase tracking-wider text-[#6B6B80]">Sold</span>
-                      <span className="text-[10px] font-mono text-[#E8E8ED]/80">
-                        {t.soldUsd != null
-                          ? formatUsdCompact(t.soldUsd)
-                          : formatBalance(t.totalSold)}
-                        {t.sellCount != null && (
-                          <span className="text-[#6B6B80] ml-1">×{t.sellCount}</span>
-                        )}
-                      </span>
-                    </div>
-                    {/* Avg sell */}
-                    <div className="flex items-center justify-between">
-                      <span className="text-[9px] font-mono uppercase tracking-wider text-[#6B6B80]">Avg Sell</span>
-                      <span className="text-[10px] font-mono text-[#E8E8ED]/80">
-                        {t.avgSellPrice != null && t.avgSellPrice > 0
-                          ? `$${t.avgSellPrice < 0.001 ? t.avgSellPrice.toExponential(2) : t.avgSellPrice.toPrecision(4)}`
-                          : "\u2014"}
-                      </span>
-                    </div>
-                    {/* Unrealized PnL (if any) */}
-                    {t.unrealizedPnlUsd != null && t.unrealizedPnlUsd !== 0 && (
-                      <div className="flex items-center justify-between col-span-2">
-                        <span className="text-[9px] font-mono uppercase tracking-wider text-[#6B6B80]">Unrealized</span>
-                        <span className={`text-[10px] font-mono ${pnlColor(t.unrealizedPnlUsd)}`}>
-                          {t.unrealizedPnlUsd > 0 ? "+" : ""}{formatUsdCompact(t.unrealizedPnlUsd)}
+                {/* Buy / Sell split */}
+                <div className="grid grid-cols-2">
+                  {/* ── Bought (green) ── */}
+                  <div className="px-3 py-3 border-r border-white/[0.04] bg-[#00FF88]/[0.025]">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-1.5">
+                        <div className="h-1.5 w-1.5 rounded-full bg-[#00FF88]" />
+                        <span className="text-[9px] font-mono uppercase tracking-widest text-[#00FF88]/70 font-semibold">
+                          Bought
                         </span>
                       </div>
-                    )}
+                      {t.buyCount != null && (
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#00FF88]/10 text-[#00FF88]/60">
+                          {t.buyCount} txn{t.buyCount !== 1 ? "s" : ""}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[15px] font-mono font-bold text-[#00FF88] leading-none">
+                      {t.boughtUsd != null ? formatUsdCompact(t.boughtUsd) : "—"}
+                    </div>
+                    <div className="text-[9px] font-mono text-[#6B6B80] mt-1.5">
+                      avg&nbsp;
+                      <span className="text-[#E8E8ED]/60">
+                        {t.avgBuyPrice && t.avgBuyPrice > 0 ? formatPrice(t.avgBuyPrice) : "—"}
+                      </span>
+                      &nbsp;/ token
+                    </div>
+                  </div>
+
+                  {/* ── Sold (red) ── */}
+                  <div className="px-3 py-3 bg-[#FF4444]/[0.025]">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-1.5">
+                        <div className="h-1.5 w-1.5 rounded-full bg-[#FF4444]" />
+                        <span className="text-[9px] font-mono uppercase tracking-widest text-[#FF4444]/70 font-semibold">
+                          Sold
+                        </span>
+                      </div>
+                      {t.sellCount != null && (
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#FF4444]/10 text-[#FF4444]/60">
+                          {t.sellCount} txn{t.sellCount !== 1 ? "s" : ""}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[15px] font-mono font-bold text-[#FF4444] leading-none">
+                      {t.soldUsd != null ? formatUsdCompact(t.soldUsd) : "—"}
+                    </div>
+                    <div className="text-[9px] font-mono text-[#6B6B80] mt-1.5">
+                      avg&nbsp;
+                      <span className="text-[#E8E8ED]/60">
+                        {t.avgSellPrice && t.avgSellPrice > 0 ? formatPrice(t.avgSellPrice) : "—"}
+                      </span>
+                      &nbsp;/ token
+                    </div>
                   </div>
                 </div>
-              ))}
-            </div>
-
-            {/* Trade history detail */}
-            <div className="px-3 py-2">
-              <TradeHistoryDetail
-                tokenHistories={history?.tokenHistories ?? []}
-                displayCurrency={displayCurrency}
-                isLoading={historyLoading}
-                error={historyError ? historyError.message : null}
-              />
-            </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -263,8 +225,6 @@ export function CommonTradersTable({
   traders,
   tokensMeta,
   isLoading,
-  displayCurrency,
-  onToggleCurrency,
 }: CommonTradersTableProps) {
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<"tokens" | "pnl">("pnl");
@@ -351,39 +311,15 @@ export function CommonTradersTable({
           >
             By PnL
           </button>
-          <div className="w-px h-4 bg-white/[0.06] mx-1" />
-          <button
-            onClick={onToggleCurrency}
-            className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono transition-colors ${
-              displayCurrency === "usd"
-                ? "bg-[#A855F7]/10 text-[#A855F7]"
-                : "bg-[#00FF88]/10 text-[#00FF88]"
-            }`}
-          >
-            {displayCurrency === "usd" ? (
-              <CurrencyDollarSimple className="h-3 w-3" />
-            ) : (
-              <Coins className="h-3 w-3" />
-            )}
-            {displayCurrency === "usd" ? "USD" : "Token"}
-          </button>
         </div>
       </div>
 
       {/* Table header */}
       <div className="grid grid-cols-[40px_1fr_80px_100px_40px] gap-2 px-4 py-2 border-b border-white/[0.04]">
-        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80]">
-          #
-        </span>
-        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80]">
-          Wallet
-        </span>
-        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-center">
-          Tokens
-        </span>
-        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">
-          Total PnL
-        </span>
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80]">#</span>
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80]">Wallet</span>
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-center">Tokens</span>
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">Total PnL</span>
         <span />
       </div>
 
@@ -398,12 +334,9 @@ export function CommonTradersTable({
             isExpanded={expandedRow === trader.walletAddress}
             onToggle={() =>
               setExpandedRow(
-                expandedRow === trader.walletAddress
-                  ? null
-                  : trader.walletAddress
+                expandedRow === trader.walletAddress ? null : trader.walletAddress
               )
             }
-            displayCurrency={displayCurrency}
           />
         ))}
       </div>

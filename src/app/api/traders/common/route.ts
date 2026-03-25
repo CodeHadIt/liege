@@ -50,14 +50,21 @@ export async function POST(request: Request) {
     // Phase 1: Fetch top traders + price per token (sequential to avoid rate-limiting)
     const tokenResults = [];
     for (const { chain, address, symbol: clientSymbol } of tokens) {
-      const result = await (async () => {
+      const result = await (async (): Promise<{
+        chain: string;
+        address: string;
+        walletPnls: WalletPnl[];
+        symbol: string;
+        priceUsd: number | null;
+        fetchError: boolean;
+      }> => {
         const cacheKey = `common-traders-gmgn-v2:${chain}:${address}`;
         const cached = serverCache.get<{
           walletPnls: WalletPnl[];
           symbol: string;
           priceUsd: number | null;
         }>(cacheKey);
-        if (cached) return { chain, address, ...cached };
+        if (cached) return { chain, address, ...cached, fetchError: false };
 
         const provider = getChainProvider(chain);
         const [pairData, metadata] = await Promise.all([
@@ -197,7 +204,7 @@ export async function POST(request: Request) {
     const tokensMeta: TokenMeta[] = tokenResults.map((tr) => ({
       address: tr.address,
       symbol: tr.symbol,
-      chain: tr.chain,
+      chain: tr.chain as ChainId,
       priceUsd: tr.priceUsd,
     }));
 
@@ -225,7 +232,7 @@ export async function POST(request: Request) {
             token: {
               address: tr.address,
               symbol: tr.symbol,
-              chain: tr.chain,
+              chain: tr.chain as ChainId,
               totalBought: wp.totalBought,
               totalSold: wp.totalSold,
               pnl: wp.pnl,
