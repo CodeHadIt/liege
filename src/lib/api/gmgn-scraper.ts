@@ -89,12 +89,14 @@ export async function scrapeGmgnTopTraders(
     return [];
   }
 
-  const pageUrl = `https://gmgn.ai/${gmgnChain}/token/${tokenAddress}`;
+  // GMGN's API is case-sensitive — always use lowercase address in URLs
+  const tokenLower = tokenAddress.toLowerCase();
+  const pageUrl = `https://gmgn.ai/${gmgnChain}/token/${tokenLower}`;
   const apiUrl =
-    `https://gmgn.ai/vas/api/v1/token_holders/${gmgnChain}/${tokenAddress}` +
+    `https://gmgn.ai/vas/api/v1/token_holders/${gmgnChain}/${tokenLower}` +
     `?orderby=realized_profit&direction=desc&limit=100`;
 
-  console.log(`[gmgn-scraper] Fetching ${chain}:${tokenAddress}`);
+  console.log(`[gmgn-scraper] Fetching ${chain}:${tokenLower}`);
 
   const browser = await getBrowser();
   const context = await browser.newContext({
