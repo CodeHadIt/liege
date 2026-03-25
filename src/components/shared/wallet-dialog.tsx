@@ -57,6 +57,7 @@ export function WalletDialog() {
   const { state, closeWalletDialog } = useWalletDialog();
   const [activeTab, setActiveTab] = useState<Tab>("positions");
   const [showStableBreakdown, setShowStableBreakdown] = useState(false);
+  const showToast = useToast();
 
   const input =
     state.isOpen && state.walletAddress && state.chain
@@ -116,6 +117,18 @@ export function WalletDialog() {
                     {chainLabel(state.chain)}
                   </span>
                 )}
+                {state.walletAddress && (
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(state.walletAddress!);
+                      showToast("Address copied");
+                    }}
+                    className="text-[#6B6B80] hover:text-[#E8E8ED] transition-colors"
+                    title="Copy address"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
               {state.walletAddress && state.chain && (
                 <a
@@ -130,7 +143,7 @@ export function WalletDialog() {
               )}
             </div>
             {state.walletAddress && state.chain && (
-              <div className="ml-auto">
+              <div className="ml-auto mr-8">
                 <FavoriteButton
                   walletAddress={state.walletAddress}
                   chain={state.chain as ChainId}
