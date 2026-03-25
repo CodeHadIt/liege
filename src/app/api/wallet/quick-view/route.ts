@@ -12,6 +12,255 @@ import type {
   PnlHistoryEntry,
 } from "@/types/traders";
 
+// ─── Moralis EVM helpers ───────────────────────────────────────────────────────
+
+const MORALIS_BASE = "https://deep-index.moralis.io/api/v2.2";
+
+const MORALIS_CHAIN: Record<string, string> = {
+  base: "0x2105",
+  bsc: "0x38",
+  ethereum: "0x1",
+};
+
+const EVM_NATIVE_SYMBOLS: Record<string, string> = {
+  base: "ETH",
+  bsc: "BNB",
+  ethereum: "ETH",
+};
+
+async function fetchMoralisEvm<T>(path: string): Promise<T | null> {
+  const apiKey = process.env.MORALIS_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const res = await fetch(`${MORALIS_BASE}${path}`, {
+      headers: { "X-API-Key": apiKey, Accept: "application/json" },
+    });
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
+interface MoralisTokenBalance {
+  token_address: string;
+  symbol: string;
+  name: string;
+  logo: string | null;
+  thumbnail: string | null;
+  decimals: string;
+  balance_formatted: string;
+  usd_price: number | null;
+  usd_value: number | null;
+  possible_spam: boolean;
+}
+
+interface MoralisTokensResponse {
+  result: MoralisTokenBalance[];
+  native_balance?: {
+    balance: string;
+    balance_formatted: string;
+    usd: string | null;
+  };
+}
+
+interface MoralisProfitabilityEntry {
+  token_address: string;
+  token_name: string;
+  token_symbol: string;
+  logo: string | null;
+  total_tokens_bought: string;
+  total_tokens_sold: string;
+  total_sold_usd: string | null;
+  avg_buy_price_usd: string | null;
+  avg_sell_price_usd: string | null;
+  realized_profit_usd: string | null;
+  count_of_trades: number;
+  last_trade: string | null;
+}
+
+interface MoralisHistoryErc20Transfer {
+  token_address: string;
+  token_symbol: string;
+  value_formatted: string;
+  value_usd: string | null;
+  direction: "send" | "receive";
+}
+
+interface MoralisHistoryEntry {
+  hash: string;
+  block_timestamp: string;
+  summary: string;
+  category: string;
+  erc20_transfers: MoralisHistoryErc20Transfer[];
+}
+
+async function buildEvmQuickView(
+  walletAddress: string,
+  chainId: ChainId
+): Promise<WalletQuickViewData | null> {
+  const moralisChain = MORALIS_CHAIN[chainId];
+  if (!moralisChain) return null;
+
+  const addr = walletAddress.toLowerCase();
+
+  const [tokensData, profData, histData] = await Promise.all([
+    fetchMoralisEvm<MoralisTokensResponse>(
+      `/wallets/${addr}/tokens?chain=${moralisChain}&exclude_spam=true`
+    ),
+    fetchMoralisEvm<{ result: MoralisProfitabilityEntry[] }>(
+      `/wallets/${addr}/profitability?chain=${moralisChain}`
+    ),
+    fetchMoralisEvm<{ result: MoralisHistoryEntry[] }>(
+      `/wallets/${addr}/history?chain=${moralisChain}&limit=25`
+    ),
+  ]);
+
+  const chainConfig = CHAIN_CONFIGS[chainId];
+  const nativeSymbol = EVM_NATIVE_SYMBOLS[chainId] ?? chainConfig.nativeCurrency.symbol;
+  const nativeBal = tokensData?.native_balance;
+  const nativeBalance = parseFloat(nativeBal?.balance_formatted ?? "0") || 0;
+  const nativeBalanceUsd = parseFloat(nativeBal?.usd ?? "0") || 0;
+
+  // Stablecoins
+  const EVM_STABLE_SYMBOLS = new Set(["USDC", "USDT", "BUSD", "DAI", "FRAX", "PYUSD"]);
+  const stablecoins: StablecoinBalance[] = [];
+  let stablecoinTotal = 0;
+  const activePositions: WalletPosition[] = [];
+
+  for (const tok of tokensData?.result ?? []) {
+    if (tok.possible_spam) continue;
+    const bal = parseFloat(tok.balance_formatted) || 0;
+    const usdVal = tok.usd_value ?? 0;
+    if (bal <= 0) continue;
+
+    const isStable = EVM_STABLE_SYMBOLS.has(tok.symbol.toUpperCase());
+    if (isStable) {
+      stablecoins.push({ symbol: tok.symbol, balance: bal, balanceUsd: usdVal });
+      stablecoinTotal += usdVal;
+    } else if (usdVal >= 0.01 || bal > 0) {
+      activePositions.push({
+        tokenAddress: tok.token_address,
+        symbol: tok.symbol,
+        name: tok.name,
+        logoUrl: tok.logo ?? tok.thumbnail ?? null,
+        chain: chainId,
+        balance: bal,
+        balanceUsd: usdVal,
+        pnl: 0,
+        pnlPercent: 0,
+        entryPrice: null,
+        currentPrice: tok.usd_price,
+        totalBoughtUsd: 0,
+        totalSoldUsd: 0,
+        unrealizedPnl: 0,
+      });
+    }
+  }
+  activePositions.sort((a, b) => b.balanceUsd - a.balanceUsd);
+
+  // PnL from profitability endpoint
+  const recentPnls: PnlHistoryEntry[] = [];
+  const topBuys: PnlHistoryEntry[] = [];
+  let pnl30d = 0;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const thirtyDaysAgoSec = nowSec - 30 * 24 * 60 * 60;
+
+  for (const entry of profData?.result ?? []) {
+    const realizedPnl = parseFloat(entry.realized_profit_usd ?? "0") || 0;
+    const lastTradeTs = entry.last_trade
+      ? Math.floor(new Date(entry.last_trade).getTime() / 1000)
+      : 0;
+
+    if (lastTradeTs >= thirtyDaysAgoSec) {
+      pnl30d += realizedPnl;
+    }
+
+    recentPnls.push({
+      tokenAddress: entry.token_address,
+      symbol: entry.token_symbol,
+      chain: chainId,
+      realizedPnl,
+      timestamp: lastTradeTs,
+      side: "sell",
+      amount: parseFloat(entry.total_tokens_sold) || 0,
+    });
+
+    const totalBuyUsd =
+      parseFloat(entry.avg_buy_price_usd ?? "0") * parseFloat(entry.total_tokens_bought) || 0;
+    topBuys.push({
+      tokenAddress: entry.token_address,
+      symbol: entry.token_symbol,
+      chain: chainId,
+      realizedPnl: totalBuyUsd,
+      timestamp: lastTradeTs,
+      side: "buy",
+      amount: parseFloat(entry.total_tokens_bought) || 0,
+    });
+  }
+
+  recentPnls.sort((a, b) => b.realizedPnl - a.realizedPnl);
+  topBuys.sort((a, b) => b.realizedPnl - a.realizedPnl);
+
+  // Activity from history
+  const recentActivity: WalletQuickViewData["recentActivity"] = [];
+  for (const tx of histData?.result ?? []) {
+    if (tx.category !== "token swap" && tx.category !== "token receive" && tx.category !== "token send") continue;
+    const ts = Math.floor(new Date(tx.block_timestamp).getTime() / 1000);
+
+    // Find what was received (buy) or sent (sell) in this tx
+    const received = tx.erc20_transfers.filter((t) => t.direction === "receive" && !EVM_STABLE_SYMBOLS.has(t.token_symbol.toUpperCase()));
+    const sent = tx.erc20_transfers.filter((t) => t.direction === "send" && !EVM_STABLE_SYMBOLS.has(t.token_symbol.toUpperCase()));
+
+    if (received.length > 0) {
+      const r = received[0];
+      const sentStable = tx.erc20_transfers.find((t) => t.direction === "send" && EVM_STABLE_SYMBOLS.has(t.token_symbol.toUpperCase()));
+      const amountUsd = parseFloat(sentStable?.value_formatted ?? r.value_usd ?? "0") || 0;
+      recentActivity.push({
+        txHash: tx.hash,
+        timestamp: ts,
+        side: "buy",
+        tokenSymbol: r.token_symbol,
+        amount: parseFloat(r.value_formatted) || 0,
+        amountUsd,
+      });
+    } else if (sent.length > 0) {
+      const s = sent[0];
+      const receivedStable = tx.erc20_transfers.find((t) => t.direction === "receive" && EVM_STABLE_SYMBOLS.has(t.token_symbol.toUpperCase()));
+      const amountUsd = parseFloat(receivedStable?.value_formatted ?? s.value_usd ?? "0") || 0;
+      recentActivity.push({
+        txHash: tx.hash,
+        timestamp: ts,
+        side: "sell",
+        tokenSymbol: s.token_symbol,
+        amount: parseFloat(s.value_formatted) || 0,
+        amountUsd,
+      });
+    }
+  }
+
+  return {
+    address: walletAddress,
+    chain: chainId,
+    nativeBalance,
+    nativeBalanceUsd,
+    nativeSymbol,
+    stablecoinTotal,
+    stablecoins,
+    pnl30d,
+    pnl7d: 0,
+    bestTrade30d: recentPnls[0] ? { symbol: recentPnls[0].symbol, pnl: recentPnls[0].realizedPnl } : null,
+    bestTrade7d: null,
+    freshBuys7d: [],
+    freshBuys30d: [],
+    pnlHistory: [],
+    activePositions: activePositions.slice(0, 20),
+    recentPnls: recentPnls.slice(0, 20),
+    topBuys: topBuys.slice(0, 10),
+    recentActivity: recentActivity.slice(0, 30),
+  };
+}
+
 const SOLANA_STABLES: Record<string, string> = {
   EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: "USDC",
   Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB: "USDT",
@@ -61,6 +310,16 @@ export async function POST(request: Request) {
     const cacheKey = `wallet-quick:${chainId}:${walletAddress}`;
     const cached = serverCache.get<WalletQuickViewData>(cacheKey);
     if (cached) return NextResponse.json(cached);
+
+    // EVM chains: use Moralis
+    if (chainId !== "solana") {
+      const evmData = await buildEvmQuickView(walletAddress, chainId);
+      if (evmData) {
+        serverCache.set(cacheKey, evmData, CACHE_TTL.WALLET_QUICK);
+        return NextResponse.json(evmData);
+      }
+      return NextResponse.json({ error: "Failed to fetch EVM wallet data" }, { status: 502 });
+    }
 
     const provider = getChainProvider(chainId);
     const chainConfig = CHAIN_CONFIGS[chainId];

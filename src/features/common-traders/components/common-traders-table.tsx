@@ -7,10 +7,12 @@ import {
   CaretUp,
   Users,
   MagnifyingGlass as SearchIcon,
+  Copy,
 } from "@phosphor-icons/react";
 import { shortenAddress, chainLabel } from "@/lib/utils";
 import { getExplorerAddressUrl } from "@/config/chains";
 import { useWalletDialog } from "@/providers/wallet-dialog-provider";
+import { useToast } from "@/providers/toast-provider";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { CommonTrader, TokenMeta } from "@/types/traders";
 import type { ChainId } from "@/types/chain";
@@ -30,18 +32,18 @@ function formatUsdCompact(value: number): string {
   return `${sign}$${abs.toFixed(2)}`;
 }
 
-/** Format a per-token price (can be extremely small for meme coins) */
-function formatPrice(price: number): string {
-  if (!price || price <= 0) return "—";
-  if (price >= 1_000) return `$${price.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
-  if (price >= 1) return `$${price.toFixed(4)}`;
-  if (price >= 0.01) return `$${price.toFixed(4)}`;
-  if (price >= 0.0001) return `$${price.toFixed(6)}`;
-  if (price >= 0.000001) return `$${price.toFixed(8)}`;
-  // Very tiny: use fixed with enough decimals to show 4 significant digits
-  const exp = Math.floor(Math.log10(price));
-  const decimals = Math.abs(exp) + 3;
-  return `$${price.toFixed(Math.min(decimals, 12))}`;
+/**
+ * Convert an avg buy/sell price to an implied market cap.
+ * Formula: entryMC = avgPrice / currentPrice * currentMC
+ * Returns null if any required value is missing.
+ */
+function priceToMC(
+  avgPrice: number,
+  currentPrice: number | null,
+  currentMC: number | null
+): number | null {
+  if (!avgPrice || !currentPrice || !currentMC || currentPrice <= 0) return null;
+  return (avgPrice / currentPrice) * currentMC;
 }
 
 function getWalletChain(trader: CommonTrader): ChainId {
@@ -57,6 +59,7 @@ function pnlColor(value: number): string {
 function TraderRow({
   trader,
   index,
+  tokensMeta,
   isExpanded,
   onToggle,
 }: {
@@ -68,6 +71,7 @@ function TraderRow({
 }) {
   const chain = getWalletChain(trader);
   const { openWalletDialog } = useWalletDialog();
+  const showToast = useToast();
 
   return (
     <div>
@@ -87,6 +91,17 @@ function TraderRow({
             className="text-[11px] font-mono text-[#E8E8ED] hover:text-[#00F0FF] transition-colors truncate"
           >
             {shortenAddress(trader.walletAddress, 6)}
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              navigator.clipboard.writeText(trader.walletAddress);
+              showToast("Address copied");
+            }}
+            className="text-[#6B6B80] opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity shrink-0"
+            title="Copy address"
+          >
+            <Copy className="h-3 w-3" />
           </button>
           <a
             href={getExplorerAddressUrl(chain, trader.walletAddress)}
@@ -126,7 +141,18 @@ function TraderRow({
       {isExpanded && (
         <div className="px-4 pb-3 pl-14">
           <div className="rounded-xl overflow-hidden border border-white/[0.06]">
-            {trader.tokens.map((t, idx) => (
+            {trader.tokens.map((t, idx) => {
+              const meta = tokensMeta.find(
+                (m) => m.address.toLowerCase() === t.address.toLowerCase() && m.chain === t.chain
+              );
+              const entryBuyMC = t.avgBuyPrice
+                ? priceToMC(t.avgBuyPrice, meta?.priceUsd ?? null, meta?.marketCap ?? null)
+                : null;
+              const entrySellMC = t.avgSellPrice
+                ? priceToMC(t.avgSellPrice, meta?.priceUsd ?? null, meta?.marketCap ?? null)
+                : null;
+
+              return (
               <div
                 key={`${t.chain}:${t.address}`}
                 className={idx > 0 ? "border-t border-white/[0.06]" : ""}
@@ -177,11 +203,10 @@ function TraderRow({
                       {t.boughtUsd != null ? formatUsdCompact(t.boughtUsd) : "—"}
                     </div>
                     <div className="text-[9px] font-mono text-[#6B6B80] mt-1.5">
-                      avg&nbsp;
+                      entry MC&nbsp;
                       <span className="text-[#E8E8ED]/60">
-                        {t.avgBuyPrice && t.avgBuyPrice > 0 ? formatPrice(t.avgBuyPrice) : "—"}
+                        {entryBuyMC != null ? formatUsdCompact(entryBuyMC) : "—"}
                       </span>
-                      &nbsp;/ token
                     </div>
                   </div>
 
@@ -204,16 +229,16 @@ function TraderRow({
                       {t.soldUsd != null ? formatUsdCompact(t.soldUsd) : "—"}
                     </div>
                     <div className="text-[9px] font-mono text-[#6B6B80] mt-1.5">
-                      avg&nbsp;
+                      exit MC&nbsp;
                       <span className="text-[#E8E8ED]/60">
-                        {t.avgSellPrice && t.avgSellPrice > 0 ? formatPrice(t.avgSellPrice) : "—"}
+                        {entrySellMC != null ? formatUsdCompact(entrySellMC) : "—"}
                       </span>
-                      &nbsp;/ token
                     </div>
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

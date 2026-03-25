@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { GitDiff, Lightning } from "@phosphor-icons/react";
 import {
   TokenMultiInput,
@@ -10,23 +10,71 @@ import { CommonTradersTable } from "@/features/common-traders/components/common-
 import { useCommonTraders } from "@/features/common-traders/hooks/use-common-traders";
 import { CHAIN_CONFIGS, SUPPORTED_CHAINS } from "@/config/chains";
 import type { ChainId } from "@/types/chain";
+import type { CommonTradersResponse } from "@/types/traders";
+
+const LS_TOKENS_KEY = "common-traders:tokens";
+const LS_CHAIN_KEY = "common-traders:chain";
+const LS_RESULT_KEY = "common-traders:result";
 
 export default function TradersPage() {
   const [selectedChain, setSelectedChain] = useState<ChainId | null>(null);
   const [tokens, setTokens] = useState<SelectedToken[]>([]);
+  const [savedResult, setSavedResult] = useState<CommonTradersResponse | null>(null);
   const { mutate, data, isPending, error } = useCommonTraders();
+
+  // Restore from localStorage on mount
+  useEffect(() => {
+    try {
+      const storedTokens = localStorage.getItem(LS_TOKENS_KEY);
+      const storedChain = localStorage.getItem(LS_CHAIN_KEY);
+      const storedResult = localStorage.getItem(LS_RESULT_KEY);
+      if (storedTokens) setTokens(JSON.parse(storedTokens));
+      if (storedChain) setSelectedChain(storedChain === "null" ? null : storedChain as ChainId);
+      if (storedResult) setSavedResult(JSON.parse(storedResult));
+    } catch {
+      // Ignore parse errors
+    }
+  }, []);
+
+  // Save tokens + chain whenever they change
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_TOKENS_KEY, JSON.stringify(tokens));
+      localStorage.setItem(LS_CHAIN_KEY, String(selectedChain));
+    } catch { /* ignore */ }
+  }, [tokens, selectedChain]);
+
+  // Save result when mutation succeeds
+  useEffect(() => {
+    if (data) {
+      setSavedResult(data);
+      try {
+        localStorage.setItem(LS_RESULT_KEY, JSON.stringify(data));
+      } catch { /* ignore */ }
+    }
+  }, [data]);
 
   const handleChainChange = useCallback((chain: ChainId | null) => {
     setSelectedChain(chain);
     setTokens([]);
+    setSavedResult(null);
+    try {
+      localStorage.removeItem(LS_RESULT_KEY);
+    } catch { /* ignore */ }
   }, []);
 
   const handleAdd = useCallback((token: SelectedToken) => {
     setTokens((prev) => [...prev, token]);
+    // Clear saved result when token set changes
+    setSavedResult(null);
+    try { localStorage.removeItem(LS_RESULT_KEY); } catch { /* ignore */ }
   }, []);
 
   const handleRemove = useCallback((index: number) => {
     setTokens((prev) => prev.filter((_, i) => i !== index));
+    // Clear saved result when token set changes
+    setSavedResult(null);
+    try { localStorage.removeItem(LS_RESULT_KEY); } catch { /* ignore */ }
   }, []);
 
   const handleSearch = () => {
@@ -35,6 +83,8 @@ export default function TradersPage() {
       tokens.map((t) => ({ chain: t.chain, address: t.address, symbol: t.symbol }))
     );
   };
+
+  const displayData = data ?? savedResult;
 
   return (
     <div className="space-y-6">
@@ -138,10 +188,10 @@ export default function TradersPage() {
       )}
 
       {/* Results */}
-      {(data || isPending) && (
+      {(displayData || isPending) && (
         <CommonTradersTable
-          traders={data?.traders ?? []}
-          tokensMeta={data?.tokensMeta ?? []}
+          traders={displayData?.traders ?? []}
+          tokensMeta={displayData?.tokensMeta ?? []}
           isLoading={isPending}
         />
       )}

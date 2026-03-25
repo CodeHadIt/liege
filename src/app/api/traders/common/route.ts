@@ -56,6 +56,7 @@ export async function POST(request: Request) {
         walletPnls: WalletPnl[];
         symbol: string;
         priceUsd: number | null;
+        marketCap: number | null;
         fetchError: boolean;
       }> => {
         const cacheKey = `common-traders-gmgn-v2:${chain}:${address}`;
@@ -63,6 +64,7 @@ export async function POST(request: Request) {
           walletPnls: WalletPnl[];
           symbol: string;
           priceUsd: number | null;
+          marketCap: number | null;
         }>(cacheKey);
         if (cached) return { chain, address, ...cached, fetchError: false };
 
@@ -74,6 +76,7 @@ export async function POST(request: Request) {
 
         const symbol = metadata?.symbol || clientSymbol || "???";
         const priceUsd = pairData?.priceUsd ?? null;
+        const marketCap = pairData?.marketCap ?? pairData?.fdv ?? null;
 
         // Build per-wallet buy/sell totals
         const walletStats = new Map<string, {
@@ -151,7 +154,7 @@ export async function POST(request: Request) {
             }
           } else {
             console.log(`[common-traders] GMGN returned 0 for ${address} — marking as failed`);
-            return { chain, address, walletPnls: [], symbol: clientSymbol ?? "???", priceUsd: null, fetchError: true };
+            return { chain, address, walletPnls: [], symbol: clientSymbol ?? "???", priceUsd: null, marketCap: null, fetchError: true };
           }
         }
 
@@ -177,7 +180,7 @@ export async function POST(request: Request) {
           });
         }
 
-        const resultData = { walletPnls, symbol, priceUsd };
+        const resultData = { walletPnls, symbol, priceUsd, marketCap };
         // Only cache when GMGN data was used; Solana is always authoritative.
         if (usedGmgn) {
           serverCache.set(cacheKey, resultData, CACHE_TTL.GMGN_TRADERS);
@@ -206,6 +209,7 @@ export async function POST(request: Request) {
       symbol: tr.symbol,
       chain: tr.chain as ChainId,
       priceUsd: tr.priceUsd,
+      marketCap: tr.marketCap,
     }));
 
     // Phase 3: Intersect wallets across tokens

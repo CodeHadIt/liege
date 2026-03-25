@@ -34,6 +34,7 @@ export interface TokenMeta {
   symbol: string;
   chain: ChainId;
   priceUsd: number | null;
+  marketCap: number | null;
 }
 
 export interface CommonTradersResponse {
