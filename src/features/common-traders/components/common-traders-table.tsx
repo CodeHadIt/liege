@@ -203,7 +203,7 @@ function TraderRow({
                       {t.boughtUsd != null ? formatUsdCompact(t.boughtUsd) : "—"}
                     </div>
                     <div className="text-[9px] font-mono text-[#6B6B80] mt-1.5">
-                      entry MC&nbsp;
+                      avg entry MC&nbsp;
                       <span className="text-[#E8E8ED]/60">
                         {entryBuyMC != null ? formatUsdCompact(entryBuyMC) : "—"}
                       </span>
@@ -229,7 +229,7 @@ function TraderRow({
                       {t.soldUsd != null ? formatUsdCompact(t.soldUsd) : "—"}
                     </div>
                     <div className="text-[9px] font-mono text-[#6B6B80] mt-1.5">
-                      exit MC&nbsp;
+                      avg exit MC&nbsp;
                       <span className="text-[#E8E8ED]/60">
                         {entrySellMC != null ? formatUsdCompact(entrySellMC) : "—"}
                       </span>
