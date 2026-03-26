@@ -22,7 +22,7 @@ const navItems = [
   { href: "/search", label: "Search", icon: MagnifyingGlass, shortcut: "S" },
   { href: "/wallet", label: "Wallet Tracker", icon: Wallet, shortcut: "W" },
   { href: "/favorites", label: "Favorites", icon: Star, shortcut: "F" },
-  { href: "/traders", label: "Common Traders", icon: GitDiff, shortcut: "C" },
+  { href: "/common-top-traders", label: "Common Traders", icon: GitDiff, shortcut: "C" },
   { href: "/pump-fun", label: "Pump.fun", icon: Rocket, shortcut: "P" },
   { href: "/dex-orders", label: "Dex Orders", icon: ShieldCheck, shortcut: "D" },
 ];
