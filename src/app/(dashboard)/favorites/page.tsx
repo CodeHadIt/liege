@@ -186,7 +186,7 @@ export default function FavoritesPage() {
           </h2>
           <p className="text-sm text-[#6B6B80] max-w-md mx-auto mb-6">
             Sign in with your wallet to save and track your favorite wallets
-            across Solana, Base, and BSC.
+            across Solana, Ethereum, Base, BSC and other EVM chains
           </p>
           <button
             onClick={signIn}
