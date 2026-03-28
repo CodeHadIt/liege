@@ -72,6 +72,7 @@ interface MoralisProfitabilityEntry {
   total_tokens_bought: string;
   total_tokens_sold: string;
   total_sold_usd: string | null;
+  total_usd_invested: string | null;
   avg_buy_price_usd: string | null;
   avg_sell_price_usd: string | null;
   realized_profit_usd: string | null;
@@ -104,12 +105,16 @@ async function buildEvmQuickView(
 
   const addr = walletAddress.toLowerCase();
 
-  const [tokensData, profData, histData] = await Promise.all([
+  // Fetch tokens, 30d profitability, 7d profitability, and activity in parallel
+  const [tokensData, prof30dData, prof7dData, histData] = await Promise.all([
     fetchMoralisEvm<MoralisTokensResponse>(
       `/wallets/${addr}/tokens?chain=${moralisChain}&exclude_spam=true`
     ),
     fetchMoralisEvm<{ result: MoralisProfitabilityEntry[] }>(
-      `/wallets/${addr}/profitability?chain=${moralisChain}`
+      `/wallets/${addr}/profitability?chain=${moralisChain}&days=30`
+    ),
+    fetchMoralisEvm<{ result: MoralisProfitabilityEntry[] }>(
+      `/wallets/${addr}/profitability?chain=${moralisChain}&days=7`
     ),
     fetchMoralisEvm<{ result: MoralisHistoryEntry[] }>(
       `/wallets/${addr}/history?chain=${moralisChain}&limit=25`
@@ -122,7 +127,12 @@ async function buildEvmQuickView(
   const nativeBalance = parseFloat(nativeBal?.balance_formatted ?? "0") || 0;
   const nativeBalanceUsd = parseFloat(nativeBal?.usd ?? "0") || 0;
 
-  // Stablecoins
+  // Build profitability lookup by token address for position enrichment
+  const profByAddr = new Map<string, MoralisProfitabilityEntry>();
+  for (const e of prof30dData?.result ?? []) {
+    profByAddr.set(e.token_address.toLowerCase(), e);
+  }
+
   const EVM_STABLE_SYMBOLS = new Set(["USDC", "USDT", "BUSD", "DAI", "FRAX", "PYUSD"]);
   const stablecoins: StablecoinBalance[] = [];
   let stablecoinTotal = 0;
@@ -139,6 +149,14 @@ async function buildEvmQuickView(
       stablecoins.push({ symbol: tok.symbol, balance: bal, balanceUsd: usdVal });
       stablecoinTotal += usdVal;
     } else if (usdVal >= 0.01 || bal > 0) {
+      // Merge profitability data into position
+      const prof = profByAddr.get(tok.token_address.toLowerCase());
+      const totalBoughtUsd = parseFloat(prof?.total_usd_invested ?? "0") || 0;
+      const totalSoldUsd = parseFloat(prof?.total_sold_usd ?? "0") || 0;
+      const realizedPnl = parseFloat(prof?.realized_profit_usd ?? "0") || 0;
+      // Unrealized PnL: current value + what was cashed out − total invested
+      const unrealizedPnl = usdVal + totalSoldUsd - totalBoughtUsd;
+
       activePositions.push({
         tokenAddress: tok.token_address,
         symbol: tok.symbol,
@@ -147,74 +165,115 @@ async function buildEvmQuickView(
         chain: chainId,
         balance: bal,
         balanceUsd: usdVal,
-        pnl: 0,
+        pnl: realizedPnl + unrealizedPnl,
         pnlPercent: 0,
-        entryPrice: null,
+        entryPrice: parseFloat(prof?.avg_buy_price_usd ?? "0") || null,
         currentPrice: tok.usd_price,
-        totalBoughtUsd: 0,
-        totalSoldUsd: 0,
-        unrealizedPnl: 0,
+        totalBoughtUsd,
+        totalSoldUsd,
+        unrealizedPnl,
       });
     }
   }
   activePositions.sort((a, b) => b.balanceUsd - a.balanceUsd);
 
-  // PnL from profitability endpoint
+  // 30d PnL + recentPnls + topBuys from 30d profitability
   const recentPnls: PnlHistoryEntry[] = [];
   const topBuys: PnlHistoryEntry[] = [];
   let pnl30d = 0;
-  const nowSec = Math.floor(Date.now() / 1000);
-  const thirtyDaysAgoSec = nowSec - 30 * 24 * 60 * 60;
 
-  for (const entry of profData?.result ?? []) {
+  for (const entry of prof30dData?.result ?? []) {
     const realizedPnl = parseFloat(entry.realized_profit_usd ?? "0") || 0;
+    const totalBoughtUsd = parseFloat(entry.total_usd_invested ?? "0") || 0;
     const lastTradeTs = entry.last_trade
       ? Math.floor(new Date(entry.last_trade).getTime() / 1000)
       : 0;
 
-    if (lastTradeTs >= thirtyDaysAgoSec) {
-      pnl30d += realizedPnl;
+    pnl30d += realizedPnl;
+
+    if (realizedPnl !== 0) {
+      recentPnls.push({
+        tokenAddress: entry.token_address,
+        symbol: entry.token_symbol,
+        chain: chainId,
+        realizedPnl,
+        timestamp: lastTradeTs,
+        side: "sell",
+        amount: parseFloat(entry.total_tokens_sold) || 0,
+      });
     }
 
-    recentPnls.push({
-      tokenAddress: entry.token_address,
-      symbol: entry.token_symbol,
-      chain: chainId,
-      realizedPnl,
-      timestamp: lastTradeTs,
-      side: "sell",
-      amount: parseFloat(entry.total_tokens_sold) || 0,
-    });
-
-    const totalBuyUsd =
-      parseFloat(entry.avg_buy_price_usd ?? "0") * parseFloat(entry.total_tokens_bought) || 0;
-    topBuys.push({
-      tokenAddress: entry.token_address,
-      symbol: entry.token_symbol,
-      chain: chainId,
-      realizedPnl: totalBuyUsd,
-      timestamp: lastTradeTs,
-      side: "buy",
-      amount: parseFloat(entry.total_tokens_bought) || 0,
-    });
+    if (totalBoughtUsd > 0) {
+      topBuys.push({
+        tokenAddress: entry.token_address,
+        symbol: entry.token_symbol,
+        chain: chainId,
+        realizedPnl: totalBoughtUsd,
+        timestamp: lastTradeTs,
+        side: "buy",
+        amount: parseFloat(entry.total_tokens_bought) || 0,
+      });
+    }
   }
 
   recentPnls.sort((a, b) => b.realizedPnl - a.realizedPnl);
   topBuys.sort((a, b) => b.realizedPnl - a.realizedPnl);
 
-  // Activity from history
+  // 7d PnL + bestTrade7d from 7d profitability
+  let pnl7d = 0;
+  let bestTrade7d: { symbol: string; pnl: number } | null = null;
+  for (const e of prof7dData?.result ?? []) {
+    const realizedPnl = parseFloat(e.realized_profit_usd ?? "0") || 0;
+    pnl7d += realizedPnl;
+    if (!bestTrade7d || realizedPnl > bestTrade7d.pnl) {
+      bestTrade7d = { symbol: e.token_symbol, pnl: realizedPnl };
+    }
+  }
+
+  // Build 30-day cumulative PnL history from profitability last_trade dates
+  const nowMs = Date.now();
+  const thirtyDaysAgo = nowMs - 30 * 24 * 60 * 60 * 1000;
+  const pnlByDay = new Map<string, number>();
+  for (let d = 0; d < 30; d++) {
+    const date = new Date(thirtyDaysAgo + d * 24 * 60 * 60 * 1000);
+    pnlByDay.set(date.toISOString().slice(0, 10), 0);
+  }
+  for (const e of prof30dData?.result ?? []) {
+    if (!e.last_trade) continue;
+    const date = e.last_trade.slice(0, 10);
+    const pnl = parseFloat(e.realized_profit_usd ?? "0") || 0;
+    if (pnlByDay.has(date)) {
+      pnlByDay.set(date, (pnlByDay.get(date) ?? 0) + pnl);
+    }
+  }
+  let cumPnl = 0;
+  const pnlHistory = Array.from(pnlByDay.entries()).map(([date, dailyPnl]) => {
+    cumPnl += dailyPnl;
+    return { date, pnl: cumPnl };
+  });
+
+  // Activity from history endpoint — detect buys/sells from ERC-20 transfers
   const recentActivity: WalletQuickViewData["recentActivity"] = [];
   for (const tx of histData?.result ?? []) {
-    if (tx.category !== "token swap" && tx.category !== "token receive" && tx.category !== "token send") continue;
+    if (
+      tx.category !== "token swap" &&
+      tx.category !== "token receive" &&
+      tx.category !== "token send"
+    ) continue;
     const ts = Math.floor(new Date(tx.block_timestamp).getTime() / 1000);
 
-    // Find what was received (buy) or sent (sell) in this tx
-    const received = tx.erc20_transfers.filter((t) => t.direction === "receive" && !EVM_STABLE_SYMBOLS.has(t.token_symbol.toUpperCase()));
-    const sent = tx.erc20_transfers.filter((t) => t.direction === "send" && !EVM_STABLE_SYMBOLS.has(t.token_symbol.toUpperCase()));
+    const received = tx.erc20_transfers.filter(
+      (t) => t.direction === "receive" && !EVM_STABLE_SYMBOLS.has(t.token_symbol.toUpperCase())
+    );
+    const sent = tx.erc20_transfers.filter(
+      (t) => t.direction === "send" && !EVM_STABLE_SYMBOLS.has(t.token_symbol.toUpperCase())
+    );
 
     if (received.length > 0) {
       const r = received[0];
-      const sentStable = tx.erc20_transfers.find((t) => t.direction === "send" && EVM_STABLE_SYMBOLS.has(t.token_symbol.toUpperCase()));
+      const sentStable = tx.erc20_transfers.find(
+        (t) => t.direction === "send" && EVM_STABLE_SYMBOLS.has(t.token_symbol.toUpperCase())
+      );
       const amountUsd = parseFloat(sentStable?.value_formatted ?? r.value_usd ?? "0") || 0;
       recentActivity.push({
         txHash: tx.hash,
@@ -226,7 +285,9 @@ async function buildEvmQuickView(
       });
     } else if (sent.length > 0) {
       const s = sent[0];
-      const receivedStable = tx.erc20_transfers.find((t) => t.direction === "receive" && EVM_STABLE_SYMBOLS.has(t.token_symbol.toUpperCase()));
+      const receivedStable = tx.erc20_transfers.find(
+        (t) => t.direction === "receive" && EVM_STABLE_SYMBOLS.has(t.token_symbol.toUpperCase())
+      );
       const amountUsd = parseFloat(receivedStable?.value_formatted ?? s.value_usd ?? "0") || 0;
       recentActivity.push({
         txHash: tx.hash,
@@ -239,6 +300,10 @@ async function buildEvmQuickView(
     }
   }
 
+  const bestTrade30d = recentPnls[0]
+    ? { symbol: recentPnls[0].symbol, pnl: recentPnls[0].realizedPnl }
+    : null;
+
   return {
     address: walletAddress,
     chain: chainId,
@@ -248,12 +313,12 @@ async function buildEvmQuickView(
     stablecoinTotal,
     stablecoins,
     pnl30d,
-    pnl7d: 0,
-    bestTrade30d: recentPnls[0] ? { symbol: recentPnls[0].symbol, pnl: recentPnls[0].realizedPnl } : null,
-    bestTrade7d: null,
+    pnl7d,
+    bestTrade30d,
+    bestTrade7d,
     freshBuys7d: [],
     freshBuys30d: [],
-    pnlHistory: [],
+    pnlHistory,
     activePositions: activePositions.slice(0, 20),
     recentPnls: recentPnls.slice(0, 20),
     topBuys: topBuys.slice(0, 10),
