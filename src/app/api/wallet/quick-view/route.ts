@@ -139,8 +139,9 @@ async function buildEvmQuickView(
   const chainConfig = CHAIN_CONFIGS[chainId];
   const nativeSymbol = EVM_NATIVE_SYMBOLS[chainId] ?? chainConfig.nativeCurrency.symbol;
 
-  // Prefer net-worth endpoint for reliable native USD; fall back to tokens native_balance
-  const netWorthChain = netWorthData?.chains?.find((c) => c.chain === moralisChain);
+  // Moralis net-worth returns chain as name ("bsc", "base", "eth") not hex —
+  // since we request only one chain, just take the first entry
+  const netWorthChain = netWorthData?.chains?.[0];
   const nativeBal = tokensData?.native_balance;
   const nativeBalance =
     parseFloat(netWorthChain?.native_balance_formatted ?? nativeBal?.balance_formatted ?? "0") || 0;
