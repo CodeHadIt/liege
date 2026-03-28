@@ -80,6 +80,18 @@ interface MoralisProfitabilityEntry {
   last_trade: string | null;
 }
 
+interface MoralisNetWorthResponse {
+  total_networth_usd: string;
+  chains: {
+    chain: string;
+    native_balance: string;
+    native_balance_formatted: string;
+    native_balance_usd: string;
+    token_balance_usd: string;
+    networth_usd: string;
+  }[];
+}
+
 interface MoralisHistoryErc20Transfer {
   token_address: string;
   token_symbol: string;
@@ -105,8 +117,8 @@ async function buildEvmQuickView(
 
   const addr = walletAddress.toLowerCase();
 
-  // Fetch tokens, 30d profitability, 7d profitability, and activity in parallel
-  const [tokensData, prof30dData, prof7dData, histData] = await Promise.all([
+  // Fetch tokens, profitability (30d + 7d), activity, and net-worth in parallel
+  const [tokensData, prof30dData, prof7dData, histData, netWorthData] = await Promise.all([
     fetchMoralisEvm<MoralisTokensResponse>(
       `/wallets/${addr}/tokens?chain=${moralisChain}&exclude_spam=true`
     ),
@@ -119,13 +131,21 @@ async function buildEvmQuickView(
     fetchMoralisEvm<{ result: MoralisHistoryEntry[] }>(
       `/wallets/${addr}/history?chain=${moralisChain}&limit=25`
     ),
+    fetchMoralisEvm<MoralisNetWorthResponse>(
+      `/wallets/${addr}/net-worth?chains[]=${moralisChain}&exclude_spam=true`
+    ),
   ]);
 
   const chainConfig = CHAIN_CONFIGS[chainId];
   const nativeSymbol = EVM_NATIVE_SYMBOLS[chainId] ?? chainConfig.nativeCurrency.symbol;
+
+  // Prefer net-worth endpoint for reliable native USD; fall back to tokens native_balance
+  const netWorthChain = netWorthData?.chains?.find((c) => c.chain === moralisChain);
   const nativeBal = tokensData?.native_balance;
-  const nativeBalance = parseFloat(nativeBal?.balance_formatted ?? "0") || 0;
-  const nativeBalanceUsd = parseFloat(nativeBal?.usd ?? "0") || 0;
+  const nativeBalance =
+    parseFloat(netWorthChain?.native_balance_formatted ?? nativeBal?.balance_formatted ?? "0") || 0;
+  const nativeBalanceUsd =
+    parseFloat(netWorthChain?.native_balance_usd ?? nativeBal?.usd ?? "0") || 0;
 
   // Build profitability lookup by token address for position enrichment
   const profByAddr = new Map<string, MoralisProfitabilityEntry>();
@@ -146,8 +166,10 @@ async function buildEvmQuickView(
 
     const isStable = EVM_STABLE_SYMBOLS.has(tok.symbol.toUpperCase());
     if (isStable) {
-      stablecoins.push({ symbol: tok.symbol, balance: bal, balanceUsd: usdVal });
-      stablecoinTotal += usdVal;
+      // Stablecoins are pegged ~$1 — use balance as USD fallback when price feed is null
+      const stableUsd = usdVal > 0 ? usdVal : bal;
+      stablecoins.push({ symbol: tok.symbol, balance: bal, balanceUsd: stableUsd });
+      stablecoinTotal += stableUsd;
     } else if (usdVal >= 0.01 || bal > 0) {
       // Merge profitability data into position
       const prof = profByAddr.get(tok.token_address.toLowerCase());
