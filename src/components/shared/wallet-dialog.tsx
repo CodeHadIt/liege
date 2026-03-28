@@ -352,6 +352,10 @@ function PositionsTab({
   positions: WalletQuickViewDataPositions;
 }) {
   const showToast = useToast();
+
+  const mainPositions = positions.filter((p) => p.balanceUsd >= 1);
+  const dustPositions = positions.filter((p) => p.balanceUsd < 1);
+
   if (positions.length === 0) {
     return (
       <div className="text-center py-8 text-[#6B6B80] text-xs font-mono">
@@ -379,7 +383,7 @@ function PositionsTab({
           📊 PnL
         </span>
       </div>
-      {positions.map((pos) => (
+      {mainPositions.map((pos) => (
         <a
           key={pos.tokenAddress}
           href={`/token/${pos.chain}/${pos.tokenAddress}`}
@@ -429,6 +433,34 @@ function PositionsTab({
           </span>
         </a>
       ))}
+      {dustPositions.length > 0 && (
+        <div className="flex items-center gap-2 px-2 py-1.5 rounded-md border border-white/[0.04] bg-white/[0.02]">
+          <div className="flex items-center">
+            {dustPositions.slice(0, 4).map((pos, i) => (
+              <div
+                key={pos.tokenAddress}
+                className="h-5 w-5 rounded-full ring-1 ring-[#0C0C14] shrink-0"
+                style={{ marginLeft: i === 0 ? 0 : "-6px", zIndex: 4 - i }}
+              >
+                {pos.logoUrl ? (
+                  <img
+                    src={pos.logoUrl}
+                    alt={pos.symbol}
+                    className="h-5 w-5 rounded-full"
+                  />
+                ) : (
+                  <div className="h-5 w-5 rounded-full bg-gradient-to-br from-[#00F0FF]/10 to-[#A855F7]/10 flex items-center justify-center text-[7px] font-bold text-[#6B6B80]">
+                    {pos.symbol.slice(0, 1)}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <span className="text-[10px] font-mono text-[#6B6B80]">
+            {dustPositions.length} token{dustPositions.length !== 1 ? "s" : ""} &lt; $1
+          </span>
+        </div>
+      )}
     </div>
   );
 }
