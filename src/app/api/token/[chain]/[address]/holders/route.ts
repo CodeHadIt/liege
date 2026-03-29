@@ -75,7 +75,10 @@ export async function GET(
       holders = await provider.getTopHolders(address, 50);
     }
 
-    serverCache.set(cacheKey, holders, CACHE_TTL.TOKEN_META);
+    // Only cache if we actually got data — don't poison the cache with empty results
+    if (holders.length > 0) {
+      serverCache.set(cacheKey, holders, CACHE_TTL.TOKEN_META);
+    }
 
     return NextResponse.json({
       data: holders,

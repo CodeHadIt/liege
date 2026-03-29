@@ -68,15 +68,19 @@ const CHAIN_TO_GMGN: Record<string, string> = {
 // ─── Shared Playwright fetch helper ──────────────────────────────────────────
 
 /**
- * Navigate to the GMGN token page (establishes session cookies) then fire a
- * credentialed fetch to `apiUrl` from within the browser context.
- * Returns the raw parsed JSON body, or null on failure.
+ * Navigate to the GMGN token page, capture the page's auto-fired token_holders
+ * response (session signal), then optionally fire a second credentialed fetch
+ * to `customApiUrl`.
+ *
+ * Returns { autoBody, customBody } where autoBody is from the page's natural
+ * request (whatever GMGN fires by default) and customBody is from the custom
+ * URL (null if no custom URL provided).
  */
 async function fetchGmgnWithSession(
   pageUrl: string,
-  apiUrl: string,
+  customApiUrl: string | null,
   label: string
-): Promise<Record<string, unknown> | null> {
+): Promise<{ autoBody: Record<string, unknown> | null; customBody: Record<string, unknown> | null }> {
   const browser = await getBrowser();
   const context = await browser.newContext({
     userAgent:
@@ -88,12 +92,18 @@ async function fetchGmgnWithSession(
   });
 
   const page = await context.newPage();
-  let body: Record<string, unknown> | null = null;
+  let autoBody: Record<string, unknown> | null = null;
+  let customBody: Record<string, unknown> | null = null;
 
   try {
+    // Capture the page's auto-fired token_holders response AND use it as session signal
     const sessionReady = page
       .waitForResponse(
-        (res) => res.url().includes("/vas/api/v1/token_holders/"),
+        async (res) => {
+          if (!res.url().includes("/vas/api/v1/token_holders/")) return false;
+          try { autoBody = await res.json(); } catch { /* ignore */ }
+          return true;
+        },
         { timeout: 20_000 }
       )
       .catch(() => null);
@@ -105,29 +115,31 @@ async function fetchGmgnWithSession(
     const elapsed = Date.now() - readyAt;
     if (elapsed < 6_000) await new Promise((r) => setTimeout(r, 6_000 - elapsed));
 
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      if (attempt > 1) {
-        console.log(`[gmgn-scraper] ${label} retry ${attempt}/3`);
-        await new Promise((r) => setTimeout(r, 2_000 * (attempt - 1)));
-      }
+    if (customApiUrl) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        if (attempt > 1) {
+          console.log(`[gmgn-scraper] ${label} retry ${attempt}/3`);
+          await new Promise((r) => setTimeout(r, 2_000 * (attempt - 1)));
+        }
 
-      const result = await page
-        .evaluate(async (url: string) => {
-          try {
-            const r = await fetch(url, { credentials: "include" });
-            return { ok: r.ok, status: r.status, body: await r.json() };
-          } catch (e) {
-            return { ok: false, status: 0, body: null, error: String(e) };
-          }
-        }, apiUrl)
-        .catch(() => ({ ok: false as const, status: 0, body: null }));
+        const result = await page
+          .evaluate(async (url: string) => {
+            try {
+              const r = await fetch(url, { credentials: "include" });
+              return { ok: r.ok, status: r.status, body: await r.json() };
+            } catch (e) {
+              return { ok: false, status: 0, body: null, error: String(e) };
+            }
+          }, customApiUrl)
+          .catch(() => ({ ok: false as const, status: 0, body: null }));
 
-      if (result.ok && result.body) {
-        body = result.body as Record<string, unknown>;
-        console.log(`[gmgn-scraper] ${label} OK on attempt ${attempt}`);
-        break;
+        if (result.ok && result.body) {
+          customBody = result.body as Record<string, unknown>;
+          console.log(`[gmgn-scraper] ${label} custom fetch OK on attempt ${attempt}`);
+          break;
+        }
+        console.log(`[gmgn-scraper] ${label} attempt ${attempt} failed: status=${result.status}`);
       }
-      console.log(`[gmgn-scraper] ${label} attempt ${attempt} failed: status=${result.status}`);
     }
   } catch (err) {
     console.log(`[gmgn-scraper] ${label} page error: ${err}`);
@@ -135,7 +147,7 @@ async function fetchGmgnWithSession(
     await context.close();
   }
 
-  return body;
+  return { autoBody, customBody };
 }
 
 function parseGmgnList(body: Record<string, unknown>): GmgnTopTrader[] {
@@ -180,15 +192,15 @@ export async function scrapeGmgnTopTraders(
 
   const tokenLower = tokenAddress.toLowerCase();
   const pageUrl = `https://gmgn.ai/${gmgnChain}/token/${tokenLower}`;
-  const apiUrl =
+  const customApiUrl =
     `https://gmgn.ai/vas/api/v1/token_holders/${gmgnChain}/${tokenLower}` +
     `?orderby=realized_profit&direction=desc&limit=100`;
 
   console.log(`[gmgn-scraper] top-traders ${chain}:${tokenLower}`);
-  const body = await fetchGmgnWithSession(pageUrl, apiUrl, `traders:${tokenLower.slice(0, 10)}`);
-  if (!body) return [];
+  const { customBody } = await fetchGmgnWithSession(pageUrl, customApiUrl, `traders:${tokenLower.slice(0, 10)}`);
+  if (!customBody) return [];
 
-  const traders = parseGmgnList(body).sort((a, b) => b.realizedProfitUsd - a.realizedProfitUsd);
+  const traders = parseGmgnList(customBody).sort((a, b) => b.realizedProfitUsd - a.realizedProfitUsd);
   console.log(`[gmgn-scraper] ${traders.length} traders, top PnL: $${traders[0]?.realizedProfitUsd?.toFixed(0)}`);
 
   if (traders.length > 0) serverCache.set(cacheKey, traders, CACHE_TTL.GMGN_TRADERS);
@@ -210,17 +222,43 @@ export async function scrapeGmgnTopHolders(
 
   const tokenLower = tokenAddress.toLowerCase();
   const pageUrl = `https://gmgn.ai/${gmgnChain}/token/${tokenLower}`;
-  const apiUrl =
+
+  // Fire the realized_profit custom fetch (known working) while also capturing
+  // the page's auto-fired request (GMGN's default sort — often balance-based).
+  // We'll use whichever returns more balance data.
+  const customApiUrl =
     `https://gmgn.ai/vas/api/v1/token_holders/${gmgnChain}/${tokenLower}` +
-    `?orderby=balance&direction=desc&limit=100`;
+    `?orderby=realized_profit&direction=desc&limit=100`;
 
   console.log(`[gmgn-scraper] top-holders ${chain}:${tokenLower}`);
-  const body = await fetchGmgnWithSession(pageUrl, apiUrl, `holders:${tokenLower.slice(0, 10)}`);
-  if (!body) return [];
+  const { autoBody, customBody } = await fetchGmgnWithSession(
+    pageUrl,
+    customApiUrl,
+    `holders:${tokenLower.slice(0, 10)}`
+  );
 
-  const holders = parseGmgnList(body).sort((a, b) => b.balance - a.balance);
-  console.log(`[gmgn-scraper] ${holders.length} holders, top balance: ${holders[0]?.balance?.toFixed(0)}`);
+  // Parse both responses, pick the one with more holders by balance
+  const fromAuto = autoBody ? parseGmgnList(autoBody) : [];
+  const fromCustom = customBody ? parseGmgnList(customBody) : [];
 
-  if (holders.length > 0) serverCache.set(cacheKey, holders, CACHE_TTL.GMGN_TRADERS);
+  // Merge and deduplicate — prefer whichever source has the higher balance per wallet
+  const byAddress = new Map<string, GmgnTopTrader>();
+  for (const t of [...fromCustom, ...fromAuto]) {
+    const existing = byAddress.get(t.walletAddress);
+    if (!existing || t.balance > existing.balance) byAddress.set(t.walletAddress, t);
+  }
+
+  const holders = [...byAddress.values()].sort((a, b) => b.balance - a.balance);
+  console.log(`[gmgn-scraper] ${holders.length} holders (auto:${fromAuto.length} custom:${fromCustom.length}), top balance: ${holders[0]?.balance?.toFixed(0)}`);
+
+  if (holders.length > 0) {
+    serverCache.set(cacheKey, holders, CACHE_TTL.GMGN_TRADERS);
+    // Also populate the traders cache so top-traders tab reuses this session
+    const tradersCacheKey = `gmgn-top-traders:${chain}:${tokenLower}`;
+    if (!serverCache.get(tradersCacheKey)) {
+      const traders = [...byAddress.values()].sort((a, b) => b.realizedProfitUsd - a.realizedProfitUsd);
+      serverCache.set(tradersCacheKey, traders, CACHE_TTL.GMGN_TRADERS);
+    }
+  }
   return holders;
 }
