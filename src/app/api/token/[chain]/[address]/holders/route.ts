@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getChainProvider, isChainSupported } from "@/lib/chains/registry";
-import { scrapeGmgnTopTraders } from "@/lib/api/gmgn-scraper";
+import { scrapeGmgnTopHolders } from "@/lib/api/gmgn-scraper";
 import type { ChainId } from "@/types/chain";
 import type { ApiError } from "@/types/api";
 import type { HolderEntry } from "@/types/token";
@@ -30,15 +30,15 @@ export async function GET(
     let holders: HolderEntry[] = [];
 
     if (chainId !== "solana") {
-      // EVM: use GMGN (same source as top-traders) for accurate holder data on all chains
+      // EVM: use GMGN sorted by balance (true top holders, not top traders)
       const provider = getChainProvider(chainId);
-      const [gmgnTraders, pairData] = await Promise.all([
-        scrapeGmgnTopTraders(chainId, address).catch(() => []),
+      const [gmgnHolders, pairData] = await Promise.all([
+        scrapeGmgnTopHolders(chainId, address).catch(() => []),
         provider.getPairData(address).catch(() => null),
       ]);
 
-      if (gmgnTraders.length > 0) {
-        // Compute total supply from FDV / price (DexScreener provides this)
+      if (gmgnHolders.length > 0) {
+        // Compute total supply from FDV / price as a percentage fallback
         const priceUsd = pairData?.priceUsd ?? null;
         const fdv = pairData?.fdv ?? null;
         const totalSupply =
@@ -46,23 +46,28 @@ export async function GET(
             ? fdv / priceUsd
             : null;
 
-        // Sort by current balance descending to get actual top holders
-        const sorted = [...gmgnTraders].sort((a, b) => b.balance - a.balance);
+        // Sum of balances from returned list (fallback when supply unknown)
+        const totalHeld = gmgnHolders.reduce((s, t) => s + t.balance, 0);
 
-        // Fallback: compute percentage relative to sum of top-100 holders
-        const totalHeld = sorted.reduce((s, t) => s + t.balance, 0);
-
-        holders = sorted.slice(0, 50).map((t) => ({
-          address: t.walletAddress,
-          balance: t.balance,
-          percentage: totalSupply
-            ? (t.balance / totalSupply) * 100
-            : totalHeld > 0
-            ? (t.balance / totalHeld) * 100
-            : 0,
-          isContract: null,
-          label: null,
-        }));
+        holders = gmgnHolders.slice(0, 50).map((t) => {
+          // Prefer GMGN's own supplyPercent, then FDV-derived, then relative share
+          let percentage = 0;
+          if (t.supplyPercent > 0) {
+            // GMGN may return as decimal fraction (0.0263) or whole % (2.63)
+            percentage = t.supplyPercent <= 1 ? t.supplyPercent * 100 : t.supplyPercent;
+          } else if (totalSupply && totalSupply > 0) {
+            percentage = (t.balance / totalSupply) * 100;
+          } else if (totalHeld > 0) {
+            percentage = (t.balance / totalHeld) * 100;
+          }
+          return {
+            address: t.walletAddress,
+            balance: t.balance,
+            percentage,
+            isContract: null,
+            label: null,
+          };
+        });
       }
     } else {
       // Solana: use existing provider (Helius / Solscan)

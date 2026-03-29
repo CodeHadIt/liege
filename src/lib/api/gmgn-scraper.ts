@@ -27,6 +27,8 @@ export interface GmgnTopTrader {
   lastActiveTimestamp: number | null;
   /** Native balance in wei as string */
   nativeBalanceWei: string;
+  /** % of total supply held (as reported by GMGN, 0 if not available) */
+  supplyPercent: number;
 }
 
 // ─── Browser singleton ────────────────────────────────────────────────────────
@@ -63,41 +65,18 @@ const CHAIN_TO_GMGN: Record<string, string> = {
   eth:      "eth",
 };
 
-// ─── Main export ──────────────────────────────────────────────────────────────
+// ─── Shared Playwright fetch helper ──────────────────────────────────────────
 
 /**
- * Scrape top traders for an EVM token from GMGN.ai.
- *
- * Uses Playwright to load the token page (establishes session/cookies), then
- * fires a credentialed fetch for the token_holders endpoint sorted by
- * realized_profit — returning all historical traders including fully-exited
- * wallets, with exact PnL data.
- *
- * Cached for 30 minutes per token to minimise GMGN load and avoid rate limits.
+ * Navigate to the GMGN token page (establishes session cookies) then fire a
+ * credentialed fetch to `apiUrl` from within the browser context.
+ * Returns the raw parsed JSON body, or null on failure.
  */
-export async function scrapeGmgnTopTraders(
-  chain: string,
-  tokenAddress: string
-): Promise<GmgnTopTrader[]> {
-  const cacheKey = `gmgn-top-traders:${chain}:${tokenAddress.toLowerCase()}`;
-  const cached = serverCache.get<GmgnTopTrader[]>(cacheKey);
-  if (cached) return cached;
-
-  const gmgnChain = CHAIN_TO_GMGN[chain.toLowerCase()];
-  if (!gmgnChain) {
-    console.log(`[gmgn-scraper] Unsupported chain: ${chain}`);
-    return [];
-  }
-
-  // GMGN's API is case-sensitive — always use lowercase address in URLs
-  const tokenLower = tokenAddress.toLowerCase();
-  const pageUrl = `https://gmgn.ai/${gmgnChain}/token/${tokenLower}`;
-  const apiUrl =
-    `https://gmgn.ai/vas/api/v1/token_holders/${gmgnChain}/${tokenLower}` +
-    `?orderby=realized_profit&direction=desc&limit=100`;
-
-  console.log(`[gmgn-scraper] Fetching ${chain}:${tokenLower}`);
-
+async function fetchGmgnWithSession(
+  pageUrl: string,
+  apiUrl: string,
+  label: string
+): Promise<Record<string, unknown> | null> {
   const browser = await getBrowser();
   const context = await browser.newContext({
     userAgent:
@@ -109,14 +88,9 @@ export async function scrapeGmgnTopTraders(
   });
 
   const page = await context.newPage();
-  let holdersBody: Record<string, unknown> | null = null;
+  let body: Record<string, unknown> | null = null;
 
   try {
-    // Wait for the page's automatic token_holders call as a "session ready"
-    // signal, then add a short fixed delay to let GMGN's auth cookies fully
-    // settle before we fire our own credentialed fetch.
-    // Cap the waitForResponse at 20s; fall back to a straight 8s wait if it
-    // never fires (e.g. GMGN changes the request pattern).
     const sessionReady = page
       .waitForResponse(
         (res) => res.url().includes("/vas/api/v1/token_holders/"),
@@ -128,15 +102,12 @@ export async function scrapeGmgnTopTraders(
 
     const readyAt = Date.now();
     await sessionReady;
-    // Ensure at least 6s have elapsed since navigation so auth is stable.
     const elapsed = Date.now() - readyAt;
     if (elapsed < 6_000) await new Promise((r) => setTimeout(r, 6_000 - elapsed));
 
-    // Fire the realized_profit-sorted fetch from within the browser context
-    // so it carries the session cookies. Retry up to 3 times on failure.
     for (let attempt = 1; attempt <= 3; attempt++) {
       if (attempt > 1) {
-        console.log(`[gmgn-scraper] Retry attempt ${attempt}/3 for ${tokenAddress.slice(0, 10)}…`);
+        console.log(`[gmgn-scraper] ${label} retry ${attempt}/3`);
         await new Promise((r) => setTimeout(r, 2_000 * (attempt - 1)));
       }
 
@@ -152,34 +123,27 @@ export async function scrapeGmgnTopTraders(
         .catch(() => ({ ok: false as const, status: 0, body: null }));
 
       if (result.ok && result.body) {
-        holdersBody = result.body as Record<string, unknown>;
-        console.log(
-          `[gmgn-scraper] OK on attempt ${attempt} — ${JSON.stringify(result.body).length} bytes`
-        );
+        body = result.body as Record<string, unknown>;
+        console.log(`[gmgn-scraper] ${label} OK on attempt ${attempt}`);
         break;
       }
-
-      console.log(`[gmgn-scraper] Attempt ${attempt} failed: status=${result.status}`);
+      console.log(`[gmgn-scraper] ${label} attempt ${attempt} failed: status=${result.status}`);
     }
   } catch (err) {
-    console.log(`[gmgn-scraper] Page error: ${err}`);
+    console.log(`[gmgn-scraper] ${label} page error: ${err}`);
   } finally {
     await context.close();
   }
 
-  if (!holdersBody) {
-    console.log(`[gmgn-scraper] No data captured for ${tokenAddress.slice(0, 10)}…`);
-    return [];
-  }
+  return body;
+}
 
-  const raw = holdersBody as { code?: number; data?: { list?: unknown[] } };
+function parseGmgnList(body: Record<string, unknown>): GmgnTopTrader[] {
+  const raw = body as { code?: number; data?: { list?: unknown[] } };
   const list = raw?.data?.list;
-  if (!Array.isArray(list) || list.length === 0) {
-    console.log(`[gmgn-scraper] Empty or malformed response for ${tokenAddress.slice(0, 10)}…`);
-    return [];
-  }
+  if (!Array.isArray(list) || list.length === 0) return [];
 
-  const traders: GmgnTopTrader[] = list
+  return list
     .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
     .map((item) => ({
       walletAddress:        String(item.address ?? ""),
@@ -195,18 +159,68 @@ export async function scrapeGmgnTopTraders(
       sellCount:            typeof item.sell_tx_count_cur === "number" ? item.sell_tx_count_cur : parseInt(String(item.sell_tx_count_cur ?? 0)) || 0,
       lastActiveTimestamp:  typeof item.last_active_timestamp === "number" ? item.last_active_timestamp : null,
       nativeBalanceWei:     String(item.native_balance ?? "0"),
+      // Supply percentage as reported directly by GMGN
+      supplyPercent:        parseFloat(String(item.percent ?? item.supply_percent ?? 0)) || 0,
     }))
-    .filter((t) => t.walletAddress.startsWith("0x"))
-    .sort((a, b) => b.realizedProfitUsd - a.realizedProfitUsd);
+    .filter((t) => t.walletAddress.startsWith("0x"));
+}
 
-  console.log(
-    `[gmgn-scraper] Parsed ${traders.length} traders for ${chain}:${tokenAddress.slice(0, 10)}… ` +
-    `— top PnL: $${traders[0]?.realizedProfitUsd?.toFixed(0)}`
-  );
+// ─── Top Traders ──────────────────────────────────────────────────────────────
 
-  if (traders.length > 0) {
-    serverCache.set(cacheKey, traders, CACHE_TTL.GMGN_TRADERS);
-  }
+export async function scrapeGmgnTopTraders(
+  chain: string,
+  tokenAddress: string
+): Promise<GmgnTopTrader[]> {
+  const cacheKey = `gmgn-top-traders:${chain}:${tokenAddress.toLowerCase()}`;
+  const cached = serverCache.get<GmgnTopTrader[]>(cacheKey);
+  if (cached) return cached;
 
+  const gmgnChain = CHAIN_TO_GMGN[chain.toLowerCase()];
+  if (!gmgnChain) return [];
+
+  const tokenLower = tokenAddress.toLowerCase();
+  const pageUrl = `https://gmgn.ai/${gmgnChain}/token/${tokenLower}`;
+  const apiUrl =
+    `https://gmgn.ai/vas/api/v1/token_holders/${gmgnChain}/${tokenLower}` +
+    `?orderby=realized_profit&direction=desc&limit=100`;
+
+  console.log(`[gmgn-scraper] top-traders ${chain}:${tokenLower}`);
+  const body = await fetchGmgnWithSession(pageUrl, apiUrl, `traders:${tokenLower.slice(0, 10)}`);
+  if (!body) return [];
+
+  const traders = parseGmgnList(body).sort((a, b) => b.realizedProfitUsd - a.realizedProfitUsd);
+  console.log(`[gmgn-scraper] ${traders.length} traders, top PnL: $${traders[0]?.realizedProfitUsd?.toFixed(0)}`);
+
+  if (traders.length > 0) serverCache.set(cacheKey, traders, CACHE_TTL.GMGN_TRADERS);
   return traders;
+}
+
+// ─── Top Holders (sorted by current balance) ─────────────────────────────────
+
+export async function scrapeGmgnTopHolders(
+  chain: string,
+  tokenAddress: string
+): Promise<GmgnTopTrader[]> {
+  const cacheKey = `gmgn-top-holders:${chain}:${tokenAddress.toLowerCase()}`;
+  const cached = serverCache.get<GmgnTopTrader[]>(cacheKey);
+  if (cached) return cached;
+
+  const gmgnChain = CHAIN_TO_GMGN[chain.toLowerCase()];
+  if (!gmgnChain) return [];
+
+  const tokenLower = tokenAddress.toLowerCase();
+  const pageUrl = `https://gmgn.ai/${gmgnChain}/token/${tokenLower}`;
+  const apiUrl =
+    `https://gmgn.ai/vas/api/v1/token_holders/${gmgnChain}/${tokenLower}` +
+    `?orderby=balance&direction=desc&limit=100`;
+
+  console.log(`[gmgn-scraper] top-holders ${chain}:${tokenLower}`);
+  const body = await fetchGmgnWithSession(pageUrl, apiUrl, `holders:${tokenLower.slice(0, 10)}`);
+  if (!body) return [];
+
+  const holders = parseGmgnList(body).sort((a, b) => b.balance - a.balance);
+  console.log(`[gmgn-scraper] ${holders.length} holders, top balance: ${holders[0]?.balance?.toFixed(0)}`);
+
+  if (holders.length > 0) serverCache.set(cacheKey, holders, CACHE_TTL.GMGN_TRADERS);
+  return holders;
 }
