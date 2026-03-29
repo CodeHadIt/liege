@@ -143,9 +143,9 @@ export function TopHolders({ chain, address, priceUsd, liquidityUsd }: TopHolder
       <div className="p-4">
         {isLoading ? (
           <div className="space-y-3">
-            <Skeleton className="h-[180px] w-full shimmer rounded-lg" />
+            <Skeleton className="h-[180px] w-full shimmer-diagonal rounded-lg" />
             {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-8 w-full shimmer rounded" />
+              <Skeleton key={i} className="h-8 w-full shimmer-diagonal rounded" />
             ))}
           </div>
         ) : !holders || holders.length === 0 ? (
