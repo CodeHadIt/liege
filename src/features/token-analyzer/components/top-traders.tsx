@@ -264,7 +264,7 @@ export function TopTraders({ chain, address }: TopTradersProps) {
           <div className="flex flex-col items-center gap-2 py-6 text-[#6B6B80]">
             <CircleNotch className="h-4 w-4 animate-spin text-[#00F0FF]" />
             <span className="text-xs font-mono">
-              {isEvm ? "Scraping top traders from GMGN…" : "Loading top traders…"}
+              Fetching top traders data…
             </span>
             {isEvm && (
               <span className="text-[10px] font-mono text-[#6B6B80]/60">
