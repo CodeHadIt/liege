@@ -1,4 +1,4 @@
-import { chromium, type Browser } from "playwright";
+import { chromium, type Browser } from "playwright-core";
 import { serverCache, CACHE_TTL } from "@/lib/cache";
 
 export interface GmgnTopTrader {
@@ -39,11 +39,24 @@ let browserLaunchPromise: Promise<Browser> | null = null;
 async function getBrowser(): Promise<Browser> {
   if (browserInstance?.isConnected()) return browserInstance;
   if (browserLaunchPromise) return browserLaunchPromise;
-  browserLaunchPromise = chromium
-    .launch({
+
+  const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+
+  browserLaunchPromise = (async () => {
+    if (isServerless) {
+      // Use @sparticuz/chromium — a serverless-compatible Chromium binary
+      const sparticuz = (await import("@sparticuz/chromium")).default;
+      return chromium.launch({
+        args: sparticuz.args,
+        executablePath: await sparticuz.executablePath(),
+        headless: true,
+      });
+    }
+    return chromium.launch({
       headless: true,
       args: ["--disable-blink-features=AutomationControlled"],
-    })
+    });
+  })()
     .then((b) => {
       browserInstance = b;
       browserLaunchPromise = null;

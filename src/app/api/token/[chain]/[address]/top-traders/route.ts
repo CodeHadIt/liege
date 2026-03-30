@@ -28,6 +28,9 @@ function getTier(pnlUsd: number): TraderTier {
   return "shrimp";
 }
 
+// Allow up to 120s on Vercel Pro — GMGN scraping takes ~25s
+export const maxDuration = 120;
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ chain: string; address: string }> }

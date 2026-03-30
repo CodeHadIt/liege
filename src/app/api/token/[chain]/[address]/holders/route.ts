@@ -6,6 +6,9 @@ import type { ApiError } from "@/types/api";
 import type { HolderEntry } from "@/types/token";
 import { serverCache, CACHE_TTL } from "@/lib/cache";
 
+// Allow up to 120s on Vercel Pro — GMGN scraping takes ~25s
+export const maxDuration = 120;
+
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ chain: string; address: string }> }
