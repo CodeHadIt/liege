@@ -4,7 +4,6 @@ import { useState } from "react";
 import {
   Wallet,
   Coins,
-  TrendUp,
   ArrowDownLeft,
   ArrowUpRight,
   ArrowSquareOut,
@@ -489,13 +488,17 @@ function PnlTab({
           className="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-white/[0.02] transition-colors"
         >
           <div className="flex items-center gap-2">
-            <TrendUp
-              className={`h-3 w-3 ${
-                entry.realizedPnl >= 0
-                  ? "text-[#00FF88]"
-                  : "text-[#FF3B5C]"
-              }`}
-            />
+            {entry.logoUrl ? (
+              <img
+                src={entry.logoUrl}
+                alt={entry.symbol}
+                className="h-5 w-5 rounded-full ring-1 ring-white/[0.06] shrink-0"
+              />
+            ) : (
+              <div className="h-5 w-5 rounded-full bg-gradient-to-br from-[#00F0FF]/20 to-[#A855F7]/20 flex items-center justify-center text-[8px] font-bold text-[#00F0FF] shrink-0">
+                {entry.symbol.slice(0, 2)}
+              </div>
+            )}
             <span className="text-[11px] font-mono font-semibold text-[#E8E8ED]">
               {entry.symbol}
             </span>
@@ -540,7 +543,17 @@ function TopBuysTab({
           className="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-white/[0.02] transition-colors"
         >
           <div className="flex items-center gap-2">
-            <ArrowDownLeft className="h-3 w-3 text-[#00C48C]" />
+            {entry.logoUrl ? (
+              <img
+                src={entry.logoUrl}
+                alt={entry.symbol}
+                className="h-5 w-5 rounded-full ring-1 ring-white/[0.06] shrink-0"
+              />
+            ) : (
+              <div className="h-5 w-5 rounded-full bg-gradient-to-br from-[#00C48C]/20 to-[#00F0FF]/20 flex items-center justify-center text-[8px] font-bold text-[#00C48C] shrink-0">
+                {entry.symbol.slice(0, 2)}
+              </div>
+            )}
             <span className="text-[11px] font-mono font-semibold text-[#E8E8ED]">
               {entry.symbol}
             </span>
@@ -578,11 +591,26 @@ function ActivityTab({
           className="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-white/[0.02] transition-colors"
         >
           <div className="flex items-center gap-2">
-            {entry.side === "buy" ? (
-              <ArrowDownLeft className="h-3 w-3 text-[#00C48C]" />
-            ) : (
-              <ArrowUpRight className="h-3 w-3 text-[#FF3B5C]" />
-            )}
+            <div className="relative shrink-0">
+              {entry.logoUrl ? (
+                <img
+                  src={entry.logoUrl}
+                  alt={entry.tokenSymbol}
+                  className="h-5 w-5 rounded-full ring-1 ring-white/[0.06]"
+                />
+              ) : (
+                <div className={`h-5 w-5 rounded-full flex items-center justify-center text-[8px] font-bold shrink-0 ${entry.side === "buy" ? "bg-[#00C48C]/20 text-[#00C48C]" : "bg-[#FF3B5C]/20 text-[#FF3B5C]"}`}>
+                  {entry.tokenSymbol.slice(0, 2)}
+                </div>
+              )}
+              <div className={`absolute -bottom-0.5 -right-0.5 rounded-full p-px ${entry.side === "buy" ? "bg-[#00C48C]" : "bg-[#FF3B5C]"}`}>
+                {entry.side === "buy" ? (
+                  <ArrowDownLeft className="h-2 w-2 text-black" />
+                ) : (
+                  <ArrowUpRight className="h-2 w-2 text-black" />
+                )}
+              </div>
+            </div>
             <span
               className={`text-[10px] font-mono font-bold uppercase ${
                 entry.side === "buy"

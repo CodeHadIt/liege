@@ -143,6 +143,7 @@ export interface PnlHistoryEntry {
   timestamp: number;
   side: "buy" | "sell";
   amount: number;
+  logoUrl: string | null;
 }
 
 export interface WalletQuickViewData {
@@ -188,7 +189,9 @@ export interface WalletQuickViewData {
     timestamp: number;
     side: "buy" | "sell";
     tokenSymbol: string;
+    tokenAddress: string;
     amount: number;
     amountUsd: number;
+    logoUrl: string | null;
   }[];
 }

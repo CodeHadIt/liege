@@ -198,8 +198,10 @@ async function buildEvmQuickView(
         timestamp: ts,
         side: "buy",
         tokenSymbol: swap.bought.symbol,
+        tokenAddress: swap.bought.address,
         amount: parseFloat(swap.bought.amount) || 0,
         amountUsd: cost,
+        logoUrl: swap.bought.logo ?? null,
       });
     } else {
       const tokenAddr = swap.sold.address.toLowerCase();
@@ -210,8 +212,10 @@ async function buildEvmQuickView(
         timestamp: ts,
         side: "sell",
         tokenSymbol: swap.sold.symbol,
+        tokenAddress: swap.sold.address,
         amount: Math.abs(parseFloat(swap.sold.amount)) || 0,
         amountUsd: proceeds,
+        logoUrl: swap.sold.logo ?? null,
       });
     }
   }
@@ -287,6 +291,7 @@ async function buildEvmQuickView(
           timestamp: lastTradeTs,
           side: "sell",
           amount: parseFloat(e.total_tokens_sold) || 0,
+          logoUrl: e.logo ?? null,
         });
       }
       if (totalBoughtUsd > 0) {
@@ -298,6 +303,7 @@ async function buildEvmQuickView(
           timestamp: lastTradeTs,
           side: "buy",
           amount: parseFloat(e.total_tokens_bought) || 0,
+          logoUrl: e.logo ?? null,
         });
       }
     }
@@ -331,6 +337,7 @@ async function buildEvmQuickView(
             timestamp: ts,
             side: "sell",
             amount: Math.abs(parseFloat(swap.sold.amount)) || 0,
+            logoUrl: swap.sold.logo ?? null,
           });
         }
       }
@@ -354,6 +361,7 @@ async function buildEvmQuickView(
         timestamp: 0,
         side: "buy",
         amount: 0,
+        logoUrl: tok?.logo ?? tok?.thumbnail ?? null,
       });
     }
   }
@@ -540,8 +548,10 @@ export async function POST(request: Request) {
       if (tok.priceUsd) priceMap.set(tok.tokenAddress, tok.priceUsd);
     }
     const symbolMap = new Map<string, string>();
+    const logoMap = new Map<string, string | null>();
     for (const tok of walletBalance.tokens) {
       symbolMap.set(tok.tokenAddress, tok.symbol);
+      logoMap.set(tok.tokenAddress, tok.logoUrl ?? null);
     }
 
     // Fetch transaction history using Helius v1 wallet history
@@ -618,6 +628,7 @@ export async function POST(request: Request) {
         ]);
         for (const [mint, info] of assetInfo) {
           symbolMap.set(mint, info.symbol);
+          logoMap.set(mint, info.logoUrl ?? null);
         }
       }
 
@@ -697,8 +708,10 @@ export async function POST(request: Request) {
             timestamp: tx.timestamp,
             side: "sell",
             tokenSymbol: symbol,
+            tokenAddress: soldMint,
             amount: soldAmount,
             amountUsd: receivedUsd,
+            logoUrl: logoMap.get(soldMint) ?? null,
           });
           recentPnls.push({
             tokenAddress: soldMint,
@@ -708,6 +721,7 @@ export async function POST(request: Request) {
             timestamp: tx.timestamp,
             side: "sell",
             amount: soldAmount,
+            logoUrl: logoMap.get(soldMint) ?? null,
           });
 
           mintTotalSoldUsd.set(soldMint, (mintTotalSoldUsd.get(soldMint) ?? 0) + receivedUsd);
@@ -745,8 +759,10 @@ export async function POST(request: Request) {
             timestamp: tx.timestamp,
             side: "buy",
             tokenSymbol: symbol,
+            tokenAddress: boughtMint,
             amount: boughtAmount,
             amountUsd: buyUsd,
+            logoUrl: logoMap.get(boughtMint) ?? null,
           });
           topBuys.push({
             tokenAddress: boughtMint,
@@ -756,6 +772,7 @@ export async function POST(request: Request) {
             timestamp: tx.timestamp,
             side: "buy",
             amount: boughtAmount,
+            logoUrl: logoMap.get(boughtMint) ?? null,
           });
 
           mintTotalBoughtUsd.set(boughtMint, (mintTotalBoughtUsd.get(boughtMint) ?? 0) + buyUsd);
