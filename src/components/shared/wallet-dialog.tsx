@@ -143,7 +143,7 @@ export function WalletDialog() {
               )}
             </div>
             {state.walletAddress && state.chain && (
-              <div className="ml-auto mr-8">
+              <div className="absolute top-4 right-10">
                 <FavoriteButton
                   walletAddress={state.walletAddress}
                   chain={state.chain as ChainId}

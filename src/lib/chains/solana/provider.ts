@@ -159,8 +159,11 @@ export class SolanaChainProvider implements ChainProvider {
       : 0;
 
     if (largestAccounts.length > 0) {
+      // getTokenLargestAccounts returns ATA addresses, not wallet owners — resolve them
+      const ataAddresses = largestAccounts.map((a) => a.address);
+      const ownerMap = await helius.getMultipleAccountOwners(ataAddresses).catch(() => new Map<string, string>());
       return largestAccounts.map((acct) => ({
-        address: acct.address,
+        address: ownerMap.get(acct.address) ?? acct.address,
         balance: acct.uiAmount,
         percentage: totalSupply > 0 ? (acct.uiAmount / totalSupply) * 100 : 0,
         isContract: null,

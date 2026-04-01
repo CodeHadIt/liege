@@ -1,13 +1,12 @@
 "use client";
 
 import { Coins, CircleNotch, Wallet, X } from "@phosphor-icons/react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useClipboardAddress } from "@/hooks/use-clipboard-address";
 import { chainLabel as getChainLabel } from "@/lib/utils";
 
 export function ClipboardIndicator() {
   const { detected, loading, dismiss } = useClipboardAddress();
-  const router = useRouter();
 
   if (!detected && !loading) return null;
 
@@ -30,8 +29,8 @@ export function ClipboardIndicator() {
 
   return (
     <div className="hidden sm:flex items-center gap-1.5 max-w-[180px]">
-      <button
-        onClick={() => router.push(href)}
+      <Link
+        href={href}
         className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.04] border border-white/[0.06] hover:bg-white/[0.08] transition-colors cursor-pointer min-w-0"
       >
         {isToken ? (
@@ -45,7 +44,7 @@ export function ClipboardIndicator() {
         <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-white/[0.06] text-[#6B6B80] shrink-0">
           {getChainLabel(detected.chain)}
         </span>
-      </button>
+      </Link>
       <button
         onClick={(e) => {
           e.stopPropagation();
