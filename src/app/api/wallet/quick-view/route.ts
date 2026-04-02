@@ -278,6 +278,7 @@ async function buildEvmQuickView(
     for (const e of prof30dData.result) {
       const realizedPnl = parseFloat(e.realized_profit_usd ?? "0") || 0;
       const totalBoughtUsd = parseFloat(e.total_usd_invested ?? "0") || 0;
+      const totalSoldUsd = parseFloat(e.total_sold_usd ?? "0") || 0;
       const lastTradeTs = e.last_trade
         ? Math.floor(new Date(e.last_trade).getTime() / 1000)
         : 0;
@@ -288,6 +289,8 @@ async function buildEvmQuickView(
           symbol: e.token_symbol,
           chain: chainId,
           realizedPnl,
+          totalBoughtUsd,
+          totalSoldUsd,
           timestamp: lastTradeTs,
           side: "sell",
           amount: parseFloat(e.total_tokens_sold) || 0,
@@ -300,6 +303,8 @@ async function buildEvmQuickView(
           symbol: e.token_symbol,
           chain: chainId,
           realizedPnl: totalBoughtUsd,
+          totalBoughtUsd,
+          totalSoldUsd,
           timestamp: lastTradeTs,
           side: "buy",
           amount: parseFloat(e.total_tokens_bought) || 0,
@@ -334,6 +339,8 @@ async function buildEvmQuickView(
             symbol: swap.sold.symbol,
             chain: chainId,
             realizedPnl: proceeds,
+            totalBoughtUsd: histBought.get(tokenAddr) ?? 0,
+            totalSoldUsd: histSold.get(tokenAddr) ?? 0,
             timestamp: ts,
             side: "sell",
             amount: Math.abs(parseFloat(swap.sold.amount)) || 0,
@@ -358,6 +365,8 @@ async function buildEvmQuickView(
         symbol: tok?.symbol ?? tokenAddr.slice(0, 8),
         chain: chainId,
         realizedPnl: boughtUsd,
+        totalBoughtUsd: boughtUsd,
+        totalSoldUsd: histSold.get(tokenAddr) ?? 0,
         timestamp: 0,
         side: "buy",
         amount: 0,
@@ -713,18 +722,19 @@ export async function POST(request: Request) {
             amountUsd: receivedUsd,
             logoUrl: logoMap.get(soldMint) ?? null,
           });
+          mintTotalSoldUsd.set(soldMint, (mintTotalSoldUsd.get(soldMint) ?? 0) + receivedUsd);
           recentPnls.push({
             tokenAddress: soldMint,
             symbol,
             chain: chainId,
             realizedPnl,
+            totalBoughtUsd: mintTotalBoughtUsd.get(soldMint) ?? 0,
+            totalSoldUsd: mintTotalSoldUsd.get(soldMint) ?? 0,
             timestamp: tx.timestamp,
             side: "sell",
             amount: soldAmount,
             logoUrl: logoMap.get(soldMint) ?? null,
           });
-
-          mintTotalSoldUsd.set(soldMint, (mintTotalSoldUsd.get(soldMint) ?? 0) + receivedUsd);
 
           // 7d sell tracking (existence used by freshBuys7d)
           if (tx.timestamp >= sevenDaysAgoSec) {
@@ -764,18 +774,19 @@ export async function POST(request: Request) {
             amountUsd: buyUsd,
             logoUrl: logoMap.get(boughtMint) ?? null,
           });
+          mintTotalBoughtUsd.set(boughtMint, (mintTotalBoughtUsd.get(boughtMint) ?? 0) + buyUsd);
           topBuys.push({
             tokenAddress: boughtMint,
             symbol,
             chain: chainId,
             realizedPnl: buyUsd,
+            totalBoughtUsd: mintTotalBoughtUsd.get(boughtMint) ?? 0,
+            totalSoldUsd: mintTotalSoldUsd.get(boughtMint) ?? 0,
             timestamp: tx.timestamp,
             side: "buy",
             amount: boughtAmount,
             logoUrl: logoMap.get(boughtMint) ?? null,
           });
-
-          mintTotalBoughtUsd.set(boughtMint, (mintTotalBoughtUsd.get(boughtMint) ?? 0) + buyUsd);
 
           // Record cost basis for this buy
           const ledgerEntry = costLedger.get(boughtMint) ?? {

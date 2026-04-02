@@ -482,12 +482,22 @@ function PnlTab({
 
   return (
     <div className="space-y-1">
+      {/* Header */}
+      <div className="grid grid-cols-[1fr_60px_60px_70px] gap-2 px-2 py-1">
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80]">Token</span>
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">🛒 Bought</span>
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">💰 Sold</span>
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">📊 PnL</span>
+      </div>
       {entries.map((entry, i) => (
-        <div
+        <a
           key={`${entry.tokenAddress}-${entry.timestamp}-${i}`}
-          className="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-white/[0.02] transition-colors"
+          href={`/token/${entry.chain}/${entry.tokenAddress}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="grid grid-cols-[1fr_60px_60px_70px] gap-2 px-2 py-1.5 rounded-md hover:bg-white/[0.04] transition-colors"
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             {entry.logoUrl ? (
               <img
                 src={entry.logoUrl}
@@ -499,24 +509,25 @@ function PnlTab({
                 {entry.symbol.slice(0, 2)}
               </div>
             )}
-            <span className="text-[11px] font-mono font-semibold text-[#E8E8ED]">
-              {entry.symbol}
-            </span>
-            <span className="text-[9px] font-mono text-[#6B6B80]">
-              {formatTimeAgo(entry.timestamp)}
-            </span>
+            <div className="min-w-0">
+              <span className="text-[11px] font-mono font-semibold text-[#E8E8ED] truncate block">
+                {entry.symbol}
+              </span>
+              <span className="text-[9px] font-mono text-[#6B6B80]">
+                {formatTimeAgo(entry.timestamp)}
+              </span>
+            </div>
           </div>
-          <span
-            className={`text-[11px] font-mono font-bold ${
-              entry.realizedPnl >= 0
-                ? "text-[#00FF88]"
-                : "text-[#FF3B5C]"
-            }`}
-          >
-            {entry.realizedPnl >= 0 ? "+" : ""}
-            {formatUsdCompact(entry.realizedPnl)}
+          <span className="text-[10px] font-mono text-[#00C48C] text-right self-center">
+            {formatUsdCompact(entry.totalBoughtUsd)}
           </span>
-        </div>
+          <span className="text-[10px] font-mono text-[#FF3B5C] text-right self-center">
+            {formatUsdCompact(entry.totalSoldUsd)}
+          </span>
+          <span className={`text-[10px] font-mono font-bold text-right self-center ${entry.realizedPnl >= 0 ? "text-[#00FF88]" : "text-[#FF3B5C]"}`}>
+            {entry.realizedPnl >= 0 ? "+" : ""}{formatUsdCompact(entry.realizedPnl)}
+          </span>
+        </a>
       ))}
     </div>
   );

@@ -140,6 +140,8 @@ export interface PnlHistoryEntry {
   symbol: string;
   chain: ChainId;
   realizedPnl: number;
+  totalBoughtUsd: number;
+  totalSoldUsd: number;
   timestamp: number;
   side: "buy" | "sell";
   amount: number;
