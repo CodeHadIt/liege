@@ -195,6 +195,6 @@ export interface WalletQuickViewData {
     amount: number;
     amountUsd: number;
     logoUrl: string | null;
-    marketCapAtBuy: number | null;
+    marketCap: number | null;
   }[];
 }

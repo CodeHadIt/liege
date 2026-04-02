@@ -119,19 +119,19 @@ interface MoralisSwapsResponse {
 const PROFITABILITY_SUPPORTED_CHAINS = new Set(["0x1", "0x2105"]); // ETH mainnet, Base
 
 /**
- * Computes the market cap at time of buy for each buy entry in the activity list.
+ * Computes the market cap at the time of each trade in the activity list.
  * Strategy: fetch current pair data from DexScreener → derive circulating supply
- * (supply = currentMC / currentPrice), then compute mcAtBuy = priceAtBuy × supply.
- * This is accurate for tokens where supply hasn't changed since the buy.
+ * (supply = currentMC / currentPrice), then compute mc = priceAtTrade × supply.
+ * Works for both buys and sells.
  */
 async function enrichActivityWithMarketCap(
   activity: WalletQuickViewData["recentActivity"],
   chainId: ChainId
 ): Promise<void> {
   const dexChain = chainId === "bsc" ? "bsc" : chainId === "base" ? "base" : chainId === "ethereum" ? "ethereum" : "solana";
-  // Collect unique buy token addresses (up to 20 most recent buys)
-  const buyEntries = activity.filter((e) => e.side === "buy" && e.amount > 0 && e.amountUsd > 0).slice(0, 20);
-  const uniqueAddrs = [...new Set(buyEntries.map((e) => e.tokenAddress))];
+  // Collect unique token addresses from all entries (up to 20 most recent)
+  const validEntries = activity.filter((e) => e.amount > 0 && e.amountUsd > 0).slice(0, 20);
+  const uniqueAddrs = [...new Set(validEntries.map((e) => e.tokenAddress))];
   if (uniqueAddrs.length === 0) return;
 
   // Batch fetch DexScreener pairs
@@ -148,15 +148,15 @@ async function enrichActivityWithMarketCap(
     }
   } catch { /* skip enrichment on failure */ }
 
-  // Compute mcAtBuy for each buy entry
+  // Compute MC at trade time for each entry
   for (const entry of activity) {
-    if (entry.side !== "buy" || entry.amount <= 0 || entry.amountUsd <= 0) continue;
+    if (entry.amount <= 0 || entry.amountUsd <= 0) continue;
     const pairData = mcMap.get(entry.tokenAddress.toLowerCase());
     if (!pairData) continue;
     const { currentMc, currentPrice } = pairData;
     const circulatingSupply = currentMc / currentPrice;
-    const priceAtBuy = entry.amountUsd / entry.amount;
-    entry.marketCapAtBuy = priceAtBuy * circulatingSupply;
+    const priceAtTrade = entry.amountUsd / entry.amount;
+    entry.marketCap = priceAtTrade * circulatingSupply;
   }
 }
 
@@ -244,7 +244,7 @@ async function buildEvmQuickView(
         amount: parseFloat(swap.bought.amount) || 0,
         amountUsd: cost,
         logoUrl: swap.bought.logo ?? null,
-        marketCapAtBuy: null,
+        marketCap: null,
       });
     } else {
       const tokenAddr = swap.sold.address.toLowerCase();
@@ -259,7 +259,7 @@ async function buildEvmQuickView(
         amount: Math.abs(parseFloat(swap.sold.amount)) || 0,
         amountUsd: proceeds,
         logoUrl: swap.sold.logo ?? null,
-        marketCapAtBuy: null,
+        marketCap: null,
       });
     }
   }
@@ -768,7 +768,7 @@ export async function POST(request: Request) {
             amount: soldAmount,
             amountUsd: receivedUsd,
             logoUrl: logoMap.get(soldMint) ?? null,
-            marketCapAtBuy: null,
+            marketCap: null,
           });
           mintTotalSoldUsd.set(soldMint, (mintTotalSoldUsd.get(soldMint) ?? 0) + receivedUsd);
           recentPnls.push({
@@ -821,7 +821,7 @@ export async function POST(request: Request) {
             amount: boughtAmount,
             amountUsd: buyUsd,
             logoUrl: logoMap.get(boughtMint) ?? null,
-            marketCapAtBuy: null,
+            marketCap: null,
           });
           mintTotalBoughtUsd.set(boughtMint, (mintTotalBoughtUsd.get(boughtMint) ?? 0) + buyUsd);
           topBuys.push({

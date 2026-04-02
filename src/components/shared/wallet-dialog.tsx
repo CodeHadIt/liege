@@ -602,7 +602,7 @@ function ActivityTab({
       <div className="grid grid-cols-[1fr_60px_70px_60px] gap-2 px-2 py-1">
         <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80]">Token</span>
         <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">Bought</span>
-        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">MC at buy</span>
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">MC</span>
         <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">Time</span>
       </div>
       {entries.map((entry, i) => (
@@ -642,9 +642,7 @@ function ActivityTab({
             {formatUsdCompact(entry.amountUsd)}
           </span>
           <span className="text-[10px] font-mono text-[#6B6B80] text-right self-center">
-            {entry.side === "buy" && entry.marketCapAtBuy
-              ? formatUsdCompact(entry.marketCapAtBuy)
-              : "—"}
+            {entry.marketCap ? formatUsdCompact(entry.marketCap) : "—"}
           </span>
           <span className="text-[9px] font-mono text-[#6B6B80] text-right self-center">
             {formatTimeAgo(entry.timestamp)}
