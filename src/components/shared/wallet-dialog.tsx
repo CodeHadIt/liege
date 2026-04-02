@@ -485,9 +485,9 @@ function PnlTab({
       {/* Header */}
       <div className="grid grid-cols-[1fr_60px_60px_70px] gap-2 px-2 py-1">
         <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80]">Token</span>
-        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">🛒 Bought</span>
-        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">💰 Sold</span>
-        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">📊 PnL</span>
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">Bought</span>
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">Sold</span>
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">PnL</span>
       </div>
       {entries.map((entry, i) => (
         <a
