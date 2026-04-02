@@ -118,6 +118,48 @@ interface MoralisSwapsResponse {
 // Chains where Moralis profitability endpoint is supported
 const PROFITABILITY_SUPPORTED_CHAINS = new Set(["0x1", "0x2105"]); // ETH mainnet, Base
 
+/**
+ * Computes the market cap at time of buy for each buy entry in the activity list.
+ * Strategy: fetch current pair data from DexScreener → derive circulating supply
+ * (supply = currentMC / currentPrice), then compute mcAtBuy = priceAtBuy × supply.
+ * This is accurate for tokens where supply hasn't changed since the buy.
+ */
+async function enrichActivityWithMarketCap(
+  activity: WalletQuickViewData["recentActivity"],
+  chainId: ChainId
+): Promise<void> {
+  const dexChain = chainId === "bsc" ? "bsc" : chainId === "base" ? "base" : chainId === "ethereum" ? "ethereum" : "solana";
+  // Collect unique buy token addresses (up to 20 most recent buys)
+  const buyEntries = activity.filter((e) => e.side === "buy" && e.amount > 0 && e.amountUsd > 0).slice(0, 20);
+  const uniqueAddrs = [...new Set(buyEntries.map((e) => e.tokenAddress))];
+  if (uniqueAddrs.length === 0) return;
+
+  // Batch fetch DexScreener pairs
+  const mcMap = new Map<string, { currentMc: number; currentPrice: number }>();
+  try {
+    const pairs = await getTokenPairs(dexChain, uniqueAddrs.join(","));
+    for (const pair of pairs) {
+      const addr = pair.baseToken.address.toLowerCase();
+      const currentMc = pair.marketCap ?? pair.fdv ?? 0;
+      const currentPrice = parseFloat(pair.priceUsd ?? "0") || 0;
+      if (currentMc > 0 && currentPrice > 0 && !mcMap.has(addr)) {
+        mcMap.set(addr, { currentMc, currentPrice });
+      }
+    }
+  } catch { /* skip enrichment on failure */ }
+
+  // Compute mcAtBuy for each buy entry
+  for (const entry of activity) {
+    if (entry.side !== "buy" || entry.amount <= 0 || entry.amountUsd <= 0) continue;
+    const pairData = mcMap.get(entry.tokenAddress.toLowerCase());
+    if (!pairData) continue;
+    const { currentMc, currentPrice } = pairData;
+    const circulatingSupply = currentMc / currentPrice;
+    const priceAtBuy = entry.amountUsd / entry.amount;
+    entry.marketCapAtBuy = priceAtBuy * circulatingSupply;
+  }
+}
+
 async function fetchEvmSwaps(
   walletAddress: string,
   moralisChain: string
@@ -202,6 +244,7 @@ async function buildEvmQuickView(
         amount: parseFloat(swap.bought.amount) || 0,
         amountUsd: cost,
         logoUrl: swap.bought.logo ?? null,
+        marketCapAtBuy: null,
       });
     } else {
       const tokenAddr = swap.sold.address.toLowerCase();
@@ -216,6 +259,7 @@ async function buildEvmQuickView(
         amount: Math.abs(parseFloat(swap.sold.amount)) || 0,
         amountUsd: proceeds,
         logoUrl: swap.sold.logo ?? null,
+        marketCapAtBuy: null,
       });
     }
   }
@@ -410,6 +454,9 @@ async function buildEvmQuickView(
     cumPnl += dailyPnl;
     return { date, pnl: cumPnl };
   });
+
+  // ─── Enrich buy activity entries with MC at buy ────────────────────────────
+  await enrichActivityWithMarketCap(recentActivity, chainId);
 
   return {
     address: walletAddress,
@@ -721,6 +768,7 @@ export async function POST(request: Request) {
             amount: soldAmount,
             amountUsd: receivedUsd,
             logoUrl: logoMap.get(soldMint) ?? null,
+            marketCapAtBuy: null,
           });
           mintTotalSoldUsd.set(soldMint, (mintTotalSoldUsd.get(soldMint) ?? 0) + receivedUsd);
           recentPnls.push({
@@ -773,6 +821,7 @@ export async function POST(request: Request) {
             amount: boughtAmount,
             amountUsd: buyUsd,
             logoUrl: logoMap.get(boughtMint) ?? null,
+            marketCapAtBuy: null,
           });
           mintTotalBoughtUsd.set(boughtMint, (mintTotalBoughtUsd.get(boughtMint) ?? 0) + buyUsd);
           topBuys.push({
@@ -975,6 +1024,9 @@ export async function POST(request: Request) {
         fb.marketCap = mcMap.get(fb.tokenAddress) ?? null;
       }
     }
+
+    // Enrich buy activity entries with MC at buy
+    await enrichActivityWithMarketCap(recentActivity, chainId);
 
     const result: WalletQuickViewData = {
       address: walletAddress,

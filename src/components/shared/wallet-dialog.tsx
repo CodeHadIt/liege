@@ -335,7 +335,7 @@ export function WalletDialog() {
                 <TopBuysTab entries={data.topBuys} />
               )}
               {activeTab === "activity" && (
-                <ActivityTab entries={data.recentActivity} />
+                <ActivityTab entries={data.recentActivity} chain={data.chain} />
               )}
             </div>
           </div>
@@ -583,8 +583,10 @@ function TopBuysTab({
 
 function ActivityTab({
   entries,
+  chain,
 }: {
   entries: import("@/types/traders").WalletQuickViewData["recentActivity"];
+  chain: string;
 }) {
   if (entries.length === 0) {
     return (
@@ -596,12 +598,22 @@ function ActivityTab({
 
   return (
     <div className="space-y-1">
+      {/* Header */}
+      <div className="grid grid-cols-[1fr_60px_70px_60px] gap-2 px-2 py-1">
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80]">Token</span>
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">Bought</span>
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">MC at buy</span>
+        <span className="text-[9px] font-mono uppercase tracking-widest text-[#6B6B80] text-right">Time</span>
+      </div>
       {entries.map((entry, i) => (
-        <div
+        <a
           key={`${entry.txHash}-${i}`}
-          className="flex items-center justify-between px-2 py-1.5 rounded-md hover:bg-white/[0.02] transition-colors"
+          href={`/token/${chain}/${entry.tokenAddress}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="grid grid-cols-[1fr_60px_70px_60px] gap-2 px-2 py-1.5 rounded-md hover:bg-white/[0.04] transition-colors"
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             <div className="relative shrink-0">
               {entry.logoUrl ? (
                 <img
@@ -610,7 +622,7 @@ function ActivityTab({
                   className="h-5 w-5 rounded-full ring-1 ring-white/[0.06]"
                 />
               ) : (
-                <div className={`h-5 w-5 rounded-full flex items-center justify-center text-[8px] font-bold shrink-0 ${entry.side === "buy" ? "bg-[#00C48C]/20 text-[#00C48C]" : "bg-[#FF3B5C]/20 text-[#FF3B5C]"}`}>
+                <div className={`h-5 w-5 rounded-full flex items-center justify-center text-[8px] font-bold ${entry.side === "buy" ? "bg-[#00C48C]/20 text-[#00C48C]" : "bg-[#FF3B5C]/20 text-[#FF3B5C]"}`}>
                   {entry.tokenSymbol.slice(0, 2)}
                 </div>
               )}
@@ -622,26 +634,22 @@ function ActivityTab({
                 )}
               </div>
             </div>
-            <span
-              className={`text-[10px] font-mono font-bold uppercase ${
-                entry.side === "buy"
-                  ? "text-[#00C48C]"
-                  : "text-[#FF3B5C]"
-              }`}
-            >
-              {entry.side}
-            </span>
-            <span className="text-[11px] font-mono font-semibold text-[#E8E8ED]">
+            <span className="text-[11px] font-mono font-semibold text-[#E8E8ED] truncate">
               {entry.tokenSymbol}
             </span>
-            <span className="text-[9px] font-mono text-[#6B6B80]">
-              {formatTimeAgo(entry.timestamp)}
-            </span>
           </div>
-          <span className="text-[10px] font-mono text-[#E8E8ED]">
+          <span className={`text-[10px] font-mono text-right self-center ${entry.side === "buy" ? "text-[#00C48C]" : "text-[#FF3B5C]"}`}>
             {formatUsdCompact(entry.amountUsd)}
           </span>
-        </div>
+          <span className="text-[10px] font-mono text-[#6B6B80] text-right self-center">
+            {entry.side === "buy" && entry.marketCapAtBuy
+              ? formatUsdCompact(entry.marketCapAtBuy)
+              : "—"}
+          </span>
+          <span className="text-[9px] font-mono text-[#6B6B80] text-right self-center">
+            {formatTimeAgo(entry.timestamp)}
+          </span>
+        </a>
       ))}
     </div>
   );
