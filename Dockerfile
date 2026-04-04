@@ -1,24 +1,64 @@
 # syntax = docker/dockerfile:1
 
-# Adjust NODE_VERSION as desired
 ARG NODE_VERSION=22.21.1
 FROM node:${NODE_VERSION}-slim AS base
 
 LABEL fly_launch_runtime="Next.js"
 
-# Next.js app lives here
 WORKDIR /app
 
-# Set production environment
 ENV NODE_ENV="production"
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV NEXT_TELEMETRY_DISABLED=1
 
 
-# Throw-away build stage to reduce size of final image
+# Build stage
 FROM base AS build
 
-# Install packages needed to build node modules
+# Install system dependencies needed for native modules and Chromium
 RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y build-essential node-gyp pkg-config python-is-python3
+    apt-get install --no-install-recommends -y \
+      build-essential \
+      node-gyp \
+      pkg-config \
+      python-is-python3 \
+      ca-certificates \
+      fonts-liberation \
+      libasound2 \
+      libatk-bridge2.0-0 \
+      libatk1.0-0 \
+      libc6 \
+      libcairo2 \
+      libcups2 \
+      libdbus-1-3 \
+      libexpat1 \
+      libfontconfig1 \
+      libgbm1 \
+      libgcc1 \
+      libglib2.0-0 \
+      libgtk-3-0 \
+      libnspr4 \
+      libnss3 \
+      libpango-1.0-0 \
+      libpangocairo-1.0-0 \
+      libstdc++6 \
+      libx11-6 \
+      libx11-xcb1 \
+      libxcb1 \
+      libxcomposite1 \
+      libxcursor1 \
+      libxdamage1 \
+      libxext6 \
+      libxfixes3 \
+      libxi6 \
+      libxrandr2 \
+      libxrender1 \
+      libxss1 \
+      libxtst6 \
+      lsb-release \
+      wget \
+      xdg-utils && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install node modules
 COPY .npmrc package-lock.json package.json ./
@@ -28,21 +68,59 @@ RUN npm ci --include=dev
 COPY . .
 
 # Build application
-RUN npx next build --experimental-build-mode compile
+RUN npx next build
 
 # Remove development dependencies
 RUN npm prune --omit=dev
 
 
-# Final stage for app image
-FROM base
+# Final stage
+FROM base AS runner
 
-# Copy built application
+# Install Chromium runtime dependencies in the final image
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y \
+      ca-certificates \
+      fonts-liberation \
+      libasound2 \
+      libatk-bridge2.0-0 \
+      libatk1.0-0 \
+      libc6 \
+      libcairo2 \
+      libcups2 \
+      libdbus-1-3 \
+      libexpat1 \
+      libfontconfig1 \
+      libgbm1 \
+      libgcc1 \
+      libglib2.0-0 \
+      libgtk-3-0 \
+      libnspr4 \
+      libnss3 \
+      libpango-1.0-0 \
+      libpangocairo-1.0-0 \
+      libstdc++6 \
+      libx11-6 \
+      libx11-xcb1 \
+      libxcb1 \
+      libxcomposite1 \
+      libxcursor1 \
+      libxdamage1 \
+      libxext6 \
+      libxfixes3 \
+      libxi6 \
+      libxrandr2 \
+      libxrender1 \
+      libxss1 \
+      libxtst6 \
+      wget && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy built application from build stage
 COPY --from=build /app /app
 
-# Entrypoint sets up the container.
-ENTRYPOINT [ "/app/docker-entrypoint.js" ]
-
-# Start the server by default, this can be overwritten at runtime
 EXPOSE 3000
-CMD [ "npm", "run", "start" ]
+
+CMD ["npm", "run", "start"]
