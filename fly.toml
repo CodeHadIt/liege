@@ -1,19 +1,15 @@
-# fly.toml app configuration file generated for liege on 2026-04-04T13:28:24Z
+# fly.toml app configuration file generated for liege on 2026-04-04T14:17:54Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
 app = 'liege'
-primary_region = 'ams'
+primary_region = 'lhr'
 
 [build]
-  [build.args]
-    NEXT_PUBLIC_APP_URL = "https://liege.fly.dev"
-    NEXT_PUBLIC_SUPABASE_URL = "https://ctihjykexasvnrgohxvp.supabase.co"
-    NEXT_PUBLIC_PRIVY_APP_ID = "cmlxx9jwr02ck0dl41777a527"
 
 [http_service]
-  internal_port = 3000
+  internal_port = 8080
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
@@ -21,6 +17,7 @@ primary_region = 'ams'
   processes = ['app']
 
 [[vm]]
-  memory = '2gb'
+  memory = '1gb'
   cpu_kind = 'shared'
-  cpus = 2
+  cpus = 1
+  memory_mb = 1024
