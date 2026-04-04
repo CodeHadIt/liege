@@ -128,7 +128,7 @@ async function enrichActivityWithMarketCap(
   activity: WalletQuickViewData["recentActivity"],
   chainId: ChainId
 ): Promise<void> {
-  const dexChain = chainId === "bsc" ? "bsc" : chainId === "base" ? "base" : chainId === "ethereum" ? "ethereum" : "solana";
+  const dexChain = chainId === "solana" ? "solana" : (chainId as string);
   // Collect unique token addresses from all entries (up to 20 most recent)
   const validEntries = activity.filter((e) => e.amount > 0 && e.amountUsd > 0).slice(0, 20);
   const uniqueAddrs = [...new Set(validEntries.map((e) => e.tokenAddress))];
