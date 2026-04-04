@@ -60,6 +60,14 @@ RUN apt-get update -qq && \
       xdg-utils && \
     rm -rf /var/lib/apt/lists/*
 
+# Build-time public env vars (needed by Next.js at build time)
+ARG NEXT_PUBLIC_APP_URL
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_PRIVY_APP_ID
+ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL
+ENV NEXT_PUBLIC_PRIVY_APP_ID=$NEXT_PUBLIC_PRIVY_APP_ID
+
 # Install node modules
 COPY .npmrc package-lock.json package.json ./
 RUN npm ci --include=dev

@@ -7,6 +7,10 @@ app = 'liege'
 primary_region = 'ams'
 
 [build]
+  [build.args]
+    NEXT_PUBLIC_APP_URL = "https://liege.fly.dev"
+    NEXT_PUBLIC_SUPABASE_URL = "https://ctihjykexasvnrgohxvp.supabase.co"
+    NEXT_PUBLIC_PRIVY_APP_ID = "cmlxx9jwr02ck0dl41777a527"
 
 [http_service]
   internal_port = 3000
