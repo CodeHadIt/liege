@@ -40,21 +40,40 @@ async function getBrowser(): Promise<Browser> {
   if (browserInstance?.isConnected()) return browserInstance;
   if (browserLaunchPromise) return browserLaunchPromise;
 
-  const isServerless = process.env.NODE_ENV === "production" || !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.RAILWAY_ENVIRONMENT);
+  const systemChromium = process.env.CHROMIUM_EXECUTABLE_PATH;
+  const isServerless = !systemChromium && (
+    !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME)
+  );
+
+  const commonArgs = [
+    "--disable-blink-features=AutomationControlled",
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+  ];
 
   browserLaunchPromise = (async () => {
+    if (systemChromium) {
+      // Container environment — use system-installed Chromium (Railway, Docker, etc.)
+      return chromium.launch({
+        executablePath: systemChromium,
+        headless: true,
+        args: commonArgs,
+      });
+    }
     if (isServerless) {
-      // Use @sparticuz/chromium — a serverless-compatible Chromium binary
+      // Serverless (Vercel/Lambda) — use @sparticuz/chromium bundled binary
       const sparticuz = (await import("@sparticuz/chromium")).default;
       return chromium.launch({
-        args: sparticuz.args,
+        args: [...sparticuz.args, ...commonArgs],
         executablePath: await sparticuz.executablePath(),
         headless: true,
       });
     }
+    // Local development
     return chromium.launch({
       headless: true,
-      args: ["--disable-blink-features=AutomationControlled"],
+      args: commonArgs,
     });
   })()
     .then((b) => {

@@ -42,47 +42,21 @@ RUN npm prune --omit=dev
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM base AS runner
 
-# Chromium system dependencies required by @sparticuz/chromium at runtime
+# Install Chromium directly — more reliable than @sparticuz/chromium in containers
 RUN apt-get update -qq && \
     apt-get install --no-install-recommends -y \
+      chromium \
       ca-certificates \
-      fonts-liberation \
-      libasound2 \
-      libatk-bridge2.0-0 \
-      libatk1.0-0 \
-      libcairo2 \
-      libcups2 \
-      libdbus-1-3 \
-      libexpat1 \
-      libfontconfig1 \
-      libgbm1 \
-      libglib2.0-0 \
-      libgtk-3-0 \
-      libnspr4 \
-      libnss3 \
-      libpango-1.0-0 \
-      libpangocairo-1.0-0 \
-      libx11-6 \
-      libx11-xcb1 \
-      libxcb1 \
-      libxcomposite1 \
-      libxcursor1 \
-      libxdamage1 \
-      libxext6 \
-      libxfixes3 \
-      libxi6 \
-      libxrandr2 \
-      libxrender1 \
-      libxss1 \
-      libxtst6 \
-      wget && \
+      fonts-liberation && \
     rm -rf /var/lib/apt/lists/*
+
+# Tell playwright-core to use the system Chromium
+ENV CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
 
 COPY --from=build /app /app
 
-# Railway injects PORT automatically; Next.js respects it
 EXPOSE 3000
 
 CMD ["npm", "run", "start"]
