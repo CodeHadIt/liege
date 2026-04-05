@@ -13,7 +13,7 @@ primary_region = 'ams'
     NEXT_PUBLIC_PRIVY_APP_ID = "cmlxx9jwr02ck0dl41777a527"
 
 [http_service]
-  internal_port = 3000
+  internal_port = 8080
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true

@@ -129,6 +129,7 @@ WORKDIR /app
 # Copy built application from build stage
 COPY --from=build /app /app
 
-EXPOSE 3000
+ENV PORT=8080
+EXPOSE 8080
 
 CMD ["npm", "run", "start"]
