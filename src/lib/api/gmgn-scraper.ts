@@ -40,7 +40,7 @@ async function getBrowser(): Promise<Browser> {
   if (browserInstance?.isConnected()) return browserInstance;
   if (browserLaunchPromise) return browserLaunchPromise;
 
-  const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  const isServerless = process.env.NODE_ENV === "production" || !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.RAILWAY_ENVIRONMENT);
 
   browserLaunchPromise = (async () => {
     if (isServerless) {
