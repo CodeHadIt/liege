@@ -1,4 +1,4 @@
-import { bot } from "@/lib/telegram/bot";
+import { getBot } from "@/lib/telegram/bot";
 
 // Allow long-running bot handlers (scraping can take ~60s)
 export const maxDuration = 120;
@@ -17,7 +17,7 @@ export async function POST(req: Request): Promise<Response> {
     const update = await req.json();
     // Fire-and-forget: return 200 immediately so Telegram doesn't retry,
     // while the bot processes the update in the background.
-    bot.handleUpdate(update).catch((err) => {
+    getBot().handleUpdate(update).catch((err) => {
       console.error("[telegram/webhook] Handler error:", err);
     });
     return new Response("OK", { status: 200 });
