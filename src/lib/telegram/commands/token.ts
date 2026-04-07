@@ -306,29 +306,6 @@ export async function handleToken(
     msg += `🕐 <b>Age</b>\n${escapeHtml(formatAge(data.createdAt))}\n\n`;
   }
 
-  // ── DD Score ──────────────────────────────────────────────────────────────
-  if (dd) {
-    msg += `${GRADE_EMOJI[dd.grade] ?? "⚪"} <b>DD Score:</b> ${dd.overall}/100 — Grade <b>${dd.grade}</b>\n`;
-  }
-
-  // ── Warnings ──────────────────────────────────────────────────────────────
-  if (warns.length > 0) {
-    msg += `⚠️ <b>Warnings</b>\n`;
-    warns.slice(0, 3).forEach((f) => { msg += `• ${escapeHtml(f.label)}\n`; });
-  }
-
-  // ── Trading links ─────────────────────────────────────────────────────────
-  const t = tradingLinks(chain, address, data.primaryPair
-    ? `https://dexscreener.com/${chain}/${data.primaryPair.pairAddress}`
-    : null
-  );
-  msg += `\n`;
-  msg += `<a href="${t.axi}">AXI</a>  `;
-  msg += `<a href="${t.tro}">TRO</a>  `;
-  msg += `<a href="${t.tem}">TEM</a>  `;
-  msg += `<a href="${t.dex}">DEX</a>  `;
-  msg += `<a href="${t.gmg}">GMG</a>\n`;
-
   // ── Socials ───────────────────────────────────────────────────────────────
   // Merge aggregator socials with direct DexScreener fetch (DexScreener wins if both present)
   const tw  = dexSocials.twitter  ?? data.twitter  ?? null;
@@ -378,6 +355,29 @@ export async function handleToken(
   } else {
     msg += `🏷️ <b>DEX Paid:</b>  ❌\n`;
   }
+
+  // ── DD Score ──────────────────────────────────────────────────────────────
+  if (dd) {
+    msg += `\n${GRADE_EMOJI[dd.grade] ?? "⚪"} <b>DD Score:</b> ${dd.overall}/100 — Grade <b>${dd.grade}</b>\n`;
+  }
+
+  // ── Warnings ──────────────────────────────────────────────────────────────
+  if (warns.length > 0) {
+    msg += `⚠️ <b>Warnings</b>\n`;
+    warns.slice(0, 3).forEach((f) => { msg += `• ${escapeHtml(f.label)}\n`; });
+  }
+
+  // ── Trading links ─────────────────────────────────────────────────────────
+  const t = tradingLinks(chain, address, data.primaryPair
+    ? `https://dexscreener.com/${chain}/${data.primaryPair.pairAddress}`
+    : null
+  );
+  msg += `\n`;
+  msg += `<a href="${t.axi}">AXI</a>  `;
+  msg += `<a href="${t.tro}">TRO</a>  `;
+  msg += `<a href="${t.tem}">TEM</a>  `;
+  msg += `<a href="${t.dex}">DEX</a>  `;
+  msg += `<a href="${t.gmg}">GMG</a>\n`;
 
   await ctx.api.editMessageText(ctx.chat!.id, msgId, msg, {
     parse_mode: "HTML",
