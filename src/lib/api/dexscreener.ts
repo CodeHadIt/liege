@@ -45,6 +45,7 @@ export interface DexScreenerPair {
   pairCreatedAt?: number;
   info?: {
     imageUrl?: string;
+    header?: string;
     websites?: { url: string }[];
     socials?: { type: string; url: string }[];
   };
