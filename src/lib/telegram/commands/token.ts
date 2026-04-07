@@ -1,6 +1,6 @@
 import type { MyContext } from "../bot";
 import { aggregateTokenData } from "@/lib/aggregator";
-import { getTokenPairs, searchPairs } from "@/lib/api/dexscreener";
+import { getTokenPairs, searchPairs, getTokenOrders } from "@/lib/api/dexscreener";
 import { getTokenPools, getOHLCV } from "@/lib/api/geckoterminal";
 import { CHAIN_CONFIGS } from "@/config/chains";
 import { getChainProvider } from "@/lib/chains/registry";
@@ -70,7 +70,6 @@ export async function detectEvmChain(address: string): Promise<ChainId> {
 /**
  * Fetch ATH price + timestamp using GeckoTerminal OHLCV.
  * Works for all chains including Solana — no Birdeye dependency.
- * Finds the highest candle across all available daily bars (up to 300 days).
  */
 async function fetchATH(
   chain: ChainId,
@@ -78,13 +77,10 @@ async function fetchATH(
 ): Promise<{ price: number; timestamp: number } | null> {
   const doFetch = async () => {
     const network = CHAIN_CONFIGS[chain].geckoTerminalNetwork;
-
-    // Get the top pool for this token on GeckoTerminal
     const pools = await getTokenPools(network, address);
     const poolAddress = pools[0]?.attributes?.address;
     if (!poolAddress) return null;
 
-    // Fetch daily OHLCV (up to 300 candles)
     const bars = await getOHLCV(network, poolAddress, "day", 1);
     if (!bars?.length) return null;
 
@@ -95,7 +91,6 @@ async function fetchATH(
     return athPrice > 0 ? { price: athPrice, timestamp: athTs } : null;
   };
 
-  // 10s safety timeout — GeckoTerminal is fast but always guard against hangs
   const timeout = new Promise<null>((resolve) =>
     setTimeout(() => resolve(null), 10_000)
   );
@@ -103,9 +98,8 @@ async function fetchATH(
 }
 
 /**
- * Fetch top 5 holder percentages for the TH: section.
- * Uses GMGN for EVM chains, chain provider for Solana.
- * Hard 10s timeout — never block the token message.
+ * Fetch top 10 holders.
+ * Returns { address, percentage }[] — first 5 shown as wallet links, all 10 used for concentration.
  */
 async function fetchTopHolders(
   chain: ChainId,
@@ -114,16 +108,16 @@ async function fetchTopHolders(
   const doFetch = async () => {
     if (chain === "solana") {
       const provider = getChainProvider("solana");
-      const holders = await provider.getTopHolders(address, 5);
+      const holders = await provider.getTopHolders(address, 10);
       return holders
         .filter((h) => h.percentage > 0)
-        .slice(0, 5)
+        .slice(0, 10)
         .map((h) => ({ address: h.address, percentage: h.percentage }));
     }
 
     // EVM — use GMGN scraper (same as /holders command)
     const gmgnHolders = await scrapeGmgnTopHolders(chain, address);
-    return gmgnHolders.slice(0, 5).map((h) => {
+    return gmgnHolders.slice(0, 10).map((h) => {
       const pct =
         h.supplyPercent > 0
           ? h.supplyPercent <= 1
@@ -138,6 +132,79 @@ async function fetchTopHolders(
     (resolve) => setTimeout(() => resolve([]), 10_000)
   );
   return Promise.race([doFetch().catch(() => []), timeout]);
+}
+
+interface DexSocials {
+  twitter: string | null;
+  telegram: string | null;
+  website: string | null;
+  discord: string | null;
+}
+
+/**
+ * Fetch social links directly from DexScreener pair info.
+ * More reliable than relying on chain provider metadata.
+ */
+async function fetchDexSocials(
+  chain: ChainId,
+  address: string
+): Promise<DexSocials> {
+  const empty: DexSocials = { twitter: null, telegram: null, website: null, discord: null };
+  const doFetch = async (): Promise<DexSocials> => {
+    const pairs = await getTokenPairs(chain, address);
+    // Find the first pair that has social/website info
+    const withInfo = pairs.find(
+      (p) => p.info?.socials?.length || p.info?.websites?.length
+    );
+    if (!withInfo?.info) return empty;
+
+    const socials = withInfo.info.socials ?? [];
+    const websites = withInfo.info.websites ?? [];
+
+    return {
+      twitter: socials.find((s) => s.type === "twitter")?.url ?? null,
+      telegram: socials.find((s) => s.type === "telegram")?.url ?? null,
+      discord: socials.find((s) => s.type === "discord")?.url ?? null,
+      website: websites[0]?.url ?? null,
+    };
+  };
+
+  const timeout = new Promise<DexSocials>((resolve) =>
+    setTimeout(() => resolve(empty), 8_000)
+  );
+  return Promise.race([doFetch().catch(() => empty), timeout]);
+}
+
+interface DexPaidResult {
+  paid: boolean;
+  paymentTimestamp: number | null;
+}
+
+/**
+ * Check if this token has an approved DexScreener profile (DEX Paid).
+ * Uses the /orders/v1 endpoint.
+ */
+async function fetchDexPaid(
+  chain: ChainId,
+  address: string
+): Promise<DexPaidResult> {
+  const notPaid: DexPaidResult = { paid: false, paymentTimestamp: null };
+  const doFetch = async (): Promise<DexPaidResult> => {
+    const result = await getTokenOrders(chain, address);
+    if (!result?.orders?.length) return notPaid;
+
+    const profileOrder = result.orders
+      .filter((o) => o.type === "tokenProfile" && o.status === "approved")
+      .sort((a, b) => (b.paymentTimestamp ?? 0) - (a.paymentTimestamp ?? 0))[0];
+
+    if (!profileOrder) return notPaid;
+    return { paid: true, paymentTimestamp: profileOrder.paymentTimestamp ?? null };
+  };
+
+  const timeout = new Promise<DexPaidResult>((resolve) =>
+    setTimeout(() => resolve(notPaid), 8_000)
+  );
+  return Promise.race([doFetch().catch(() => notPaid), timeout]);
 }
 
 /** Build trading platform URLs matching the Liège web app */
@@ -175,16 +242,17 @@ export async function handleToken(
   }
 
   // aggregateTokenData wrapped in 25s timeout — guards against EVM provider hangs
-  // (e.g. BaseScan calls with no API key that never resolve)
   const aggregateWithTimeout = Promise.race([
     aggregateTokenData(chain, address),
     new Promise<null>((resolve) => setTimeout(() => resolve(null), 25_000)),
   ]);
 
-  const [data, ath, topHolders] = await Promise.all([
+  const [data, ath, topHolders, dexSocials, dexPaid] = await Promise.all([
     aggregateWithTimeout,
     fetchATH(chain, address),
     fetchTopHolders(chain, address),
+    fetchDexSocials(chain, address),
+    fetchDexPaid(chain, address),
   ]);
 
   if (!data) {
@@ -204,59 +272,52 @@ export async function handleToken(
   msg += ` <code>(${escapeHtml(data.symbol)})</code> · ${chainLabel(chain)}\n`;
   msg += `<code>${escapeHtml(address)}</code>\n\n`;
 
-  // ── Price + changes ───────────────────────────────────────────────────────
-  msg += `💰 <b>${formatPrice(data.priceUsd)}</b>`;
+  // ── Price ─────────────────────────────────────────────────────────────────
+  msg += `💰 <b>Price</b>\n`;
+  msg += `${formatPrice(data.priceUsd)}`;
   const changes: string[] = [];
   if (data.priceChange.h1  !== null) changes.push(`1h ${formatPercent(data.priceChange.h1)}`);
   if (data.priceChange.h24 !== null) changes.push(`24h ${formatPercent(data.priceChange.h24)}`);
   if (changes.length) msg += `  <i>${escapeHtml(changes.join("  ·  "))}</i>`;
-  msg += "\n";
+  msg += "\n\n";
 
-  // ── Stats ─────────────────────────────────────────────────────────────────
-  msg += `📊 MC: <b>$${escapeHtml(formatCompact(data.marketCap))}</b>\n`;
-  msg += `💧 LP: <b>$${escapeHtml(formatCompact(data.liquidity?.totalUsd ?? null))}</b>`;
-  msg += `  |  Vol: <b>$${escapeHtml(formatCompact(data.volume24h))}</b>\n`;
+  // ── Market stats ──────────────────────────────────────────────────────────
+  msg += `📊 <b>Market Cap</b>\n`;
+  msg += `$${escapeHtml(formatCompact(data.marketCap))}\n\n`;
+
+  msg += `💧 <b>Liquidity</b>  ·  <b>Vol 24h</b>\n`;
+  msg += `$${escapeHtml(formatCompact(data.liquidity?.totalUsd ?? null))}`;
+  msg += `  ·  $${escapeHtml(formatCompact(data.volume24h))}\n\n`;
 
   // ── ATH MC ────────────────────────────────────────────────────────────────
   if (ath && data.priceUsd && data.priceUsd > 0 && data.marketCap) {
     const athMc = (ath.price / data.priceUsd) * data.marketCap;
-    msg += `📈 ATH MC: <b>$${escapeHtml(formatCompact(athMc))}</b>`;
-    msg += ` [${escapeHtml(formatTimeAgo(ath.timestamp))}]\n`;
+    msg += `📈 <b>ATH MC</b>\n`;
+    msg += `$${escapeHtml(formatCompact(athMc))} <i>[${escapeHtml(formatTimeAgo(ath.timestamp))}]</i>\n\n`;
   }
 
   // ── Activity ──────────────────────────────────────────────────────────────
   if (data.txns24h) {
     const total = data.txns24h.buys + data.txns24h.sells;
-    msg += `🔄 Txns: ${escapeHtml(formatCompact(total))}`;
-    msg += ` (🟢${data.txns24h.buys} 🔴${data.txns24h.sells})\n`;
-  }
-  msg += `🕐 Age: ${escapeHtml(formatAge(data.createdAt))}\n`;
-
-  // ── Top Holders ───────────────────────────────────────────────────────────
-  if (topHolders.length > 0) {
-    const gmgnChain = GMGN_CHAIN[chain];
-    const links = topHolders
-      .filter((h) => h.percentage > 0)
-      .map(
-        (h) =>
-          `<a href="https://gmgn.ai/${gmgnChain}/address/${h.address}">${h.percentage.toFixed(1)}%</a>`
-      )
-      .join("  ");
-    if (links) msg += `👥 TH: ${links}\n`;
+    msg += `🔄 <b>Txns 24h</b>  ·  <b>Age</b>\n`;
+    msg += `${escapeHtml(formatCompact(total))} (🟢${data.txns24h.buys} 🔴${data.txns24h.sells})`;
+    msg += `  ·  ${escapeHtml(formatAge(data.createdAt))}\n\n`;
+  } else {
+    msg += `🕐 <b>Age</b>\n${escapeHtml(formatAge(data.createdAt))}\n\n`;
   }
 
   // ── DD Score ──────────────────────────────────────────────────────────────
   if (dd) {
-    msg += `\n${GRADE_EMOJI[dd.grade] ?? "⚪"} DD Score: <b>${dd.overall}/100</b> — Grade <b>${dd.grade}</b>\n`;
+    msg += `${GRADE_EMOJI[dd.grade] ?? "⚪"} <b>DD Score:</b> ${dd.overall}/100 — Grade <b>${dd.grade}</b>\n`;
   }
 
-  // ── Warnings only (criticals removed) ────────────────────────────────────
+  // ── Warnings ──────────────────────────────────────────────────────────────
   if (warns.length > 0) {
-    msg += `\n⚠️ <b>Warnings:</b>\n`;
-    warns.slice(0, 3).forEach((f) => { msg += `  • ${escapeHtml(f.label)}\n`; });
+    msg += `⚠️ <b>Warnings</b>\n`;
+    warns.slice(0, 3).forEach((f) => { msg += `• ${escapeHtml(f.label)}\n`; });
   }
 
-  // ── Trading links (inline hyperlinks in message body) ────────────────────
+  // ── Trading links ─────────────────────────────────────────────────────────
   const t = tradingLinks(chain, address, data.primaryPair
     ? `https://dexscreener.com/${chain}/${data.primaryPair.pairAddress}`
     : null
@@ -268,12 +329,55 @@ export async function handleToken(
   msg += `<a href="${t.dex}">DEX</a>  `;
   msg += `<a href="${t.gmg}">GMG</a>\n`;
 
-  // ── Social links ──────────────────────────────────────────────────────────
-  const socials: string[] = [];
-  if (data.twitter)  socials.push(`<a href="${data.twitter}">𝕏</a>`);
-  if (data.telegram) socials.push(`<a href="${data.telegram}">TG</a>`);
-  if (data.website)  socials.push(`<a href="${data.website}">WEB</a>`);
-  if (socials.length > 0) msg += `${socials.join("  ")}\n`;
+  // ── Socials ───────────────────────────────────────────────────────────────
+  // Merge aggregator socials with direct DexScreener fetch (DexScreener wins if both present)
+  const tw  = dexSocials.twitter  ?? data.twitter  ?? null;
+  const tg  = dexSocials.telegram ?? data.telegram ?? null;
+  const web = dexSocials.website  ?? data.website  ?? null;
+  const dis = dexSocials.discord;
+
+  const socialLinks: string[] = [];
+  if (tw)  socialLinks.push(`<a href="${tw}">𝕏 Twitter</a>`);
+  if (tg)  socialLinks.push(`<a href="${tg}">💬 Telegram</a>`);
+  if (dis) socialLinks.push(`<a href="${dis}">🎮 Discord</a>`);
+  if (web) socialLinks.push(`<a href="${web}">🌍 Website</a>`);
+
+  if (socialLinks.length > 0) {
+    msg += `\n🌐 <b>Socials</b>\n`;
+    msg += socialLinks.join("  ") + "\n";
+  }
+
+  // ── Security ──────────────────────────────────────────────────────────────
+  msg += `\n🔒 <b>Security</b>\n`;
+
+  // Top 5 wallet links
+  const gmgnChain = GMGN_CHAIN[chain];
+  const holderLinks = topHolders
+    .slice(0, 5)
+    .filter((h) => h.percentage > 0)
+    .map(
+      (h) =>
+        `<a href="https://gmgn.ai/${gmgnChain}/address/${h.address}">${h.percentage.toFixed(1)}%</a>`
+    )
+    .join("  ");
+  if (holderLinks) msg += `👥 <b>Top Holders:</b>  ${holderLinks}\n`;
+
+  // Top 10 concentration
+  if (topHolders.length > 0) {
+    const top10Pct = topHolders.slice(0, 10).reduce((s, h) => s + h.percentage, 0);
+    const concEmoji = top10Pct <= 20 ? "🟢" : top10Pct <= 30 ? "🟡" : "🔴";
+    msg += `📊 <b>Top 10%:</b>  ${top10Pct.toFixed(1)}% ${concEmoji}\n`;
+  }
+
+  // DEX Paid
+  if (dexPaid.paid && dexPaid.paymentTimestamp) {
+    const ts = dexPaid.paymentTimestamp > 1e12
+      ? dexPaid.paymentTimestamp
+      : dexPaid.paymentTimestamp * 1000;
+    msg += `🏷️ <b>DEX Paid:</b>  ✅ ${escapeHtml(formatTimeAgo(ts))}\n`;
+  } else {
+    msg += `🏷️ <b>DEX Paid:</b>  ❌\n`;
+  }
 
   await ctx.api.editMessageText(ctx.chat!.id, msgId, msg, {
     parse_mode: "HTML",
