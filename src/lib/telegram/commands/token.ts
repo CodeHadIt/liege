@@ -3,6 +3,8 @@ import { aggregateTokenData } from "@/lib/aggregator";
 import { getTokenPairs, searchPairs } from "@/lib/api/dexscreener";
 import { getTokenPools, getOHLCV } from "@/lib/api/geckoterminal";
 import { CHAIN_CONFIGS } from "@/config/chains";
+import { getChainProvider } from "@/lib/chains/registry";
+import { scrapeGmgnTopHolders } from "@/lib/api/gmgn-scraper";
 import {
   escapeHtml,
   formatPrice,
@@ -20,9 +22,15 @@ const GRADE_EMOJI: Record<string, string> = {
 };
 
 const CHAIN_LOGO: Record<ChainId, string> = {
-  solana: "◎",
+  solana: "🟣",
   base: "🔵",
   bsc: "🟡",
+};
+
+const GMGN_CHAIN: Record<ChainId, string> = {
+  solana: "sol",
+  base: "base",
+  bsc: "bsc",
 };
 
 /**
@@ -94,6 +102,44 @@ async function fetchATH(
   return Promise.race([doFetch().catch(() => null), timeout]);
 }
 
+/**
+ * Fetch top 5 holder percentages for the TH: section.
+ * Uses GMGN for EVM chains, chain provider for Solana.
+ * Hard 10s timeout — never block the token message.
+ */
+async function fetchTopHolders(
+  chain: ChainId,
+  address: string
+): Promise<Array<{ address: string; percentage: number }>> {
+  const doFetch = async () => {
+    if (chain === "solana") {
+      const provider = getChainProvider("solana");
+      const holders = await provider.getTopHolders(address, 5);
+      return holders
+        .filter((h) => h.percentage > 0)
+        .slice(0, 5)
+        .map((h) => ({ address: h.address, percentage: h.percentage }));
+    }
+
+    // EVM — use GMGN scraper (same as /holders command)
+    const gmgnHolders = await scrapeGmgnTopHolders(chain, address);
+    return gmgnHolders.slice(0, 5).map((h) => {
+      const pct =
+        h.supplyPercent > 0
+          ? h.supplyPercent <= 1
+            ? h.supplyPercent * 100
+            : h.supplyPercent
+          : 0;
+      return { address: h.walletAddress, percentage: pct };
+    });
+  };
+
+  const timeout = new Promise<Array<{ address: string; percentage: number }>>(
+    (resolve) => setTimeout(() => resolve([]), 10_000)
+  );
+  return Promise.race([doFetch().catch(() => []), timeout]);
+}
+
 /** Build trading platform URLs matching the Liège web app */
 function tradingLinks(chain: ChainId, address: string, dexUrl?: string | null) {
   const gmgnChain: Record<ChainId, string> = { solana: "sol", base: "base", bsc: "bsc" };
@@ -128,10 +174,17 @@ export async function handleToken(
     msgId = loading.message_id;
   }
 
-  // ATH runs with a hard timeout so a slow/missing Birdeye key never hangs Solana
-  const [data, ath] = await Promise.all([
+  // aggregateTokenData wrapped in 25s timeout — guards against EVM provider hangs
+  // (e.g. BaseScan calls with no API key that never resolve)
+  const aggregateWithTimeout = Promise.race([
     aggregateTokenData(chain, address),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 25_000)),
+  ]);
+
+  const [data, ath, topHolders] = await Promise.all([
+    aggregateWithTimeout,
     fetchATH(chain, address),
+    fetchTopHolders(chain, address),
   ]);
 
   if (!data) {
@@ -173,10 +226,24 @@ export async function handleToken(
 
   // ── Activity ──────────────────────────────────────────────────────────────
   if (data.txns24h) {
-    msg += `🔄 Txns: ${data.txns24h.buys + data.txns24h.sells}`;
-    msg += ` (${data.txns24h.buys}B / ${data.txns24h.sells}S)\n`;
+    const total = data.txns24h.buys + data.txns24h.sells;
+    msg += `🔄 Txns: ${escapeHtml(formatCompact(total))}`;
+    msg += ` (🟢${data.txns24h.buys} 🔴${data.txns24h.sells})\n`;
   }
   msg += `🕐 Age: ${escapeHtml(formatAge(data.createdAt))}\n`;
+
+  // ── Top Holders ───────────────────────────────────────────────────────────
+  if (topHolders.length > 0) {
+    const gmgnChain = GMGN_CHAIN[chain];
+    const links = topHolders
+      .filter((h) => h.percentage > 0)
+      .map(
+        (h) =>
+          `<a href="https://gmgn.ai/${gmgnChain}/address/${h.address}">${h.percentage.toFixed(1)}%</a>`
+      )
+      .join("  ");
+    if (links) msg += `👥 TH: ${links}\n`;
+  }
 
   // ── DD Score ──────────────────────────────────────────────────────────────
   if (dd) {
