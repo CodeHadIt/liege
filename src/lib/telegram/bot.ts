@@ -17,17 +17,19 @@ export type MyContext = Context & SessionFlavor<SessionData>;
 // ── Lazy singleton — bot is created on first request, not at module load ──────
 // This prevents Next.js build from failing when env vars are only available
 // at runtime (Railway injects them at container start, not during `npm build`).
+// Uses a promise-based singleton so concurrent requests don't double-init.
 
-let _bot: Bot<MyContext> | null = null;
+let _botPromise: Promise<Bot<MyContext>> | null = null;
 
-export function getBot(): Bot<MyContext> {
-  if (_bot) return _bot;
+export async function getBot(): Promise<Bot<MyContext>> {
+  if (_botPromise) return _botPromise;
 
-  const token = process.env.TELEGRAM_API_KEY;
-  if (!token) throw new Error("TELEGRAM_API_KEY is not set");
+  _botPromise = (async () => {
+    const token = process.env.TELEGRAM_API_KEY;
+    if (!token) throw new Error("TELEGRAM_API_KEY is not set");
 
-  const bot = new Bot<MyContext>(token);
-  bot.use(session({ initial: (): SessionData => ({}) }));
+    const bot = new Bot<MyContext>(token);
+    bot.use(session({ initial: (): SessionData => ({}) }));
 
   // ── /start ──────────────────────────────────────────────────────────────────
 
@@ -214,6 +216,15 @@ export function getBot(): Bot<MyContext> {
     }
   });
 
-  _bot = bot;
-  return _bot;
+    // Call init() so Grammy fetches bot info before handling any updates
+    await bot.init();
+    console.log("[telegram/bot] Initialized as @" + bot.botInfo.username);
+
+    return bot;
+  })();
+
+  // If init fails, clear the promise so the next request can retry
+  _botPromise.catch(() => { _botPromise = null; });
+
+  return _botPromise;
 }

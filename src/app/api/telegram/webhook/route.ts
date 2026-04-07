@@ -25,7 +25,7 @@ export async function POST(req: Request): Promise<Response> {
   console.log("[telegram/webhook] Update received:", JSON.stringify(update).slice(0, 200));
 
   try {
-    const bot = getBot();
+    const bot = await getBot();
     // Await the handler so errors are visible in Railway logs.
     // maxDuration = 120 gives us enough headroom for the 60s Telegram timeout.
     await bot.handleUpdate(update as Parameters<typeof bot.handleUpdate>[0]);
