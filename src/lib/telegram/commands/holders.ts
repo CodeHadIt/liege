@@ -8,7 +8,7 @@ import {
   chainLabel,
   formatCompact,
 } from "../utils/format";
-import { viewOnSiteKeyboard } from "../utils/keyboards";
+import { tokenKeyboard } from "../utils/keyboards";
 import type { ChainId } from "@/types/chain";
 import type { HolderEntry } from "@/types/token";
 
@@ -89,7 +89,7 @@ export async function handleHolders(
 
     await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, msg, {
       parse_mode: "HTML",
-      reply_markup: viewOnSiteKeyboard(chain, address),
+      reply_markup: tokenKeyboard(chain, address),
       link_preview_options: { is_disabled: true },
     });
   } catch (err) {

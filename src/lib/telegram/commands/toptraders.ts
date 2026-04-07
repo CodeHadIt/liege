@@ -9,7 +9,7 @@ import {
   chainLabel,
   formatCompact,
 } from "../utils/format";
-import { viewOnSiteKeyboard } from "../utils/keyboards";
+import { tokenKeyboard } from "../utils/keyboards";
 import type { ChainId } from "@/types/chain";
 
 export async function handleTopTraders(
@@ -53,7 +53,7 @@ export async function handleTopTraders(
 
       await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, msg, {
         parse_mode: "HTML",
-        reply_markup: viewOnSiteKeyboard(chain, address),
+        reply_markup: tokenKeyboard(chain, address),
         link_preview_options: { is_disabled: true },
       });
     } else {
@@ -89,7 +89,7 @@ export async function handleTopTraders(
 
       await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, msg, {
         parse_mode: "HTML",
-        reply_markup: viewOnSiteKeyboard(chain, address),
+        reply_markup: tokenKeyboard(chain, address),
         link_preview_options: { is_disabled: true },
       });
     }

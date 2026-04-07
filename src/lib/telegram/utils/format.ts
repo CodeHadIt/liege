@@ -72,7 +72,6 @@ export function formatPercent(n: number | null | undefined): string {
 export function formatAge(createdAt: number | null | undefined): string {
   if (!createdAt) return "N/A";
   const now = Date.now();
-  // Handle both seconds and milliseconds timestamps
   const ts = createdAt > 1e12 ? createdAt : createdAt * 1000;
   const diffMs = now - ts;
   if (diffMs < 0) return "just now";
@@ -81,4 +80,22 @@ export function formatAge(createdAt: number | null | undefined): string {
   const diffHr = Math.floor(diffMin / 60);
   if (diffHr < 24) return `${diffHr}h`;
   return `${Math.floor(diffHr / 24)}d`;
+}
+
+/** Human-readable "X ago" string for ATH timestamps — more granular than formatAge */
+export function formatTimeAgo(timestamp: number | null | undefined): string {
+  if (!timestamp) return "N/A";
+  const now = Date.now();
+  const ts = timestamp > 1e12 ? timestamp : timestamp * 1000;
+  const diffMs = now - ts;
+  if (diffMs < 0) return "just now";
+  const diffMin = Math.floor(diffMs / 60_000);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDays = Math.floor(diffHr / 24);
+  if (diffDays < 7) return `${diffDays}d ago`;
+  const diffWeeks = Math.floor(diffDays / 7);
+  if (diffWeeks < 4) return `${diffWeeks}w ago`;
+  return `${Math.floor(diffDays / 30)}mo ago`;
 }

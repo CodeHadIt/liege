@@ -69,7 +69,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
   // ── /token ──────────────────────────────────────────────────────────────────
 
   bot.command("token", async (ctx) => {
-    const { handleToken } = await import("./commands/token");
+    const { handleToken, detectEvmChain } = await import("./commands/token");
     const address = ctx.match?.trim();
     if (!address) {
       await ctx.reply("Usage: /token <code>&lt;address&gt;</code>", {
@@ -77,19 +77,14 @@ export async function getBot(): Promise<Bot<MyContext>> {
       });
       return;
     }
-    const chain = detectChainFromAddress(address);
-    if (!chain) {
+    // detectChainFromAddress returns "base" for any 0x address as a placeholder
+    const rawChain = detectChainFromAddress(address);
+    if (!rawChain) {
       await ctx.reply("❌ Could not detect chain from this address.");
       return;
     }
-    if (chain === "base") {
-      const { evmChainKeyboard } = await import("./utils/keyboards");
-      await ctx.reply(
-        `🔵/🟡 This looks like an EVM address. Which chain?\n<code>${address}</code>`,
-        { parse_mode: "HTML", reply_markup: evmChainKeyboard("token", address) }
-      );
-      return;
-    }
+    // For EVM addresses auto-detect Base vs BSC via DexScreener liquidity check
+    const chain = rawChain === "base" ? await detectEvmChain(address) : rawChain;
     await handleToken(ctx, chain, address);
   });
 
@@ -97,6 +92,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
 
   bot.command("holders", async (ctx) => {
     const { handleHolders } = await import("./commands/holders");
+    const { detectEvmChain } = await import("./commands/token");
     const address = ctx.match?.trim();
     if (!address) {
       await ctx.reply("Usage: /holders <code>&lt;address&gt;</code>", {
@@ -104,19 +100,12 @@ export async function getBot(): Promise<Bot<MyContext>> {
       });
       return;
     }
-    const chain = detectChainFromAddress(address);
-    if (!chain) {
+    const rawChain = detectChainFromAddress(address);
+    if (!rawChain) {
       await ctx.reply("❌ Could not detect chain from this address.");
       return;
     }
-    if (chain === "base") {
-      const { evmChainKeyboard } = await import("./utils/keyboards");
-      await ctx.reply(
-        `🔵/🟡 Which chain is this token on?\n<code>${address}</code>`,
-        { parse_mode: "HTML", reply_markup: evmChainKeyboard("holders", address) }
-      );
-      return;
-    }
+    const chain = rawChain === "base" ? await detectEvmChain(address) : rawChain;
     await handleHolders(ctx, chain, address);
   });
 
@@ -124,6 +113,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
 
   bot.command("toptraders", async (ctx) => {
     const { handleTopTraders } = await import("./commands/toptraders");
+    const { detectEvmChain } = await import("./commands/token");
     const address = ctx.match?.trim();
     if (!address) {
       await ctx.reply("Usage: /toptraders <code>&lt;address&gt;</code>", {
@@ -131,19 +121,12 @@ export async function getBot(): Promise<Bot<MyContext>> {
       });
       return;
     }
-    const chain = detectChainFromAddress(address);
-    if (!chain) {
+    const rawChain = detectChainFromAddress(address);
+    if (!rawChain) {
       await ctx.reply("❌ Could not detect chain from this address.");
       return;
     }
-    if (chain === "base") {
-      const { evmChainKeyboard } = await import("./utils/keyboards");
-      await ctx.reply(
-        `🔵/🟡 Which chain is this token on?\n<code>${address}</code>`,
-        { parse_mode: "HTML", reply_markup: evmChainKeyboard("toptraders", address) }
-      );
-      return;
-    }
+    const chain = rawChain === "base" ? await detectEvmChain(address) : rawChain;
     await handleTopTraders(ctx, chain, address);
   });
 
@@ -165,6 +148,28 @@ export async function getBot(): Promise<Bot<MyContext>> {
 
   bot.on("callback_query:data", async (ctx) => {
     const data = ctx.callbackQuery.data;
+    const msgId = ctx.callbackQuery.message?.message_id;
+
+    // rt:{chain}:{address} — refresh token analysis in-place
+    if (data.startsWith("rt:")) {
+      await ctx.answerCallbackQuery();
+      const rest  = data.slice("rt:".length);
+      const colon = rest.indexOf(":");
+      const chain   = rest.slice(0, colon) as ChainId;
+      const address = rest.slice(colon + 1);
+      const { handleToken } = await import("./commands/token");
+      await handleToken(ctx, chain, address, msgId);
+      return;
+    }
+
+    // del — delete the message containing this keyboard
+    if (data === "del") {
+      await ctx.answerCallbackQuery();
+      if (msgId) {
+        await ctx.api.deleteMessage(ctx.chat!.id, msgId).catch(() => null);
+      }
+      return;
+    }
 
     // ct:chain:{chain}
     if (data.startsWith("ct:chain:")) {
@@ -179,28 +184,6 @@ export async function getBot(): Promise<Bot<MyContext>> {
       const { handleDexPaid } = await import("./commands/dexpaid");
       const period = data.slice("dexpaid:".length);
       await handleDexPaid(ctx, period);
-      return;
-    }
-
-    // evm:{command}:{chain}:{address}
-    if (data.startsWith("evm:")) {
-      const parts = data.split(":");
-      const command = parts[1];
-      const chain = parts[2] as ChainId;
-      const address = parts.slice(3).join(":");
-
-      await ctx.answerCallbackQuery();
-
-      if (command === "token") {
-        const { handleToken } = await import("./commands/token");
-        await handleToken(ctx, chain, address);
-      } else if (command === "holders") {
-        const { handleHolders } = await import("./commands/holders");
-        await handleHolders(ctx, chain, address);
-      } else if (command === "toptraders") {
-        const { handleTopTraders } = await import("./commands/toptraders");
-        await handleTopTraders(ctx, chain, address);
-      }
       return;
     }
 
