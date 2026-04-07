@@ -190,18 +190,55 @@ export async function getBot(): Promise<Bot<MyContext>> {
     await ctx.answerCallbackQuery();
   });
 
-  // ── Text message handler (multi-step flows) ───────────────────────────────────
+  // ── Text message handler ──────────────────────────────────────────────────────
+  // Handles multi-step flows AND bare address pastes (no command needed).
+
+  const SOLANA_ADDR = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+  const EVM_ADDR    = /^0x[a-fA-F0-9]{40}$/;
 
   bot.on("message:text", async (ctx) => {
+    const text = ctx.message.text.trim();
+
+    // CT flow takes highest priority
     if (ctx.session.ctFlow?.step === "awaiting_addresses") {
       const { handleCtAddresses } = await import("./commands/ct");
-      await handleCtAddresses(ctx, ctx.message.text);
+      await handleCtAddresses(ctx, text);
+      return;
+    }
+
+    // Ignore slash commands — let their own handlers deal with them
+    if (text.startsWith("/")) return;
+
+    // Auto-analyze bare Solana address
+    if (SOLANA_ADDR.test(text)) {
+      const { handleToken } = await import("./commands/token");
+      await handleToken(ctx, "solana", text);
+      return;
+    }
+
+    // Auto-analyze bare EVM address (auto-detect Base vs BSC)
+    if (EVM_ADDR.test(text)) {
+      const { handleToken, detectEvmChain } = await import("./commands/token");
+      const chain = await detectEvmChain(text);
+      await handleToken(ctx, chain, text);
+      return;
     }
   });
 
-    // Call init() so Grammy fetches bot info before handling any updates
+  // ── Init: fetch bot identity + register command suggestions ──────────────────
+
     await bot.init();
     console.log("[telegram/bot] Initialized as @" + bot.botInfo.username);
+
+    // Register commands so they appear as suggestions when users type "/"
+    await bot.api.setMyCommands([
+      { command: "token",      description: "Analyze a token — price, MC, DD score, safety" },
+      { command: "holders",    description: "Top 20 holders with % ownership" },
+      { command: "toptraders", description: "Top traders with realized PnL" },
+      { command: "ct",         description: "Find common traders across 2–10 tokens" },
+      { command: "dexpaid",    description: "Browse DEX Paid pump.fun profiles" },
+      { command: "help",       description: "Show all commands" },
+    ]);
 
     return bot;
   })();

@@ -1,7 +1,8 @@
 import type { MyContext } from "../bot";
 import { aggregateTokenData } from "@/lib/aggregator";
-import { getChainProvider } from "@/lib/chains/registry";
 import { getTokenPairs, searchPairs } from "@/lib/api/dexscreener";
+import { getTokenPools, getOHLCV } from "@/lib/api/geckoterminal";
+import { CHAIN_CONFIGS } from "@/config/chains";
 import {
   escapeHtml,
   formatPrice,
@@ -59,16 +60,26 @@ export async function detectEvmChain(address: string): Promise<ChainId> {
 }
 
 /**
- * Fetch ATH price + timestamp from daily OHLCV with a hard 8s timeout.
- * The timeout prevents Solana/Birdeye hangs from stalling the whole command.
+ * Fetch ATH price + timestamp using GeckoTerminal OHLCV.
+ * Works for all chains including Solana — no Birdeye dependency.
+ * Finds the highest candle across all available daily bars (up to 300 days).
  */
 async function fetchATH(
   chain: ChainId,
   address: string
 ): Promise<{ price: number; timestamp: number } | null> {
-  const fetch = async () => {
-    const bars = await getChainProvider(chain).getPriceHistory(address, "1d");
+  const doFetch = async () => {
+    const network = CHAIN_CONFIGS[chain].geckoTerminalNetwork;
+
+    // Get the top pool for this token on GeckoTerminal
+    const pools = await getTokenPools(network, address);
+    const poolAddress = pools[0]?.attributes?.address;
+    if (!poolAddress) return null;
+
+    // Fetch daily OHLCV (up to 300 candles)
+    const bars = await getOHLCV(network, poolAddress, "day", 1);
     if (!bars?.length) return null;
+
     let athPrice = 0, athTs = 0;
     for (const bar of bars) {
       if (bar.high > athPrice) { athPrice = bar.high; athTs = bar.timestamp; }
@@ -76,12 +87,11 @@ async function fetchATH(
     return athPrice > 0 ? { price: athPrice, timestamp: athTs } : null;
   };
 
-  // Hard 8-second timeout — if the underlying API hangs, we skip ATH gracefully
+  // 10s safety timeout — GeckoTerminal is fast but always guard against hangs
   const timeout = new Promise<null>((resolve) =>
-    setTimeout(() => resolve(null), 8_000)
+    setTimeout(() => resolve(null), 10_000)
   );
-
-  return Promise.race([fetch().catch(() => null), timeout]);
+  return Promise.race([doFetch().catch(() => null), timeout]);
 }
 
 /** Build trading platform URLs matching the Liège web app */
