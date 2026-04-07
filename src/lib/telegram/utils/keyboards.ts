@@ -37,29 +37,31 @@ interface TokenLinks {
 }
 
 function tradingUrls(chain: ChainId, address: string, dexUrl?: string | null) {
-  const bullxChainId: Record<ChainId, string> = {
-    solana: "1399811149",
-    base: "8453",
-    bsc: "56",
-  };
   const gmgnChain: Record<ChainId, string> = {
     solana: "sol",
     base: "base",
     bsc: "bsc",
   };
-  const axiomNetwork: Record<ChainId, string> = {
+
+  // Axiom supports all three chains with networkId param
+  const axiomChain: Record<ChainId, string> = {
+    solana: "sol",
+    base: "base",
+    bsc: "bsc",
+  };
+
+  // Terminal (padre.gg) chain slugs
+  const terminalChain: Record<ChainId, string> = {
     solana: "solana",
     base: "base",
     bsc: "bsc",
   };
 
   return {
-    axi: `https://axiom.trade/t/${address}?networkId=${axiomNetwork[chain]}`,
-    tro:
-      chain === "solana"
-        ? `https://t.me/solana_trojanbot?start=${address}`
-        : `https://t.me/tbEVMbot?start=${address}`,
-    tem: `https://bullx.io/terminal?chainId=${bullxChainId[chain]}&address=${address}`,
+    // Exact URLs from the Liège web app
+    axi: `https://axiom.trade/t/${address}/@genes?chain=${axiomChain[chain]}`,
+    tro: `https://trojan.com/terminal?token=${address}&ref=garriwenes`,
+    tem: `https://trade.padre.gg/trade/${terminalChain[chain]}/${address}?rk=warri`,
     dex: dexUrl ?? `https://dexscreener.com/${chain}/${address}`,
     gmg: `https://gmgn.ai/${gmgnChain[chain]}/token/${address}`,
   };

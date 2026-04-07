@@ -1,7 +1,7 @@
 import type { MyContext } from "../bot";
 import { aggregateTokenData } from "@/lib/aggregator";
 import { getChainProvider } from "@/lib/chains/registry";
-import { getTokenPairs } from "@/lib/api/dexscreener";
+import { getTokenPairs, searchPairs } from "@/lib/api/dexscreener";
 import {
   escapeHtml,
   formatPrice,
@@ -25,22 +25,49 @@ const CHAIN_LOGO: Record<ChainId, string> = {
 };
 
 /**
- * Auto-detect whether an EVM (0x) address is on Base or BSC.
- * Queries DexScreener for both chains and picks whichever has liquidity.
+ * Auto-detect whether a 0x address lives on Base or BSC.
+ *
+ * Strategy (most-to-least reliable):
+ * 1. DexScreener search — returns pairs across all chains, we filter to base/bsc
+ *    and pick whichever has higher total liquidity.
+ * 2. Direct per-chain getTokenPairs queries as a fallback.
+ * Falls back to "base" if nothing is found on either chain.
  */
 export async function detectEvmChain(address: string): Promise<ChainId> {
   try {
+    // Try search first — it's one call and covers all chains
+    const results = await searchPairs(address).catch(() => []);
+    const evmPairs = results.filter((p) => {
+      const c = p.chainId?.toLowerCase();
+      return c === "base" || c === "bsc";
+    });
+
+    if (evmPairs.length > 0) {
+      const liq: Record<string, number> = { base: 0, bsc: 0 };
+      for (const p of evmPairs) {
+        const c = p.chainId?.toLowerCase() as "base" | "bsc";
+        liq[c] = (liq[c] ?? 0) + (p.liquidity?.usd ?? 0);
+      }
+      return liq.bsc > liq.base ? "bsc" : "base";
+    }
+  } catch {
+    // fall through to direct queries
+  }
+
+  // Fallback: query each chain directly in parallel
+  try {
     const [basePairs, bscPairs] = await Promise.all([
       getTokenPairs("base", address).catch(() => []),
-      getTokenPairs("bsc", address).catch(() => []),
+      getTokenPairs("bsc",  address).catch(() => []),
     ]);
     const baseLiq = basePairs.reduce((s, p) => s + (p.liquidity?.usd ?? 0), 0);
-    const bscLiq  = bscPairs.reduce((s, p) => s + (p.liquidity?.usd ?? 0), 0);
-    if (baseLiq === 0 && bscLiq === 0) return "base";
-    return bscLiq > baseLiq ? "bsc" : "base";
+    const bscLiq  = bscPairs.reduce( (s, p) => s + (p.liquidity?.usd ?? 0), 0);
+    if (bscLiq > 0 || baseLiq > 0) return bscLiq > baseLiq ? "bsc" : "base";
   } catch {
-    return "base";
+    // ignore
   }
+
+  return "base"; // last resort default
 }
 
 /** Fetch the all-time high price + its timestamp from daily OHLCV history */
@@ -115,13 +142,14 @@ export async function handleToken(
   msg += "\n";
 
   // ── Stats ─────────────────────────────────────────────────────────────────
-  msg += `📊 MC: <b>$${escapeHtml(formatCompact(data.marketCap))}</b>`;
-  msg += `  LP: <b>$${escapeHtml(formatCompact(data.liquidity?.totalUsd ?? null))}</b>`;
-  msg += `  Vol: <b>$${escapeHtml(formatCompact(data.volume24h))}</b>\n`;
+  msg += `📊 MC: <b>$${escapeHtml(formatCompact(data.marketCap))}</b>\n`;
+  msg += `💧 LP: <b>$${escapeHtml(formatCompact(data.liquidity?.totalUsd ?? null))}</b>`;
+  msg += `  |  Vol: <b>$${escapeHtml(formatCompact(data.volume24h))}</b>\n`;
 
-  // ── ATH ───────────────────────────────────────────────────────────────────
-  if (ath) {
-    msg += `📈 ATH: <b>${formatPrice(ath.price)}</b>`;
+  // ── ATH (in market cap terms) ─────────────────────────────────────────────
+  if (ath && data.priceUsd && data.priceUsd > 0 && data.marketCap) {
+    const athMc = (ath.price / data.priceUsd) * data.marketCap;
+    msg += `📈 ATH MC: <b>$${escapeHtml(formatCompact(athMc))}</b>`;
     msg += ` [${escapeHtml(formatTimeAgo(ath.timestamp))}]\n`;
   }
 
