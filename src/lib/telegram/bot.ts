@@ -42,7 +42,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `/toptraders &lt;address&gt; — top traders with PnL\n` +
         `/common — find common top traders across 2–10 tokens\n` +
         `/dp &lt;address&gt; — check DexScreener ad payment status\n` +
-        `/dexpaid — browse DEX Paid pump.fun profiles\n` +
+        `/dex &lt;bond|unbond&gt; &lt;timeframe&gt; [mcap] — browse DEX Paid tokens\n` +
         `/help — show this message\n\n` +
         `<i>Supports Solana, Base, and BSC.</i>`,
       { parse_mode: "HTML" }
@@ -62,8 +62,9 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `Find wallets that traded 2–10 tokens in common. Great for finding smart money.\n\n` +
         `<b>/dp</b> <code>&lt;address&gt;</code>\n` +
         `Check whether a token has paid for DexScreener ad placement.\n\n` +
-        `<b>/dexpaid</b>\n` +
-        `Browse pump.fun tokens that have paid for a DexScreener profile.\n\n` +
+        `<b>/dex</b> <code>&lt;bond|unbond&gt; &lt;timeframe&gt; [mcap]</code>\n` +
+        `Browse DEX paid tokens. Filter by bonded status, time window (10m–24h), and optional max MC.\n` +
+        `Example: <code>/dex bond 1h 50k</code>\n\n` +
         `<i>Solana addresses are detected automatically. For Base/BSC, you'll be prompted to choose.</i>`,
       { parse_mode: "HTML" }
     );
@@ -152,11 +153,24 @@ export async function getBot(): Promise<Bot<MyContext>> {
     await handleDp(ctx, address);
   });
 
-  // ── /dexpaid ──────────────────────────────────────────────────────────────────
+  // ── /dex ──────────────────────────────────────────────────────────────────────
 
-  bot.command("dexpaid", async (ctx) => {
-    const { promptDexPaidPeriod } = await import("./commands/dexpaid");
-    await promptDexPaidPeriod(ctx);
+  bot.command("dex", async (ctx) => {
+    const { handleDex } = await import("./commands/dex");
+    const args = ctx.match?.trim() ?? "";
+    if (!args) {
+      await ctx.reply(
+        `<b>Format:</b> <code>/dex &lt;bond|unbond&gt; &lt;timeframe&gt; [mcap]</code>\n\n` +
+        `<b>Timeframes:</b> 10m · 30m · 1h · 2h · 4h · 8h · 12h · 24h\n` +
+        `<b>Mcap cap (optional):</b> 5k · 10k · 20k · 50k · 100k · 500k · 1m\n\n` +
+        `<b>Examples:</b>\n` +
+        `<code>/dex bond 1h</code>\n` +
+        `<code>/dex unbond 30m 10k</code>`,
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+    await handleDex(ctx, args);
   });
 
   // ── Callback query router ─────────────────────────────────────────────────────
@@ -191,14 +205,6 @@ export async function getBot(): Promise<Bot<MyContext>> {
       const { handleCtChainSelected } = await import("./commands/ct");
       const chain = data.slice("ct:chain:".length) as ChainId;
       await handleCtChainSelected(ctx, chain);
-      return;
-    }
-
-    // dexpaid:{period}
-    if (data.startsWith("dexpaid:")) {
-      const { handleDexPaid } = await import("./commands/dexpaid");
-      const period = data.slice("dexpaid:".length);
-      await handleDexPaid(ctx, period);
       return;
     }
 
@@ -252,7 +258,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
       { command: "toptraders", description: "Top traders with realized PnL" },
       { command: "common",     description: "Find common traders across 2–10 tokens" },
       { command: "dp",         description: "Check DexScreener ad payment for a token" },
-      { command: "dexpaid",    description: "Browse DEX Paid pump.fun profiles" },
+      { command: "dex",        description: "Browse DEX Paid tokens — /dex bond 1h" },
       { command: "help",       description: "Show all commands" },
     ]);
 

@@ -7,14 +7,17 @@ const BASE_URL = "https://api.dexscreener.com";
 const POLL_THROTTLE_MS = 30_000;
 let lastPollAt = 0;
 
-type Period = "30m" | "1h" | "2h" | "4h" | "8h";
+type Period = "10m" | "30m" | "1h" | "2h" | "4h" | "8h" | "12h" | "24h";
 
 const PERIOD_HOURS: Record<Period, number> = {
+  "10m": 1 / 6,
   "30m": 0.5,
   "1h": 1,
   "2h": 2,
   "4h": 4,
   "8h": 8,
+  "12h": 12,
+  "24h": 24,
 };
 
 /**
@@ -208,6 +211,74 @@ export async function getDexProfiles(period: Period): Promise<DexOrderToken[]> {
     socials: row.socials ?? [],
     websites: row.websites ?? [],
   }));
+}
+
+/**
+ * Filtered query used by the Telegram /dex command.
+ * Supports all periods, bond/unbond split, and optional max-MC filter.
+ * MC filter applied in JS (avoids complex null-fallback SQL).
+ */
+export async function queryDexProfiles(opts: {
+  period: Period;
+  bonded: boolean;
+  mcapMax?: number;
+}): Promise<DexOrderToken[]> {
+  const { period, bonded, mcapMax } = opts;
+  const hours = PERIOD_HOURS[period];
+  const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let query: any = supabase
+    .from("dex_profiles")
+    .select(
+      "token_address, name, symbol, logo_url, price_usd, fdv, current_fdv, liquidity_usd, trade_count, created_at, url, twitter, socials, websites, discovered_at"
+    )
+    .gte("discovered_at", since)
+    .order("discovered_at", { ascending: false });
+
+  if (bonded) {
+    query = query.gt("liquidity_usd", 0);
+  } else {
+    query = query.or("liquidity_usd.is.null,liquidity_usd.eq.0");
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error("[dex-orders-cache] queryDexProfiles error:", error.message);
+    return [];
+  }
+
+  let tokens = (data as DexProfileRow[]).map((row) => ({
+    address: row.token_address,
+    name: row.name ?? row.token_address.slice(0, 8),
+    symbol: row.symbol ?? "???",
+    logoUrl: row.logo_url,
+    priceUsd: row.price_usd,
+    fdv: row.fdv,
+    currentFdv: row.current_fdv,
+    liquidity: row.liquidity_usd,
+    createdAt: row.created_at
+      ? new Date(row.created_at).toISOString()
+      : row.discovered_at,
+    tags: ["dexPaid"] as ["dexPaid"],
+    tradeCount: row.trade_count ?? undefined,
+    discoveredAt: row.discovered_at,
+    url: row.url,
+    twitter: row.twitter,
+    socials: (row.socials ?? []) as { type: string; url: string }[],
+    websites: (row.websites ?? []) as string[],
+  }));
+
+  // Apply optional max-MC cap: prefer current_fdv, fall back to fdv at discovery
+  if (mcapMax !== undefined) {
+    tokens = tokens.filter((t) => {
+      const mc = t.currentFdv ?? t.fdv;
+      return mc != null && mc <= mcapMax;
+    });
+  }
+
+  return tokens;
 }
 
 /**
