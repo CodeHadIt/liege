@@ -254,7 +254,7 @@ function buildMessage(opts: {
   // ── Header ──────────────────────────────────────────────────────────────
   let msg = `${CHAIN_LOGO[chain]} ${b(escapeHtml(displayName))}`;
   msg += ` (${escapeHtml(data.symbol)}) · ${chainLabel(chain)}\n`;
-  msg += `${escapeHtml(address)}\n`;
+  msg += `<code>${escapeHtml(address)}</code>\n`;
 
   // ── Stats ────────────────────────────────────────────────────────────────
   msg += `\n📊 Stats\n`;
@@ -265,26 +265,26 @@ function buildMessage(opts: {
   if (data.priceChange.h1  !== null) changes.push(`${formatPercent(data.priceChange.h1)} 1h`);
   if (data.priceChange.h24 !== null) changes.push(`${formatPercent(data.priceChange.h24)} 24h`);
   const changeStr = changes.length ? `  ${it(`(${escapeHtml(changes.join("  "))})`)}` : "";
-  statsRows.push(`💰 Price:  ${b(formatPrice(data.priceUsd))}${changeStr}`);
-  statsRows.push(`📈 MC:     ${b(`$${escapeHtml(formatCompact(data.marketCap))}`)}`);
-  statsRows.push(`💧 Liq:    ${b(`$${escapeHtml(formatCompact(data.liquidity?.totalUsd ?? null))}`)}`);
-  statsRows.push(`📦 Vol:    ${b(`$${escapeHtml(formatCompact(data.volume24h))}`)}`);
+  statsRows.push(`💰 Price: ${b(formatPrice(data.priceUsd))}${changeStr}`);
+  statsRows.push(`📈 MC: ${b(`$${escapeHtml(formatCompact(data.marketCap))}`)}`);
+  statsRows.push(`💧 Liq: ${b(`$${escapeHtml(formatCompact(data.liquidity?.totalUsd ?? null))}`)}`);
+  statsRows.push(`📦 Vol: ${b(`$${escapeHtml(formatCompact(data.volume24h))}`)}`);
 
   if (ath && data.priceUsd && data.priceUsd > 0 && data.marketCap) {
     const athMc = (ath.price / data.priceUsd) * data.marketCap;
     statsRows.push(
-      `🏆 ATH:    ${b(`$${escapeHtml(formatCompact(athMc))}`)}  ${it(`(${escapeHtml(formatTimeAgo(ath.timestamp))})`)}`,
+      `🏆 ATH: ${b(`$${escapeHtml(formatCompact(athMc))}`)}  ${it(`(${escapeHtml(formatTimeAgo(ath.timestamp))})`)}`,
     );
   }
 
   if (data.txns24h) {
     const total = data.txns24h.buys + data.txns24h.sells;
     statsRows.push(
-      `🔄 Txns:   ${b(escapeHtml(formatCompact(total)))}  🟢${escapeHtml(formatCompact(data.txns24h.buys))}  🔴${escapeHtml(formatCompact(data.txns24h.sells))}`,
+      `🔄 Txns: ${b(escapeHtml(formatCompact(total)))}  🟢${escapeHtml(formatCompact(data.txns24h.buys))}  🔴${escapeHtml(formatCompact(data.txns24h.sells))}`,
     );
   }
 
-  statsRows.push(`🕐 Age:    ${b(escapeHtml(formatAge(data.createdAt)))}`);
+  statsRows.push(`🕐 Age: ${b(escapeHtml(formatAge(data.createdAt)))}`);
   msg += boxRows(statsRows);
 
   // ── Socials ──────────────────────────────────────────────────────────────
@@ -301,7 +301,7 @@ function buildMessage(opts: {
 
   if (socialRows.length > 0) {
     msg += `\n🌐 Socials\n`;
-    msg += boxRows(socialRows);
+    msg += `└ ${socialRows.join("  ")}\n`;
   }
 
   // ── Security ─────────────────────────────────────────────────────────────
@@ -313,20 +313,20 @@ function buildMessage(opts: {
     // TH: plain percentages (no wallet links — keeps caption under 1024 chars)
     const pcts = topHolders.slice(0, 5).filter((h) => h.percentage > 0)
       .map((h) => `${h.percentage.toFixed(1)}%`).join("  ");
-    if (pcts) secRows.push(`👥 TH:    ${pcts}`);
+    if (pcts) secRows.push(`👥 TH: ${pcts}`);
 
     const top10Pct  = topHolders.slice(0, 10).reduce((s, h) => s + h.percentage, 0);
     const concEmoji = top10Pct <= 20 ? "🟢" : top10Pct <= 30 ? "🟡" : "🔴";
-    secRows.push(`📊 T10:   ${b(`${top10Pct.toFixed(1)}%`)}  ${concEmoji}`);
+    secRows.push(`📊 T10: ${b(`${top10Pct.toFixed(1)}%`)}  ${concEmoji}`);
   }
 
   if (dexPaid.paid && dexPaid.paymentTimestamp) {
     const ts = dexPaid.paymentTimestamp > 1e12
       ? dexPaid.paymentTimestamp
       : dexPaid.paymentTimestamp * 1000;
-    secRows.push(`🏷️ Dex:   ✅  ${it(escapeHtml(formatTimeAgo(ts)))}`);
+    secRows.push(`🏷️ Dex: ✅  ${it(escapeHtml(formatTimeAgo(ts)))}`);
   } else {
-    secRows.push(`🏷️ Dex:   ❌`);
+    secRows.push(`🏷️ Dex: ❌`);
   }
 
   msg += boxRows(secRows);

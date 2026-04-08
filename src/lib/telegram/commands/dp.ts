@@ -48,9 +48,8 @@ export async function handleDp(ctx: MyContext, address: string): Promise<void> {
 
     // ── Build message ───────────────────────────────────────────────────────
 
-    let msg = `🏷️ <b>DexScreener Orders</b>\n`;
-    if (tokenName) msg += `<b>${escapeHtml(tokenName)}</b>  `;
-    msg += `<code>${escapeHtml(address)}</code>\n`;
+    let msg = `🏷️ <b>Dex Orders</b>\n`;
+    if (tokenName) msg += `<b>${escapeHtml(tokenName)}</b>\n`;
 
     if (!ordersResult?.orders?.length) {
       msg += `\n❌ No orders found — token has not paid for any DexScreener placement.`;
