@@ -1,24 +1,26 @@
 import type { MyContext } from "../bot";
-import { getTokenOrders } from "@/lib/api/dexscreener";
+import { getTokenOrders, getTokenPairs } from "@/lib/api/dexscreener";
+import type { DexScreenerPair } from "@/lib/api/dexscreener";
 import { detectChainFromAddress } from "@/lib/chains/registry";
 import { detectEvmChain } from "./token";
 import { escapeHtml, formatTimeAgo } from "../utils/format";
 import type { ChainId } from "@/types/chain";
 
 const ORDER_LABELS: Record<string, string> = {
-  tokenProfile: "Token Profile",
-  communityTakeover: "Community Takeover",
-  tokenAd: "Token Ad",
+  tokenProfile:       "Token Profile",
+  communityTakeover:  "Community Takeover",
+  tokenAd:            "Token Ad",
 };
 
 export async function handleDp(ctx: MyContext, address: string): Promise<void> {
   const loading = await ctx.reply("🔍 Checking DexScreener orders…");
+  const chatId  = ctx.chat!.id;
 
   try {
     const rawChain = detectChainFromAddress(address);
     if (!rawChain) {
       await ctx.api.editMessageText(
-        ctx.chat!.id, loading.message_id,
+        chatId, loading.message_id,
         "❌ Could not detect chain from this address."
       );
       return;
@@ -27,58 +29,77 @@ export async function handleDp(ctx: MyContext, address: string): Promise<void> {
     const chain: ChainId =
       rawChain === "base" ? await detectEvmChain(address) : rawChain;
 
-    const result = await Promise.race([
-      getTokenOrders(chain, address),
-      new Promise<null>((r) => setTimeout(() => r(null), 10_000)),
+    const [ordersResult, pairs] = await Promise.all([
+      Promise.race([
+        getTokenOrders(chain, address).catch(() => null),
+        new Promise<null>((r) => setTimeout(() => r(null), 10_000)),
+      ]),
+      Promise.race([
+        getTokenPairs(chain, address).catch((): DexScreenerPair[] => []),
+        new Promise<DexScreenerPair[]>((r) => setTimeout(() => r([]), 8_000)),
+      ]),
     ]);
 
-    if (!result || !result.orders?.length) {
-      await ctx.api.editMessageText(
-        ctx.chat!.id, loading.message_id,
-        `🏷️ <b>DexScreener Orders</b>\n<code>${escapeHtml(address)}</code>\n\n❌ No orders found — token has not paid for any DexScreener placement.`,
-        { parse_mode: "HTML" }
-      );
-      return;
-    }
+    // Resolve banner from highest-liquidity pair
+    const sorted    = [...pairs].sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
+    const primary   = sorted[0];
+    const bannerUrl = primary?.info?.header ?? primary?.info?.imageUrl ?? null;
+    const tokenName = primary?.baseToken?.name ?? primary?.baseToken?.symbol ?? null;
 
-    const approved = result.orders.filter((o) => o.status === "approved");
-    const pending  = result.orders.filter((o) => o.status !== "approved");
+    // ── Build message ───────────────────────────────────────────────────────
 
     let msg = `🏷️ <b>DexScreener Orders</b>\n`;
-    msg += `<code>${escapeHtml(address)}</code>\n\n`;
+    if (tokenName) msg += `<b>${escapeHtml(tokenName)}</b>  `;
+    msg += `<code>${escapeHtml(address)}</code>\n`;
 
-    if (approved.length > 0) {
-      msg += `<b>✅ Approved</b>\n`;
-      for (const o of approved) {
-        const label = ORDER_LABELS[o.type] ?? o.type;
-        const ts    = o.paymentTimestamp
-          ? (o.paymentTimestamp > 1e12 ? o.paymentTimestamp : o.paymentTimestamp * 1000)
-          : null;
-        const when = ts ? escapeHtml(formatTimeAgo(ts)) : "unknown";
-        msg += `├ ${escapeHtml(label)}: paid <i>${when}</i>\n`;
+    if (!ordersResult?.orders?.length) {
+      msg += `\n❌ No orders found — token has not paid for any DexScreener placement.`;
+    } else {
+      const approved = ordersResult.orders.filter((o) => o.status === "approved");
+      const pending  = ordersResult.orders.filter((o) => o.status !== "approved");
+
+      if (approved.length > 0) {
+        msg += `\n<b>✅ Approved</b>\n`;
+        const rows = approved.map((o) => {
+          const label = ORDER_LABELS[o.type] ?? o.type;
+          const ts    = o.paymentTimestamp
+            ? (o.paymentTimestamp > 1e12 ? o.paymentTimestamp : o.paymentTimestamp * 1000)
+            : null;
+          const when  = ts ? escapeHtml(formatTimeAgo(ts)) : "unknown";
+          return `${escapeHtml(label)}: paid <i>${when}</i>`;
+        });
+        rows.forEach((row, i) => {
+          msg += `${i === rows.length - 1 ? "└" : "├"} ${row}\n`;
+        });
+      } else {
+        msg += `\n❌ No approved placements found.`;
+      }
+
+      if (pending.length > 0) {
+        msg += `\n<b>⏳ Pending</b>\n`;
+        const rows = pending.map((o) => {
+          const label = ORDER_LABELS[o.type] ?? o.type;
+          return `${escapeHtml(label)} (${escapeHtml(o.status)})`;
+        });
+        rows.forEach((row, i) => {
+          msg += `${i === rows.length - 1 ? "└" : "├"} ${row}\n`;
+        });
       }
     }
 
-    if (pending.length > 0) {
-      msg += `\n<b>⏳ Pending</b>\n`;
-      for (const o of pending) {
-        const label = ORDER_LABELS[o.type] ?? o.type;
-        msg += `├ ${escapeHtml(label)} (${escapeHtml(o.status)})\n`;
-      }
-    }
+    // ── Send ────────────────────────────────────────────────────────────────
 
-    if (approved.length === 0) {
-      msg += `❌ No approved placements found.`;
+    if (bannerUrl) {
+      await ctx.api.deleteMessage(chatId, loading.message_id).catch(() => null);
+      await ctx.api.sendPhoto(chatId, bannerUrl, { caption: msg, parse_mode: "HTML" });
+    } else {
+      await ctx.api.editMessageText(chatId, loading.message_id, msg, { parse_mode: "HTML" });
     }
-
-    await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, msg, {
-      parse_mode: "HTML",
-    });
   } catch (err) {
     console.error("[bot/dp]", err);
     await ctx.api.editMessageText(
-      ctx.chat!.id, loading.message_id,
+      chatId, loading.message_id,
       "❌ Failed to check DexScreener orders. Please try again."
-    );
+    ).catch(() => null);
   }
 }

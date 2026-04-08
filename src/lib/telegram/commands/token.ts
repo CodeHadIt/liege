@@ -126,18 +126,25 @@ async function fetchTopHolders(
   ]);
 }
 
-// ── DexScreener token info (name + socials) ───────────────────────────────────
+// ── DexScreener token info (name + socials + banner) ─────────────────────────
 
 interface TokenInfo {
-  name:     string | null;
-  twitter:  string | null;
-  telegram: string | null;
-  discord:  string | null;
-  website:  string | null;
+  name:      string | null;
+  twitter:   string | null;
+  telegram:  string | null;
+  discord:   string | null;
+  website:   string | null;
+  /** 1500×500 rectangular banner — preferred for photo messages */
+  headerUrl: string | null;
+  /** Square token logo fallback */
+  imageUrl:  string | null;
 }
 
 async function fetchTokenInfo(chain: ChainId, address: string): Promise<TokenInfo> {
-  const empty: TokenInfo = { name: null, twitter: null, telegram: null, discord: null, website: null };
+  const empty: TokenInfo = {
+    name: null, twitter: null, telegram: null, discord: null,
+    website: null, headerUrl: null, imageUrl: null,
+  };
   const doFetch = async (): Promise<TokenInfo> => {
     const pairs = await getTokenPairs(chain, address);
     if (!pairs.length) return empty;
@@ -150,11 +157,13 @@ async function fetchTokenInfo(chain: ChainId, address: string): Promise<TokenInf
     const websites = withInfo?.info?.websites ?? [];
 
     return {
-      name:     primary.baseToken.name ?? null,
-      twitter:  socials.find((s) => s.type === "twitter")?.url  ?? null,
-      telegram: socials.find((s) => s.type === "telegram")?.url ?? null,
-      discord:  socials.find((s) => s.type === "discord")?.url  ?? null,
-      website:  websites[0]?.url ?? null,
+      name:      primary.baseToken.name ?? null,
+      twitter:   socials.find((s) => s.type === "twitter")?.url  ?? null,
+      telegram:  socials.find((s) => s.type === "telegram")?.url ?? null,
+      discord:   socials.find((s) => s.type === "discord")?.url  ?? null,
+      website:   websites[0]?.url ?? null,
+      headerUrl: primary.info?.header   ?? null,
+      imageUrl:  primary.info?.imageUrl ?? null,
     };
   };
 
@@ -218,6 +227,8 @@ function boxRows(rows: string[]): string {
 }
 
 // ── Message builder ───────────────────────────────────────────────────────────
+// isCaption=true → photo caption mode: no <b>/<i> tags (saves ~77 chars to stay
+// under Telegram's 1024-char caption limit). TH is always plain % in both modes.
 
 function buildMessage(opts: {
   chain:      ChainId;
@@ -227,50 +238,53 @@ function buildMessage(opts: {
   topHolders: Array<{ address: string; percentage: number }>;
   tokenInfo:  TokenInfo;
   dexPaid:    DexPaidResult;
+  isCaption?: boolean;
 }): string {
-  const { chain, address, data, ath, topHolders, tokenInfo, dexPaid } = opts;
+  const { chain, address, data, ath, topHolders, tokenInfo, dexPaid, isCaption = false } = opts;
   if (!data) return "";
 
   const displayName = tokenInfo.name ?? data.name;
   const dd    = data.ddScore;
   const flags = data.safetySignals?.flags ?? [];
   const warns = flags.filter((f) => f.severity === "warning");
-  const gmgnChain = GMGN_CHAIN[chain];
+
+  const b  = (s: string) => isCaption ? s : `<b>${s}</b>`;
+  const it = (s: string) => isCaption ? s : `<i>${s}</i>`;
 
   // ── Header ──────────────────────────────────────────────────────────────
-  let msg = `${CHAIN_LOGO[chain]} <b>${escapeHtml(displayName)}</b>`;
-  msg += ` <code>(${escapeHtml(data.symbol)})</code> · ${chainLabel(chain)}\n`;
-  msg += `<code>${escapeHtml(address)}</code>\n`;
+  let msg = `${CHAIN_LOGO[chain]} ${b(escapeHtml(displayName))}`;
+  msg += ` (${escapeHtml(data.symbol)}) · ${chainLabel(chain)}\n`;
+  msg += `${escapeHtml(address)}\n`;
 
   // ── Stats ────────────────────────────────────────────────────────────────
-  msg += `\n<b>📊 Stats</b>\n`;
+  msg += `\n📊 Stats\n`;
 
   const statsRows: string[] = [];
 
   const changes: string[] = [];
   if (data.priceChange.h1  !== null) changes.push(`${formatPercent(data.priceChange.h1)} 1h`);
   if (data.priceChange.h24 !== null) changes.push(`${formatPercent(data.priceChange.h24)} 24h`);
-  const changeStr = changes.length ? `  <i>(${escapeHtml(changes.join("  "))})</i>` : "";
-  statsRows.push(`💰 Price:  <b>${formatPrice(data.priceUsd)}</b>${changeStr}`);
-  statsRows.push(`📈 MC:     <b>$${escapeHtml(formatCompact(data.marketCap))}</b>`);
-  statsRows.push(`💧 Liq:    <b>$${escapeHtml(formatCompact(data.liquidity?.totalUsd ?? null))}</b>`);
-  statsRows.push(`📦 Vol:    <b>$${escapeHtml(formatCompact(data.volume24h))}</b>`);
+  const changeStr = changes.length ? `  ${it(`(${escapeHtml(changes.join("  "))})`)}` : "";
+  statsRows.push(`💰 Price:  ${b(formatPrice(data.priceUsd))}${changeStr}`);
+  statsRows.push(`📈 MC:     ${b(`$${escapeHtml(formatCompact(data.marketCap))}`)}`);
+  statsRows.push(`💧 Liq:    ${b(`$${escapeHtml(formatCompact(data.liquidity?.totalUsd ?? null))}`)}`);
+  statsRows.push(`📦 Vol:    ${b(`$${escapeHtml(formatCompact(data.volume24h))}`)}`);
 
   if (ath && data.priceUsd && data.priceUsd > 0 && data.marketCap) {
     const athMc = (ath.price / data.priceUsd) * data.marketCap;
     statsRows.push(
-      `🏆 ATH:    <b>$${escapeHtml(formatCompact(athMc))}</b>  <i>(${escapeHtml(formatTimeAgo(ath.timestamp))})</i>`,
+      `🏆 ATH:    ${b(`$${escapeHtml(formatCompact(athMc))}`)}  ${it(`(${escapeHtml(formatTimeAgo(ath.timestamp))})`)}`,
     );
   }
 
   if (data.txns24h) {
     const total = data.txns24h.buys + data.txns24h.sells;
     statsRows.push(
-      `🔄 Txns:   <b>${escapeHtml(formatCompact(total))}</b>  🟢${escapeHtml(formatCompact(data.txns24h.buys))}  🔴${escapeHtml(formatCompact(data.txns24h.sells))}`,
+      `🔄 Txns:   ${b(escapeHtml(formatCompact(total)))}  🟢${escapeHtml(formatCompact(data.txns24h.buys))}  🔴${escapeHtml(formatCompact(data.txns24h.sells))}`,
     );
   }
 
-  statsRows.push(`🕐 Age:    <b>${escapeHtml(formatAge(data.createdAt))}</b>`);
+  statsRows.push(`🕐 Age:    ${b(escapeHtml(formatAge(data.createdAt)))}`);
   msg += boxRows(statsRows);
 
   // ── Socials ──────────────────────────────────────────────────────────────
@@ -286,39 +300,31 @@ function buildMessage(opts: {
   if (web) socialRows.push(`<a href="${web}">Web</a>`);
 
   if (socialRows.length > 0) {
-    msg += `\n<b>🌐 Socials</b>\n`;
+    msg += `\n🌐 Socials\n`;
     msg += boxRows(socialRows);
   }
 
   // ── Security ─────────────────────────────────────────────────────────────
-  msg += `\n<b>🔒 Security</b>\n`;
+  msg += `\n🔒 Security\n`;
 
   const secRows: string[] = [];
 
   if (topHolders.length > 0) {
-    // TH: top 5 holders — each % is a GMGN wallet hyperlink
-    const holderLinks = topHolders
-      .slice(0, 5)
-      .filter((h) => h.percentage > 0)
-      .map(
-        (h) =>
-          `<a href="https://gmgn.ai/${gmgnChain}/address/${h.address}">${h.percentage.toFixed(1)}%</a>`,
-      )
-      .join("  ");
-    if (holderLinks) secRows.push(`👥 TH:    ${holderLinks}`);
+    // TH: plain percentages (no wallet links — keeps caption under 1024 chars)
+    const pcts = topHolders.slice(0, 5).filter((h) => h.percentage > 0)
+      .map((h) => `${h.percentage.toFixed(1)}%`).join("  ");
+    if (pcts) secRows.push(`👥 TH:    ${pcts}`);
 
-    // T10: top 10 concentration
     const top10Pct  = topHolders.slice(0, 10).reduce((s, h) => s + h.percentage, 0);
     const concEmoji = top10Pct <= 20 ? "🟢" : top10Pct <= 30 ? "🟡" : "🔴";
-    secRows.push(`📊 T10:   <b>${top10Pct.toFixed(1)}%</b>  ${concEmoji}`);
+    secRows.push(`📊 T10:   ${b(`${top10Pct.toFixed(1)}%`)}  ${concEmoji}`);
   }
 
-  // Dex paid
   if (dexPaid.paid && dexPaid.paymentTimestamp) {
     const ts = dexPaid.paymentTimestamp > 1e12
       ? dexPaid.paymentTimestamp
       : dexPaid.paymentTimestamp * 1000;
-    secRows.push(`🏷️ Dex:   ✅  <i>${escapeHtml(formatTimeAgo(ts))}</i>`);
+    secRows.push(`🏷️ Dex:   ✅  ${it(escapeHtml(formatTimeAgo(ts)))}`);
   } else {
     secRows.push(`🏷️ Dex:   ❌`);
   }
@@ -326,13 +332,13 @@ function buildMessage(opts: {
   msg += boxRows(secRows);
 
   // ── DD Score ─────────────────────────────────────────────────────────────
-  if (dd) {
-    msg += `\n${GRADE_EMOJI[dd.grade] ?? "⚪"} DD Score: <b>${dd.overall}/100</b> — Grade <b>${dd.grade}</b>\n`;
+  if (dd && !isCaption) {
+    msg += `\n${GRADE_EMOJI[dd.grade] ?? "⚪"} DD Score: ${b(`${dd.overall}/100`)} — Grade ${b(dd.grade)}\n`;
   }
 
-  if (warns.length > 0) {
+  if (warns.length > 0 && !isCaption) {
     const warnRows = warns.slice(0, 3).map((f) => escapeHtml(f.label));
-    msg += `\n⚠️ <b>Warnings</b>\n` + boxRows(warnRows);
+    msg += `\n⚠️ Warnings\n` + boxRows(warnRows);
   }
 
   // ── Trading links ─────────────────────────────────────────────────────────
@@ -359,13 +365,12 @@ export async function handleToken(
 ): Promise<void> {
   const chatId = ctx.chat!.id;
 
-  let msgId: number;
-  if (editMsgId !== undefined) {
-    msgId = editMsgId;
-    await ctx.api.editMessageText(chatId, msgId, "🔄 Refreshing…").catch(() => null);
-  } else {
+  // For new requests send a loading placeholder; for refresh there's no loading state
+  // (callback was already answered in bot.ts)
+  let loadingMsgId: number | undefined;
+  if (editMsgId === undefined) {
     const loading = await ctx.reply("🔍 Analyzing token…");
-    msgId = loading.message_id;
+    loadingMsgId = loading.message_id;
   }
 
   // 25s guard on aggregateTokenData — EVM providers can hang without API keys
@@ -382,17 +387,45 @@ export async function handleToken(
     fetchDexPaid(chain, address),
   ]);
 
+  const bannerUrl = tokenInfo.headerUrl ?? tokenInfo.imageUrl ?? null;
+  const keyboard  = tokenKeyboard(chain, address);
+
   if (!data) {
-    await ctx.api.editMessageText(chatId, msgId, "❌ Token not found. Check the address and chain.").catch(() => null);
+    const errText = "❌ Token not found. Check the address and chain.";
+    if (editMsgId !== undefined) {
+      await ctx.api.editMessageText(chatId, editMsgId, errText).catch(() => null);
+    } else {
+      await ctx.api.editMessageText(chatId, loadingMsgId!, errText).catch(() => null);
+    }
     return;
   }
 
-  const msg      = buildMessage({ chain, address, data, ath, topHolders, tokenInfo, dexPaid });
-  const keyboard = tokenKeyboard(chain, address);
+  if (bannerUrl) {
+    const caption = buildMessage({ chain, address, data, ath, topHolders, tokenInfo, dexPaid, isCaption: true });
 
-  await ctx.api.editMessageText(chatId, msgId, msg, {
-    parse_mode: "HTML",
-    reply_markup: keyboard,
-    link_preview_options: { is_disabled: true },
-  });
+    if (editMsgId !== undefined) {
+      // Refresh in-place via editMessageMedia; fall back to delete+resend
+      await ctx.api.editMessageMedia(
+        chatId, editMsgId,
+        { type: "photo", media: bannerUrl, caption, parse_mode: "HTML" },
+        { reply_markup: keyboard }
+      ).catch(async () => {
+        await ctx.api.deleteMessage(chatId, editMsgId).catch(() => null);
+        await ctx.api.sendPhoto(chatId, bannerUrl!, { caption, parse_mode: "HTML", reply_markup: keyboard });
+      });
+    } else {
+      // Delete the loading text message, then send photo
+      await ctx.api.deleteMessage(chatId, loadingMsgId!).catch(() => null);
+      await ctx.api.sendPhoto(chatId, bannerUrl, { caption, parse_mode: "HTML", reply_markup: keyboard });
+    }
+  } else {
+    // No banner: plain text message
+    const msg        = buildMessage({ chain, address, data, ath, topHolders, tokenInfo, dexPaid });
+    const targetMsgId = editMsgId ?? loadingMsgId!;
+    await ctx.api.editMessageText(chatId, targetMsgId, msg, {
+      parse_mode: "HTML",
+      reply_markup: keyboard,
+      link_preview_options: { is_disabled: true },
+    }).catch(() => null);
+  }
 }
