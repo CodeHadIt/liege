@@ -220,7 +220,17 @@ function tradingLinks(chain: ChainId, address: string, dexUrl?: string | null) {
 
 // ── Message builder ───────────────────────────────────────────────────────────
 // Photo captions are limited to 1024 chars — no <b>/<i>, plain holder percentages.
-// Text-only messages can use full formatting with holder wallet hyperlinks.
+// Text-only messages use full formatting with holder wallet hyperlinks.
+
+/** Prefix each row with ├ (all but last) or └ (last). */
+function boxRows(rows: string[]): string {
+  return rows
+    .map((row, i) => (i === rows.length - 1 ? `└ ${row}` : `├ ${row}`))
+    .join("\n") + "\n";
+}
+
+/** Pad a label to a fixed width so values align across rows. */
+const L = (label: string, width = 6) => label.padEnd(width);
 
 function buildMessage(opts: {
   chain:       ChainId;
@@ -251,31 +261,35 @@ function buildMessage(opts: {
   // ── Stats ────────────────────────────────────────────────────────────────
   msg += `\n📊 Stats\n`;
 
-  msg += `💰 Price: ${b(formatPrice(data.priceUsd))}`;
-  const changes: string[] = [];
-  if (data.priceChange.h1  !== null) changes.push(`1h ${formatPercent(data.priceChange.h1)}`);
-  if (data.priceChange.h24 !== null) changes.push(`24h ${formatPercent(data.priceChange.h24)}`);
-  if (changes.length) msg += `  ${it(`(${escapeHtml(changes.join(" · "))})`)}`;
-  msg += "\n";
+  const statsRows: string[] = [];
 
-  msg += `📈 MC: ${b(`$${escapeHtml(formatCompact(data.marketCap))}`)}\n`;
-  msg += `💧 Liq: ${b(`$${escapeHtml(formatCompact(data.liquidity?.totalUsd ?? null))}`)}`;
-  msg += `  ·  Vol: ${b(`$${escapeHtml(formatCompact(data.volume24h))}`)}\n`;
+  const changes: string[] = [];
+  if (data.priceChange.h1  !== null) changes.push(`${formatPercent(data.priceChange.h1)} 1h`);
+  if (data.priceChange.h24 !== null) changes.push(`${formatPercent(data.priceChange.h24)} 24h`);
+  const changeStr = changes.length ? `  ${it(`(${escapeHtml(changes.join("  "))})`)}` : "";
+  statsRows.push(`${L("Price")}${b(formatPrice(data.priceUsd))}${changeStr}`);
+
+  statsRows.push(`${L("MC")}${b(`$${escapeHtml(formatCompact(data.marketCap))}`)}`);
+  statsRows.push(`${L("Liq")}${b(`$${escapeHtml(formatCompact(data.liquidity?.totalUsd ?? null))}`)}`);
+  statsRows.push(`${L("Vol")}${b(`$${escapeHtml(formatCompact(data.volume24h))}`)}`);
 
   if (ath && data.priceUsd && data.priceUsd > 0 && data.marketCap) {
     const athMc = (ath.price / data.priceUsd) * data.marketCap;
-    msg += `🏆 ATH MC: ${b(`$${escapeHtml(formatCompact(athMc))}`)}`;
-    msg += ` ${it(`(${escapeHtml(formatTimeAgo(ath.timestamp))}`)})`;
-    msg += "\n";
+    statsRows.push(
+      `${L("ATH")}${b(`$${escapeHtml(formatCompact(athMc))}`)}  ${it(`(${escapeHtml(formatTimeAgo(ath.timestamp))}`)})`,
+    );
   }
 
   if (data.txns24h) {
     const total = data.txns24h.buys + data.txns24h.sells;
-    msg += `🔄 Txns: ${b(escapeHtml(formatCompact(total)))}`;
-    msg += ` (🟢${escapeHtml(formatCompact(data.txns24h.buys))} 🔴${escapeHtml(formatCompact(data.txns24h.sells))})\n`;
+    statsRows.push(
+      `${L("Txns")}${b(escapeHtml(formatCompact(total)))}  🟢${escapeHtml(formatCompact(data.txns24h.buys))}  🔴${escapeHtml(formatCompact(data.txns24h.sells))}`,
+    );
   }
 
-  msg += `🕐 Age: ${b(escapeHtml(formatAge(data.createdAt)))}\n`;
+  statsRows.push(`${L("Age")}${b(escapeHtml(formatAge(data.createdAt)))}`);
+
+  msg += boxRows(statsRows);
 
   // ── Socials ──────────────────────────────────────────────────────────────
   const tw  = tokenInfo.twitter  ?? data.twitter  ?? null;
@@ -283,48 +297,50 @@ function buildMessage(opts: {
   const web = tokenInfo.website  ?? data.website  ?? null;
   const dis = tokenInfo.discord;
 
-  const socialLinks: string[] = [];
-  if (tw)  socialLinks.push(`<a href="${tw}">𝕏</a>`);
-  if (tg)  socialLinks.push(`<a href="${tg}">TG</a>`);
-  if (dis) socialLinks.push(`<a href="${dis}">DISC</a>`);
-  if (web) socialLinks.push(`<a href="${web}">Web</a>`);
+  const socialRows: string[] = [];
+  if (tw)  socialRows.push(`<a href="${tw}">𝕏</a>`);
+  if (tg)  socialRows.push(`<a href="${tg}">TG</a>`);
+  if (dis) socialRows.push(`<a href="${dis}">DISC</a>`);
+  if (web) socialRows.push(`<a href="${web}">Web</a>`);
 
-  if (socialLinks.length > 0) {
+  if (socialRows.length > 0) {
     msg += `\n🌐 Socials\n`;
-    msg += socialLinks.join("  ") + "\n";
+    msg += boxRows(socialRows);
   }
 
   // ── Security ─────────────────────────────────────────────────────────────
   msg += `\n🔒 Security\n`;
 
+  const secRows: string[] = [];
+
   if (topHolders.length > 0) {
     if (isCaption) {
-      // Plain percentages — no wallet hyperlinks (saves ~400 chars in caption)
       const pcts = topHolders.slice(0, 5).filter(h => h.percentage > 0)
         .map(h => `${h.percentage.toFixed(1)}%`).join("  ");
-      if (pcts) msg += `👥 Top Holders: ${pcts}\n`;
+      if (pcts) secRows.push(`${L("H5")}${pcts}`);
     } else {
-      // Full wallet hyperlinks in text-only messages
       const gmgnChain   = GMGN_CHAIN[chain];
       const holderLinks = topHolders.slice(0, 5).filter(h => h.percentage > 0)
         .map(h => `<a href="https://gmgn.ai/${gmgnChain}/address/${h.address}">${h.percentage.toFixed(1)}%</a>`)
         .join("  ");
-      if (holderLinks) msg += `👥 Top Holders: ${holderLinks}\n`;
+      if (holderLinks) secRows.push(`${L("H5")}${holderLinks}`);
     }
 
     const top10Pct  = topHolders.slice(0, 10).reduce((s, h) => s + h.percentage, 0);
     const concEmoji = top10Pct <= 20 ? "🟢" : top10Pct <= 30 ? "🟡" : "🔴";
-    msg += `📊 Top 10 hold: ${b(`${top10Pct.toFixed(1)}%`)} ${concEmoji}\n`;
+    secRows.push(`${L("H10")}${b(`${top10Pct.toFixed(1)}%`)}  ${concEmoji}`);
   }
 
   if (dexPaid.paid && dexPaid.paymentTimestamp) {
     const ts = dexPaid.paymentTimestamp > 1e12
       ? dexPaid.paymentTimestamp
       : dexPaid.paymentTimestamp * 1000;
-    msg += `🏷️ DEX Paid: ✅ ${it(escapeHtml(formatTimeAgo(ts)))}\n`;
+    secRows.push(`${L("Dex")}✅  ${it(escapeHtml(formatTimeAgo(ts)))}`);
   } else {
-    msg += `🏷️ DEX Paid: ❌\n`;
+    secRows.push(`${L("Dex")}❌`);
   }
+
+  msg += boxRows(secRows);
 
   // ── DD Score ─────────────────────────────────────────────────────────────
   if (dd) {
@@ -332,8 +348,8 @@ function buildMessage(opts: {
   }
 
   if (warns.length > 0 && !isCaption) {
-    msg += `⚠️ Warnings\n`;
-    warns.slice(0, 3).forEach((f) => { msg += `• ${escapeHtml(f.label)}\n`; });
+    const warnRows = warns.slice(0, 3).map(f => escapeHtml(f.label));
+    msg += `\n⚠️ Warnings\n` + boxRows(warnRows);
   }
 
   // ── Trading links ─────────────────────────────────────────────────────────
