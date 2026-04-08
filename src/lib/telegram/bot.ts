@@ -40,7 +40,8 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `/token &lt;address&gt; — full token analysis\n` +
         `/holders &lt;address&gt; — top 20 holders\n` +
         `/toptraders &lt;address&gt; — top traders with PnL\n` +
-        `/ct — find common top traders across 2–10 tokens\n` +
+        `/common — find common top traders across 2–10 tokens\n` +
+        `/dp &lt;address&gt; — check DexScreener ad payment status\n` +
         `/dexpaid — browse DEX Paid pump.fun profiles\n` +
         `/help — show this message\n\n` +
         `<i>Supports Solana, Base, and BSC.</i>`,
@@ -57,8 +58,10 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `Top 20 holders with % ownership.\n\n` +
         `<b>/toptraders</b> <code>&lt;address&gt;</code>\n` +
         `Top traders with realized PnL and trade counts.\n\n` +
-        `<b>/ct</b>\n` +
+        `<b>/common</b>\n` +
         `Find wallets that traded 2–10 tokens in common. Great for finding smart money.\n\n` +
+        `<b>/dp</b> <code>&lt;address&gt;</code>\n` +
+        `Check whether a token has paid for DexScreener ad placement.\n\n` +
         `<b>/dexpaid</b>\n` +
         `Browse pump.fun tokens that have paid for a DexScreener profile.\n\n` +
         `<i>Solana addresses are detected automatically. For Base/BSC, you'll be prompted to choose.</i>`,
@@ -130,11 +133,23 @@ export async function getBot(): Promise<Bot<MyContext>> {
     await handleTopTraders(ctx, chain, address);
   });
 
-  // ── /ct ───────────────────────────────────────────────────────────────────────
+  // ── /common ──────────────────────────────────────────────────────────────────
 
-  bot.command("ct", async (ctx) => {
+  bot.command("common", async (ctx) => {
     const { promptCtChain } = await import("./commands/ct");
     await promptCtChain(ctx);
+  });
+
+  // ── /dp ───────────────────────────────────────────────────────────────────────
+
+  bot.command("dp", async (ctx) => {
+    const { handleDp } = await import("./commands/dp");
+    const address = ctx.match?.trim();
+    if (!address) {
+      await ctx.reply("Usage: /dp <code>&lt;address&gt;</code>", { parse_mode: "HTML" });
+      return;
+    }
+    await handleDp(ctx, address);
   });
 
   // ── /dexpaid ──────────────────────────────────────────────────────────────────
@@ -235,7 +250,8 @@ export async function getBot(): Promise<Bot<MyContext>> {
       { command: "token",      description: "Analyze a token — price, MC, DD score, safety" },
       { command: "holders",    description: "Top 20 holders with % ownership" },
       { command: "toptraders", description: "Top traders with realized PnL" },
-      { command: "ct",         description: "Find common traders across 2–10 tokens" },
+      { command: "common",     description: "Find common traders across 2–10 tokens" },
+      { command: "dp",         description: "Check DexScreener ad payment for a token" },
       { command: "dexpaid",    description: "Browse DEX Paid pump.fun profiles" },
       { command: "help",       description: "Show all commands" },
     ]);

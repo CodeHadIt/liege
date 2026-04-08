@@ -23,14 +23,14 @@ const GRADE_EMOJI: Record<string, string> = {
 
 const CHAIN_LOGO: Record<ChainId, string> = {
   solana: "🟣",
-  base: "🔵",
-  bsc: "🟡",
+  base:   "🔵",
+  bsc:    "🟡",
 };
 
 const GMGN_CHAIN: Record<ChainId, string> = {
   solana: "sol",
-  base: "base",
-  bsc: "bsc",
+  base:   "base",
+  bsc:    "bsc",
 };
 
 // ── Chain detection ───────────────────────────────────────────────────────────
@@ -129,28 +129,19 @@ async function fetchTopHolders(
 // ── DexScreener token info (name + socials) ───────────────────────────────────
 
 interface TokenInfo {
-  /** Proper full name from DexScreener (not just symbol) */
-  name:      string | null;
-  twitter:   string | null;
-  telegram:  string | null;
-  discord:   string | null;
-  website:   string | null;
-  /** Rectangular banner image (1500×500) — best for photo messages */
-  headerUrl: string | null;
-  /** Square token logo fallback */
-  imageUrl:  string | null;
+  name:     string | null;
+  twitter:  string | null;
+  telegram: string | null;
+  discord:  string | null;
+  website:  string | null;
 }
 
 async function fetchTokenInfo(chain: ChainId, address: string): Promise<TokenInfo> {
-  const empty: TokenInfo = {
-    name: null, twitter: null, telegram: null, discord: null,
-    website: null, headerUrl: null, imageUrl: null,
-  };
+  const empty: TokenInfo = { name: null, twitter: null, telegram: null, discord: null, website: null };
   const doFetch = async (): Promise<TokenInfo> => {
     const pairs = await getTokenPairs(chain, address);
     if (!pairs.length) return empty;
 
-    // Best pair by liquidity for accurate name + image
     const sorted   = [...pairs].sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
     const primary  = sorted[0];
     const withInfo = sorted.find((p) => p.info?.socials?.length || p.info?.websites?.length);
@@ -159,13 +150,11 @@ async function fetchTokenInfo(chain: ChainId, address: string): Promise<TokenInf
     const websites = withInfo?.info?.websites ?? [];
 
     return {
-      name:      primary.baseToken.name ?? null,
-      twitter:   socials.find((s) => s.type === "twitter")?.url  ?? null,
-      telegram:  socials.find((s) => s.type === "telegram")?.url ?? null,
-      discord:   socials.find((s) => s.type === "discord")?.url  ?? null,
-      website:   websites[0]?.url ?? null,
-      headerUrl: primary.info?.header   ?? null,
-      imageUrl:  primary.info?.imageUrl ?? null,
+      name:     primary.baseToken.name ?? null,
+      twitter:  socials.find((s) => s.type === "twitter")?.url  ?? null,
+      telegram: socials.find((s) => s.type === "telegram")?.url ?? null,
+      discord:  socials.find((s) => s.type === "discord")?.url  ?? null,
+      website:  websites[0]?.url ?? null,
     };
   };
 
@@ -175,7 +164,7 @@ async function fetchTokenInfo(chain: ChainId, address: string): Promise<TokenInf
   ]);
 }
 
-// ── DEX Paid (DexScreener /orders/v1) ────────────────────────────────────────
+// ── DEX Paid ──────────────────────────────────────────────────────────────────
 
 interface DexPaidResult {
   paid: boolean;
@@ -218,77 +207,70 @@ function tradingLinks(chain: ChainId, address: string, dexUrl?: string | null) {
   };
 }
 
-// ── Message builder ───────────────────────────────────────────────────────────
-// Photo captions are limited to 1024 chars — no <b>/<i>, plain holder percentages.
-// Text-only messages use full formatting with holder wallet hyperlinks.
+// ── Box-drawing helpers ───────────────────────────────────────────────────────
 
-/** Prefix each row with ├ (all but last) or └ (last). */
+/** Prefix all rows with ├ and the final row with └. */
 function boxRows(rows: string[]): string {
+  if (!rows.length) return "";
   return rows
     .map((row, i) => (i === rows.length - 1 ? `└ ${row}` : `├ ${row}`))
     .join("\n") + "\n";
 }
 
-/** Pad a label to a fixed width so values align across rows. */
-const L = (label: string, width = 6) => label.padEnd(width);
+// ── Message builder ───────────────────────────────────────────────────────────
 
 function buildMessage(opts: {
-  chain:       ChainId;
-  address:     string;
-  data:        Awaited<ReturnType<typeof aggregateTokenData>>;
-  ath:         { price: number; timestamp: number } | null;
-  topHolders:  Array<{ address: string; percentage: number }>;
-  tokenInfo:   TokenInfo;
-  dexPaid:     { paid: boolean; paymentTimestamp: number | null };
-  isCaption:   boolean;  // true = photo caption (1024 char limit, no bold, plain holder %)
+  chain:      ChainId;
+  address:    string;
+  data:       Awaited<ReturnType<typeof aggregateTokenData>>;
+  ath:        { price: number; timestamp: number } | null;
+  topHolders: Array<{ address: string; percentage: number }>;
+  tokenInfo:  TokenInfo;
+  dexPaid:    DexPaidResult;
 }): string {
-  const { chain, address, data, ath, topHolders, tokenInfo, dexPaid, isCaption } = opts;
+  const { chain, address, data, ath, topHolders, tokenInfo, dexPaid } = opts;
   if (!data) return "";
 
   const displayName = tokenInfo.name ?? data.name;
   const dd    = data.ddScore;
   const flags = data.safetySignals?.flags ?? [];
   const warns = flags.filter((f) => f.severity === "warning");
-
-  const b  = (s: string) => isCaption ? s : `<b>${s}</b>`;
-  const it = (s: string) => isCaption ? s : `<i>${s}</i>`;
+  const gmgnChain = GMGN_CHAIN[chain];
 
   // ── Header ──────────────────────────────────────────────────────────────
-  let msg = `${CHAIN_LOGO[chain]} ${b(escapeHtml(displayName))}`;
-  msg += ` (${escapeHtml(data.symbol)}) · ${chainLabel(chain)}\n`;
-  msg += `${escapeHtml(address)}\n`;
+  let msg = `${CHAIN_LOGO[chain]} <b>${escapeHtml(displayName)}</b>`;
+  msg += ` <code>(${escapeHtml(data.symbol)})</code> · ${chainLabel(chain)}\n`;
+  msg += `<code>${escapeHtml(address)}</code>\n`;
 
   // ── Stats ────────────────────────────────────────────────────────────────
-  msg += `\n📊 Stats\n`;
+  msg += `\n<b>📊 Stats</b>\n`;
 
   const statsRows: string[] = [];
 
   const changes: string[] = [];
   if (data.priceChange.h1  !== null) changes.push(`${formatPercent(data.priceChange.h1)} 1h`);
   if (data.priceChange.h24 !== null) changes.push(`${formatPercent(data.priceChange.h24)} 24h`);
-  const changeStr = changes.length ? `  ${it(`(${escapeHtml(changes.join("  "))})`)}` : "";
-  statsRows.push(`${L("Price")}${b(formatPrice(data.priceUsd))}${changeStr}`);
-
-  statsRows.push(`${L("MC")}${b(`$${escapeHtml(formatCompact(data.marketCap))}`)}`);
-  statsRows.push(`${L("Liq")}${b(`$${escapeHtml(formatCompact(data.liquidity?.totalUsd ?? null))}`)}`);
-  statsRows.push(`${L("Vol")}${b(`$${escapeHtml(formatCompact(data.volume24h))}`)}`);
+  const changeStr = changes.length ? `  <i>(${escapeHtml(changes.join("  "))})</i>` : "";
+  statsRows.push(`💰 Price:  <b>${formatPrice(data.priceUsd)}</b>${changeStr}`);
+  statsRows.push(`📈 MC:     <b>$${escapeHtml(formatCompact(data.marketCap))}</b>`);
+  statsRows.push(`💧 Liq:    <b>$${escapeHtml(formatCompact(data.liquidity?.totalUsd ?? null))}</b>`);
+  statsRows.push(`📦 Vol:    <b>$${escapeHtml(formatCompact(data.volume24h))}</b>`);
 
   if (ath && data.priceUsd && data.priceUsd > 0 && data.marketCap) {
     const athMc = (ath.price / data.priceUsd) * data.marketCap;
     statsRows.push(
-      `${L("ATH")}${b(`$${escapeHtml(formatCompact(athMc))}`)}  ${it(`(${escapeHtml(formatTimeAgo(ath.timestamp))}`)})`,
+      `🏆 ATH:    <b>$${escapeHtml(formatCompact(athMc))}</b>  <i>(${escapeHtml(formatTimeAgo(ath.timestamp))})</i>`,
     );
   }
 
   if (data.txns24h) {
     const total = data.txns24h.buys + data.txns24h.sells;
     statsRows.push(
-      `${L("Txns")}${b(escapeHtml(formatCompact(total)))}  🟢${escapeHtml(formatCompact(data.txns24h.buys))}  🔴${escapeHtml(formatCompact(data.txns24h.sells))}`,
+      `🔄 Txns:   <b>${escapeHtml(formatCompact(total))}</b>  🟢${escapeHtml(formatCompact(data.txns24h.buys))}  🔴${escapeHtml(formatCompact(data.txns24h.sells))}`,
     );
   }
 
-  statsRows.push(`${L("Age")}${b(escapeHtml(formatAge(data.createdAt)))}`);
-
+  statsRows.push(`🕐 Age:    <b>${escapeHtml(formatAge(data.createdAt))}</b>`);
   msg += boxRows(statsRows);
 
   // ── Socials ──────────────────────────────────────────────────────────────
@@ -304,52 +286,53 @@ function buildMessage(opts: {
   if (web) socialRows.push(`<a href="${web}">Web</a>`);
 
   if (socialRows.length > 0) {
-    msg += `\n🌐 Socials\n`;
+    msg += `\n<b>🌐 Socials</b>\n`;
     msg += boxRows(socialRows);
   }
 
   // ── Security ─────────────────────────────────────────────────────────────
-  msg += `\n🔒 Security\n`;
+  msg += `\n<b>🔒 Security</b>\n`;
 
   const secRows: string[] = [];
 
   if (topHolders.length > 0) {
-    if (isCaption) {
-      const pcts = topHolders.slice(0, 5).filter(h => h.percentage > 0)
-        .map(h => `${h.percentage.toFixed(1)}%`).join("  ");
-      if (pcts) secRows.push(`${L("H5")}${pcts}`);
-    } else {
-      const gmgnChain   = GMGN_CHAIN[chain];
-      const holderLinks = topHolders.slice(0, 5).filter(h => h.percentage > 0)
-        .map(h => `<a href="https://gmgn.ai/${gmgnChain}/address/${h.address}">${h.percentage.toFixed(1)}%</a>`)
-        .join("  ");
-      if (holderLinks) secRows.push(`${L("H5")}${holderLinks}`);
-    }
+    // TH: top 5 holders — each % is a GMGN wallet hyperlink
+    const holderLinks = topHolders
+      .slice(0, 5)
+      .filter((h) => h.percentage > 0)
+      .map(
+        (h) =>
+          `<a href="https://gmgn.ai/${gmgnChain}/address/${h.address}">${h.percentage.toFixed(1)}%</a>`,
+      )
+      .join("  ");
+    if (holderLinks) secRows.push(`👥 TH:    ${holderLinks}`);
 
+    // T10: top 10 concentration
     const top10Pct  = topHolders.slice(0, 10).reduce((s, h) => s + h.percentage, 0);
     const concEmoji = top10Pct <= 20 ? "🟢" : top10Pct <= 30 ? "🟡" : "🔴";
-    secRows.push(`${L("H10")}${b(`${top10Pct.toFixed(1)}%`)}  ${concEmoji}`);
+    secRows.push(`📊 T10:   <b>${top10Pct.toFixed(1)}%</b>  ${concEmoji}`);
   }
 
+  // Dex paid
   if (dexPaid.paid && dexPaid.paymentTimestamp) {
     const ts = dexPaid.paymentTimestamp > 1e12
       ? dexPaid.paymentTimestamp
       : dexPaid.paymentTimestamp * 1000;
-    secRows.push(`${L("Dex")}✅  ${it(escapeHtml(formatTimeAgo(ts)))}`);
+    secRows.push(`🏷️ Dex:   ✅  <i>${escapeHtml(formatTimeAgo(ts))}</i>`);
   } else {
-    secRows.push(`${L("Dex")}❌`);
+    secRows.push(`🏷️ Dex:   ❌`);
   }
 
   msg += boxRows(secRows);
 
   // ── DD Score ─────────────────────────────────────────────────────────────
   if (dd) {
-    msg += `\n${GRADE_EMOJI[dd.grade] ?? "⚪"} DD Score: ${b(`${dd.overall}/100`)} — Grade ${b(dd.grade)}\n`;
+    msg += `\n${GRADE_EMOJI[dd.grade] ?? "⚪"} DD Score: <b>${dd.overall}/100</b> — Grade <b>${dd.grade}</b>\n`;
   }
 
-  if (warns.length > 0 && !isCaption) {
-    const warnRows = warns.slice(0, 3).map(f => escapeHtml(f.label));
-    msg += `\n⚠️ Warnings\n` + boxRows(warnRows);
+  if (warns.length > 0) {
+    const warnRows = warns.slice(0, 3).map((f) => escapeHtml(f.label));
+    msg += `\n⚠️ <b>Warnings</b>\n` + boxRows(warnRows);
   }
 
   // ── Trading links ─────────────────────────────────────────────────────────
@@ -376,17 +359,16 @@ export async function handleToken(
 ): Promise<void> {
   const chatId = ctx.chat!.id;
 
-  // Show an immediate loading indicator
-  let loadingMsgId: number | null = null;
+  let msgId: number;
   if (editMsgId !== undefined) {
-    // Refresh: show spinner in-place on the existing message
-    await ctx.api.editMessageText(chatId, editMsgId, "🔄 Refreshing…").catch(() => null);
+    msgId = editMsgId;
+    await ctx.api.editMessageText(chatId, msgId, "🔄 Refreshing…").catch(() => null);
   } else {
     const loading = await ctx.reply("🔍 Analyzing token…");
-    loadingMsgId = loading.message_id;
+    msgId = loading.message_id;
   }
 
-  // 25s guard on aggregateTokenData — EVM provider can hang without API keys
+  // 25s guard on aggregateTokenData — EVM providers can hang without API keys
   const aggregateWithTimeout = Promise.race([
     aggregateTokenData(chain, address),
     new Promise<null>((r) => setTimeout(() => r(null), 25_000)),
@@ -400,57 +382,17 @@ export async function handleToken(
     fetchDexPaid(chain, address),
   ]);
 
-  // ── Error case ──────────────────────────────────────────────────────────
   if (!data) {
-    const errMsg = "❌ Token not found. Check the address and chain.";
-    if (editMsgId !== undefined) {
-      await ctx.api.editMessageText(chatId, editMsgId, errMsg).catch(() => null);
-    } else if (loadingMsgId) {
-      await ctx.api.editMessageText(chatId, loadingMsgId, errMsg).catch(() => null);
-    }
+    await ctx.api.editMessageText(chatId, msgId, "❌ Token not found. Check the address and chain.").catch(() => null);
     return;
   }
 
-  const keyboard  = tokenKeyboard(chain, address);
-  const parseOpts = { parse_mode: "HTML" as const, link_preview_options: { is_disabled: true } };
+  const msg      = buildMessage({ chain, address, data, ath, topHolders, tokenInfo, dexPaid });
+  const keyboard = tokenKeyboard(chain, address);
 
-  // Prefer the rectangular header banner; fall back to square logo
-  const bannerUrl = tokenInfo.headerUrl ?? tokenInfo.imageUrl ?? null;
-
-  // ── Refresh: update existing message ─────────────────────────────────────
-  if (editMsgId !== undefined) {
-    if (bannerUrl) {
-      const caption = buildMessage({ chain, address, data, ath, topHolders, tokenInfo, dexPaid, isCaption: true });
-      await ctx.api.editMessageMedia(
-        chatId, editMsgId,
-        { type: "photo", media: bannerUrl, caption, parse_mode: "HTML" },
-        { reply_markup: keyboard }
-      ).catch(async () => {
-        // Fallback if previous message was text (e.g. no image on first load)
-        const msg = buildMessage({ chain, address, data, ath, topHolders, tokenInfo, dexPaid, isCaption: false });
-        await ctx.api.editMessageText(chatId, editMsgId, msg, { ...parseOpts, reply_markup: keyboard });
-      });
-    } else {
-      const msg = buildMessage({ chain, address, data, ath, topHolders, tokenInfo, dexPaid, isCaption: false });
-      await ctx.api.editMessageText(chatId, editMsgId, msg, { ...parseOpts, reply_markup: keyboard });
-    }
-    return;
-  }
-
-  // ── New message: delete loading, send photo+caption or text ──────────────
-  if (loadingMsgId) {
-    await ctx.api.deleteMessage(chatId, loadingMsgId).catch(() => null);
-  }
-
-  if (bannerUrl) {
-    const caption = buildMessage({ chain, address, data, ath, topHolders, tokenInfo, dexPaid, isCaption: true });
-    await ctx.api.sendPhoto(chatId, bannerUrl, {
-      caption,
-      parse_mode: "HTML",
-      reply_markup: keyboard,
-    });
-  } else {
-    const msg = buildMessage({ chain, address, data, ath, topHolders, tokenInfo, dexPaid, isCaption: false });
-    await ctx.api.sendMessage(chatId, msg, { ...parseOpts, reply_markup: keyboard });
-  }
+  await ctx.api.editMessageText(chatId, msgId, msg, {
+    parse_mode: "HTML",
+    reply_markup: keyboard,
+    link_preview_options: { is_disabled: true },
+  });
 }
