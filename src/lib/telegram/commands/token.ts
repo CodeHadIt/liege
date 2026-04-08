@@ -285,9 +285,9 @@ function buildMessage(opts: {
 
   const socialLinks: string[] = [];
   if (tw)  socialLinks.push(`<a href="${tw}">𝕏</a>`);
-  if (tg)  socialLinks.push(`<a href="${tg}">💬 Telegram</a>`);
-  if (dis) socialLinks.push(`<a href="${dis}">🎮 Discord</a>`);
-  if (web) socialLinks.push(`<a href="${web}">🌍 Website</a>`);
+  if (tg)  socialLinks.push(`<a href="${tg}">TG</a>`);
+  if (dis) socialLinks.push(`<a href="${dis}">DISC</a>`);
+  if (web) socialLinks.push(`<a href="${web}">Web</a>`);
 
   if (socialLinks.length > 0) {
     msg += `\n🌐 Socials\n`;
