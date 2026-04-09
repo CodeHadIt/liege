@@ -293,11 +293,12 @@ function buildMessage(opts: {
   const web = tokenInfo.website  ?? data.website  ?? null;
   const dis = tokenInfo.discord;
 
+  const escUrl = (u: string) => u.replace(/&/g, "&amp;");
   const socialRows: string[] = [];
-  if (tw)  socialRows.push(`<a href="${tw}">𝕏</a>`);
-  if (tg)  socialRows.push(`<a href="${tg}">TG</a>`);
-  if (dis) socialRows.push(`<a href="${dis}">DISC</a>`);
-  if (web) socialRows.push(`<a href="${web}">Web</a>`);
+  if (tw)  socialRows.push(`<a href="${escUrl(tw)}">𝕏</a>`);
+  if (tg)  socialRows.push(`<a href="${escUrl(tg)}">TG</a>`);
+  if (dis) socialRows.push(`<a href="${escUrl(dis)}">DISC</a>`);
+  if (web) socialRows.push(`<a href="${escUrl(web)}">Web</a>`);
 
   if (socialRows.length > 0) {
     msg += `\n🌐 Socials\n`;

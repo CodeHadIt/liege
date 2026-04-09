@@ -8,6 +8,13 @@ import {
   formatTimeAgo,
 } from "../utils/format";
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Escape & in URLs so they're valid inside HTML href attributes. */
+function escapeUrl(url: string): string {
+  return url.replace(/&/g, "&amp;");
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type Timeframe = "10m" | "30m" | "1h" | "2h" | "4h" | "8h" | "12h" | "24h";
@@ -129,14 +136,14 @@ export async function handleDex(ctx: MyContext, args: string): Promise<void> {
       const age      = formatAge(t.createdAt ? new Date(t.createdAt).getTime() : null);
       const dexPaidAgo = formatTimeAgo(new Date(t.discoveredAt).getTime());
 
-      // Social links
+      // Social links — URLs must have & escaped as &amp; for Telegram HTML
       const socials: string[] = [];
-      if (t.twitter)                                       socials.push(`<a href="${t.twitter}">𝕏</a>`);
+      if (t.twitter)       socials.push(`<a href="${escapeUrl(t.twitter)}">𝕏</a>`);
       const tg   = t.socials?.find((s) => s.type === "telegram")?.url;
       const disc = t.socials?.find((s) => s.type === "discord")?.url;
-      if (tg)   socials.push(`<a href="${tg}">TG</a>`);
-      if (disc) socials.push(`<a href="${disc}">DISC</a>`);
-      if (t.websites?.[0]) socials.push(`<a href="${t.websites[0]}">Web</a>`);
+      if (tg)   socials.push(`<a href="${escapeUrl(tg)}">TG</a>`);
+      if (disc) socials.push(`<a href="${escapeUrl(disc)}">DISC</a>`);
+      if (t.websites?.[0]) socials.push(`<a href="${escapeUrl(t.websites[0])}">Web</a>`);
 
       msg += `${i + 1}. <b>${name}${symbol}</b>  <i>${dexPaidAgo}</i>\n`;
       msg += `<code>${escapeHtml(t.address)}</code>\n`;
@@ -154,7 +161,8 @@ export async function handleDex(ctx: MyContext, args: string): Promise<void> {
       link_preview_options: { is_disabled: true },
     });
   } catch (err) {
-    console.error("[bot/dex]", err);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[bot/dex] error:", msg, err);
     await ctx.api.editMessageText(
       ctx.chat!.id,
       loading.message_id,
