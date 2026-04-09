@@ -17,12 +17,29 @@ const GMGN_CHAIN: Record<string, string> = {
   bsc:    "bsc",
 };
 
-function wealthEmoji(balanceUsd: number): string {
-  if (balanceUsd >= 10_000) return "🐋";
-  if (balanceUsd >= 1_000)  return "🐬";
-  if (balanceUsd >= 100)    return "🐟";
-  return "🦐";
+const CHAIN_COLOR: Record<string, string> = {
+  solana: "🟣",
+  base:   "🔵",
+  bsc:    "🟡",
+};
+
+type WealthTier = "whale" | "dolphin" | "fish" | "shrimp" | "unknown";
+
+function wealthTier(balanceUsd: number | null): WealthTier {
+  if (balanceUsd == null) return "unknown";
+  if (balanceUsd >= 10_000) return "whale";
+  if (balanceUsd >= 1_000)  return "dolphin";
+  if (balanceUsd >= 100)    return "fish";
+  return "shrimp";
 }
+
+const TIER_EMOJI: Record<WealthTier, string> = {
+  whale:   "🐋",
+  dolphin: "🐬",
+  fish:    "🐟",
+  shrimp:  "🦐",
+  unknown: "•",
+};
 
 interface RichHolder {
   address: string;
@@ -95,24 +112,42 @@ export async function handleHolders(
     }
 
     const gmgnChain = GMGN_CHAIN[chain] ?? chain;
+    const chainColor = CHAIN_COLOR[chain] ?? chainEmoji(chain);
 
     // Header
     const tokenLabel = tokenSymbol ? ` <b>${escapeHtml(tokenSymbol)}</b> ·` : "";
-    let msg = `${chainEmoji(chain)}${tokenLabel} Top Holders · ${chainLabel(chain)}\n`;
+    let msg = `${chainColor}${tokenLabel} Top Holders · ${chainLabel(chain)}\n`;
     msg += `<code>${escapeHtml(address)}</code>\n\n`;
 
     // Concentration summary
     const top10pct = holders.slice(0, 10).reduce((s, h) => s + h.percentage, 0);
-    msg += `📊 Top 10 hold <b>${top10pct.toFixed(1)}%</b> of supply\n\n`;
+    msg += `📊 Top 10 hold <b>${top10pct.toFixed(1)}%</b> of supply\n`;
+
+    // Wealth tier breakdown across all top-20 holders
+    const tiers: WealthTier[] = ["whale", "dolphin", "fish", "shrimp"];
+    const tierStats = tiers.map((tier) => {
+      const group = holders.filter((h) => wealthTier(h.balanceUsd) === tier);
+      const pct = group.reduce((s, h) => s + h.percentage, 0);
+      return { tier, count: group.length, pct };
+    }).filter((t) => t.count > 0);
+
+    if (tierStats.length > 0) {
+      const breakdown = tierStats
+        .map((t) => `${TIER_EMOJI[t.tier]} ${t.count} (${t.pct.toFixed(1)}%)`)
+        .join("  ");
+      msg += `${breakdown}\n`;
+    }
+    msg += "\n";
 
     for (let i = 0; i < holders.length; i++) {
       const h = holders[i];
-      const emoji = h.balanceUsd != null ? wealthEmoji(h.balanceUsd) : "•";
+      const tier = wealthTier(h.balanceUsd);
+      const emoji = TIER_EMOJI[tier];
       const pct = h.percentage > 0 ? ` — ${h.percentage.toFixed(2)}%` : "";
       const holdDur = h.openTimestamp ? `  · <i>${formatAge(h.openTimestamp)}</i>` : "";
       const gmgnUrl = `https://gmgn.ai/${gmgnChain}/address/${h.address}`;
       const addrLabel = escapeHtml(truncateAddress(h.address));
-      msg += `${i + 1}. ${emoji} <a href="${gmgnUrl}">${addrLabel}</a>${pct}${holdDur}\n`;
+      msg += `${i + 1}. <a href="${gmgnUrl}">${addrLabel}</a>${pct}  ${emoji}${holdDur}\n`;
     }
 
     await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, msg, {
