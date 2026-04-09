@@ -25,6 +25,8 @@ export interface GmgnTopTrader {
   sellCount: number;
   /** Last activity unix timestamp (seconds) */
   lastActiveTimestamp: number | null;
+  /** Unix timestamp (seconds) when wallet first bought this token */
+  openTimestamp: number | null;
   /** Native balance in wei as string */
   nativeBalanceWei: string;
   /** % of total supply held (as reported by GMGN, 0 if not available) */
@@ -202,6 +204,7 @@ function parseGmgnList(body: Record<string, unknown>): GmgnTopTrader[] {
       buyCount:             typeof item.buy_tx_count_cur === "number" ? item.buy_tx_count_cur : parseInt(String(item.buy_tx_count_cur ?? 0)) || 0,
       sellCount:            typeof item.sell_tx_count_cur === "number" ? item.sell_tx_count_cur : parseInt(String(item.sell_tx_count_cur ?? 0)) || 0,
       lastActiveTimestamp:  typeof item.last_active_timestamp === "number" ? item.last_active_timestamp : null,
+      openTimestamp:        typeof item.open_timestamp === "number" ? item.open_timestamp : null,
       nativeBalanceWei:     String(item.native_balance ?? "0"),
       // Supply percentage as reported directly by GMGN
       supplyPercent:        parseFloat(String(item.percent ?? item.supply_percent ?? 0)) || 0,
