@@ -10,9 +10,14 @@ import {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Escape & in URLs so they're valid inside HTML href attributes. */
+/** Escape special chars in URLs for use inside HTML href attributes. */
 function escapeUrl(url: string): string {
-  return url.replace(/&/g, "&amp;");
+  return url
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -117,14 +122,15 @@ export async function handleDex(ctx: MyContext, args: string): Promise<void> {
 
     // ── Build message ──────────────────────────────────────────────────────
 
-    const display = tokens.slice(0, 10);
+    const MSG_LIMIT = 3800; // Telegram max is 4096; leave headroom
 
     let msg =
       `🏷️ <b>DEX Paid — ${label} · ${timeArg}${mcapLabel}</b>\n` +
       `<i>${tokens.length} token${tokens.length !== 1 ? "s" : ""} found</i>\n\n`;
 
-    for (let i = 0; i < display.length; i++) {
-      const t = display[i];
+    let shown = 0;
+    for (let i = 0; i < tokens.length && shown < 10; i++) {
+      const t = tokens[i];
 
       const name   = escapeHtml(t.name || t.symbol || t.address.slice(0, 8));
       const symbol = t.symbol && t.symbol !== t.name ? ` (${escapeHtml(t.symbol)})` : "";
@@ -136,33 +142,41 @@ export async function handleDex(ctx: MyContext, args: string): Promise<void> {
       const age      = formatAge(t.createdAt ? new Date(t.createdAt).getTime() : null);
       const dexPaidAgo = formatTimeAgo(new Date(t.discoveredAt).getTime());
 
-      // Social links — URLs must have & escaped as &amp; for Telegram HTML
+      // Social links — all URL chars that break Telegram HTML must be escaped
       const socials: string[] = [];
-      if (t.twitter)       socials.push(`<a href="${escapeUrl(t.twitter)}">𝕏</a>`);
+      if (t.twitter)    socials.push(`<a href="${escapeUrl(t.twitter)}">𝕏</a>`);
       const tg   = t.socials?.find((s) => s.type === "telegram")?.url;
       const disc = t.socials?.find((s) => s.type === "discord")?.url;
       if (tg)   socials.push(`<a href="${escapeUrl(tg)}">TG</a>`);
       if (disc) socials.push(`<a href="${escapeUrl(disc)}">DISC</a>`);
       if (t.websites?.[0]) socials.push(`<a href="${escapeUrl(t.websites[0])}">Web</a>`);
 
-      msg += `${i + 1}. <b>${name}${symbol}</b>  <i>${dexPaidAgo}</i>\n`;
-      msg += `<code>${escapeHtml(t.address)}</code>\n`;
-      msg += `💰 ${price}  📈 ${mcNow}  📊 @dex ${mcAtDex}  🕐 ${age}\n`;
-      if (socials.length > 0) msg += socials.join("  ") + "\n";
-      msg += "\n";
+      let entry = `${shown + 1}. <b>${name}${symbol}</b>  <i>${dexPaidAgo}</i>\n`;
+      entry += `<code>${escapeHtml(t.address)}</code>\n`;
+      entry += `💰 ${price}  📈 ${mcNow}  📊 @dex ${mcAtDex}  🕐 ${age}\n`;
+      if (socials.length > 0) entry += socials.join("  ") + "\n";
+      entry += "\n";
+
+      // Stop before exceeding Telegram's message size limit
+      if (msg.length + entry.length > MSG_LIMIT) break;
+
+      msg += entry;
+      shown++;
     }
 
-    if (tokens.length > 10) {
-      msg += `<i>…and ${tokens.length - 10} more not shown.</i>`;
+    if (tokens.length > shown) {
+      msg += `<i>…and ${tokens.length - shown} more not shown.</i>`;
     }
+
+    console.log(`[bot/dex] Sending message: ${msg.length} chars, ${shown} tokens shown`);
 
     await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, msg, {
       parse_mode: "HTML",
       link_preview_options: { is_disabled: true },
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("[bot/dex] error:", msg, err);
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error("[bot/dex] error:", errMsg);
     await ctx.api.editMessageText(
       ctx.chat!.id,
       loading.message_id,
