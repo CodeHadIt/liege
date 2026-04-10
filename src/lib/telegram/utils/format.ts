@@ -14,7 +14,7 @@ export function formatPrice(price: number | null | undefined): string {
     const zeros = exp - 1;
     const sig = price.toFixed(exp + 3).replace(/^0\.0+/, "").slice(0, 4);
     if (zeros > 1) {
-      return `$0.0<sub>${zeros}</sub>${sig}`;
+      return `$0.0(${zeros})${sig}`;
     }
     return `$${price.toFixed(8)}`;
   }
