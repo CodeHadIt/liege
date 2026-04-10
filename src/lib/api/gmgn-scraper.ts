@@ -219,21 +219,25 @@ export async function scrapeGmgnTopTraders(
   chain: string,
   tokenAddress: string
 ): Promise<GmgnTopTrader[]> {
-  const cacheKey = `gmgn-top-traders:${chain}:${tokenAddress.toLowerCase()}`;
+  const isSolana = chain.toLowerCase() === "solana";
+  // Solana addresses are case-sensitive base58 — never lowercase them.
+  // EVM addresses are case-insensitive hex — lowercase for consistency.
+  const tokenNorm = isSolana ? tokenAddress : tokenAddress.toLowerCase();
+
+  const cacheKey = `gmgn-top-traders:${chain}:${tokenNorm}`;
   const cached = serverCache.get<GmgnTopTrader[]>(cacheKey);
   if (cached) return cached;
 
   const gmgnChain = CHAIN_TO_GMGN[chain.toLowerCase()];
   if (!gmgnChain) return [];
 
-  const tokenLower = tokenAddress.toLowerCase();
-  const pageUrl = `https://gmgn.ai/${gmgnChain}/token/${tokenLower}`;
+  const pageUrl = `https://gmgn.ai/${gmgnChain}/token/${tokenNorm}`;
   const customApiUrl =
-    `https://gmgn.ai/vas/api/v1/token_holders/${gmgnChain}/${tokenLower}` +
+    `https://gmgn.ai/vas/api/v1/token_holders/${gmgnChain}/${tokenNorm}` +
     `?orderby=realized_profit&direction=desc&limit=100`;
 
-  console.log(`[gmgn-scraper] top-traders ${chain}:${tokenLower}`);
-  const { customBody } = await fetchGmgnWithSession(pageUrl, customApiUrl, `traders:${tokenLower.slice(0, 10)}`);
+  console.log(`[gmgn-scraper] top-traders ${chain}:${tokenNorm}`);
+  const { customBody } = await fetchGmgnWithSession(pageUrl, customApiUrl, `traders:${tokenNorm.slice(0, 10)}`);
   if (!customBody) return [];
 
   const traders = parseGmgnList(customBody).sort((a, b) => b.realizedProfitUsd - a.realizedProfitUsd);
@@ -249,28 +253,30 @@ export async function scrapeGmgnTopHolders(
   chain: string,
   tokenAddress: string
 ): Promise<GmgnTopTrader[]> {
-  const cacheKey = `gmgn-top-holders:${chain}:${tokenAddress.toLowerCase()}`;
+  const isSolana = chain.toLowerCase() === "solana";
+  const tokenNorm = isSolana ? tokenAddress : tokenAddress.toLowerCase();
+
+  const cacheKey = `gmgn-top-holders:${chain}:${tokenNorm}`;
   const cached = serverCache.get<GmgnTopTrader[]>(cacheKey);
   if (cached) return cached;
 
   const gmgnChain = CHAIN_TO_GMGN[chain.toLowerCase()];
   if (!gmgnChain) return [];
 
-  const tokenLower = tokenAddress.toLowerCase();
-  const pageUrl = `https://gmgn.ai/${gmgnChain}/token/${tokenLower}`;
+  const pageUrl = `https://gmgn.ai/${gmgnChain}/token/${tokenNorm}`;
 
   // Fire the realized_profit custom fetch (known working) while also capturing
   // the page's auto-fired request (GMGN's default sort — often balance-based).
   // We'll use whichever returns more balance data.
   const customApiUrl =
-    `https://gmgn.ai/vas/api/v1/token_holders/${gmgnChain}/${tokenLower}` +
+    `https://gmgn.ai/vas/api/v1/token_holders/${gmgnChain}/${tokenNorm}` +
     `?orderby=realized_profit&direction=desc&limit=100`;
 
-  console.log(`[gmgn-scraper] top-holders ${chain}:${tokenLower}`);
+  console.log(`[gmgn-scraper] top-holders ${chain}:${tokenNorm}`);
   const { autoBody, customBody } = await fetchGmgnWithSession(
     pageUrl,
     customApiUrl,
-    `holders:${tokenLower.slice(0, 10)}`
+    `holders:${tokenNorm.slice(0, 10)}`
   );
 
   // Parse both responses, pick the one with more holders by balance
@@ -290,7 +296,7 @@ export async function scrapeGmgnTopHolders(
   if (holders.length > 0) {
     serverCache.set(cacheKey, holders, CACHE_TTL.GMGN_TRADERS);
     // Also populate the traders cache so top-traders tab reuses this session
-    const tradersCacheKey = `gmgn-top-traders:${chain}:${tokenLower}`;
+    const tradersCacheKey = `gmgn-top-traders:${chain}:${tokenNorm}`;
     if (!serverCache.get(tradersCacheKey)) {
       const traders = [...byAddress.values()].sort((a, b) => b.realizedProfitUsd - a.realizedProfitUsd);
       serverCache.set(tradersCacheKey, traders, CACHE_TTL.GMGN_TRADERS);
