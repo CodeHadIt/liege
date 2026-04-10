@@ -93,6 +93,7 @@ async function getBrowser(): Promise<Browser> {
 // ─── GMGN chain ID mapping ────────────────────────────────────────────────────
 
 const CHAIN_TO_GMGN: Record<string, string> = {
+  solana:   "sol",
   base:     "base",
   bsc:      "bsc",
   ethereum: "eth",
@@ -209,7 +210,7 @@ function parseGmgnList(body: Record<string, unknown>): GmgnTopTrader[] {
       // Supply percentage as reported directly by GMGN
       supplyPercent:        parseFloat(String(item.percent ?? item.supply_percent ?? 0)) || 0,
     }))
-    .filter((t) => t.walletAddress.startsWith("0x"));
+    .filter((t) => t.walletAddress.length > 0);
 }
 
 // ─── Top Traders ──────────────────────────────────────────────────────────────
