@@ -10,6 +10,22 @@ import {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/** Escape special chars in URLs for use inside HTML href attributes. */
+function escapeUrl(url: string): string {
+  return url
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/** Only accept proper http/https URLs to avoid Telegram HTML parse errors. */
+function validUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  return trimmed.startsWith("https://") || trimmed.startsWith("http://") ? trimmed : null;
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -37,12 +53,14 @@ const USAGE =
   `<code>/dex unbond 30m 10k</code>\n` +
   `<code>/dex bond 4h 100k</code>`;
 
+const MSG_LIMIT = 3800; // Telegram max is 4096; leave headroom
+
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 export async function handleDex(ctx: MyContext, args: string): Promise<void> {
   const parts = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
 
-  // ── Validate parts ─────────────────────────────────────────────────────────
+  // ── Validate args ──────────────────────────────────────────────────────────
 
   const [bondArg, timeArg, mcapArg] = parts;
 
@@ -55,10 +73,7 @@ export async function handleDex(ctx: MyContext, args: string): Promise<void> {
   }
 
   if (!timeArg || !VALID_TIMEFRAMES.includes(timeArg as Timeframe)) {
-    await ctx.reply(
-      `❌ Invalid or missing timeframe.\n\n${USAGE}`,
-      { parse_mode: "HTML" }
-    );
+    await ctx.reply(`❌ Invalid or missing timeframe.\n\n${USAGE}`, { parse_mode: "HTML" });
     return;
   }
 
@@ -75,31 +90,24 @@ export async function handleDex(ctx: MyContext, args: string): Promise<void> {
     mcapMax = val;
   }
 
-  // If extra args are present, reject
   if (parts.length > 3) {
-    await ctx.reply(
-      `❌ Too many arguments.\n\n${USAGE}`,
-      { parse_mode: "HTML" }
-    );
+    await ctx.reply(`❌ Too many arguments.\n\n${USAGE}`, { parse_mode: "HTML" });
     return;
   }
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
 
-  const bonded   = bondArg === "bond";
-  const label    = bonded ? "Bonded" : "Unbonded";
+  const bonded    = bondArg === "bond";
+  const label     = bonded ? "Bonded" : "Unbonded";
   const mcapLabel = mcapArg ? ` · ≤${mcapArg.toUpperCase()}` : "";
+  const title     = `🏷️ <b>DEX Paid — ${label} · ${timeArg}${mcapLabel}</b>`;
 
   const loading = await ctx.reply(
     `🔍 Fetching DEX paid ${label.toLowerCase()} tokens (${timeArg}${mcapLabel})…`
   );
 
   try {
-    const tokens = await queryDexProfiles({
-      period: timeArg as Timeframe,
-      bonded,
-      mcapMax,
-    });
+    const tokens = await queryDexProfiles({ period: timeArg as Timeframe, bonded, mcapMax });
 
     if (tokens.length === 0) {
       await ctx.api.editMessageText(
@@ -111,53 +119,86 @@ export async function handleDex(ctx: MyContext, args: string): Promise<void> {
       return;
     }
 
-    // ── Build message ──────────────────────────────────────────────────────
+    // ── Build individual token entries ─────────────────────────────────────
 
-    const MSG_LIMIT = 3800; // Telegram max is 4096; leave headroom
+    const entries: string[] = [];
 
-    let msg =
-      `🏷️ <b>DEX Paid — ${label} · ${timeArg}${mcapLabel}</b>\n` +
-      `<i>${tokens.length} token${tokens.length !== 1 ? "s" : ""} found</i>\n\n`;
-
-    let shown = 0;
-    for (let i = 0; i < tokens.length && shown < 10; i++) {
+    for (let i = 0; i < tokens.length; i++) {
       const t = tokens[i];
 
       const name   = escapeHtml(t.name || t.symbol || t.address.slice(0, 8));
       const symbol = t.symbol && t.symbol !== t.name ? ` (${escapeHtml(t.symbol)})` : "";
 
-      // Metrics
-      const price    = t.priceUsd  ? formatPrice(t.priceUsd)                                 : "—";
-      const mcNow    = (t.currentFdv ?? t.fdv) ? `$${formatCompact(t.currentFdv ?? t.fdv)}` : "—";
-      const mcAtDex  = t.fdv       ? `$${formatCompact(t.fdv)}`                              : "—";
-      const age      = formatAge(t.createdAt ? new Date(t.createdAt).getTime() : null);
+      const price      = t.priceUsd              ? formatPrice(t.priceUsd)                                 : "—";
+      const mcNow      = (t.currentFdv ?? t.fdv) ? `$${formatCompact(t.currentFdv ?? t.fdv)}`             : "—";
+      const mcAtDex    = t.fdv                   ? `$${formatCompact(t.fdv)}`                              : "—";
+      const age        = formatAge(t.createdAt ? new Date(t.createdAt).getTime() : null);
       const dexPaidAgo = formatTimeAgo(new Date(t.discoveredAt).getTime());
 
-      let entry = `${shown + 1}. <b>${name}${symbol}</b>  <i>${dexPaidAgo}</i>\n`;
+      // Social links — validated http(s) URLs only
+      const socials: string[] = [];
+      const twUrl   = validUrl(t.twitter);
+      const tgUrl   = validUrl(t.socials?.find((s) => s.type === "telegram")?.url);
+      const discUrl = validUrl(t.socials?.find((s) => s.type === "discord")?.url);
+      const webUrl  = validUrl(t.websites?.[0]);
+      if (twUrl)   socials.push(`<a href="${escapeUrl(twUrl)}">𝕏</a>`);
+      if (tgUrl)   socials.push(`<a href="${escapeUrl(tgUrl)}">TG</a>`);
+      if (discUrl) socials.push(`<a href="${escapeUrl(discUrl)}">DISC</a>`);
+      if (webUrl)  socials.push(`<a href="${escapeUrl(webUrl)}">Web</a>`);
+
+      let entry = `${i + 1}. <b>${name}${symbol}</b>  <i>${dexPaidAgo}</i>\n`;
       entry += `<code>${escapeHtml(t.address)}</code>\n`;
       entry += `💰 ${price}  📈 ${mcNow}  📊 @dex ${mcAtDex}  🕐 ${age}\n`;
+      if (socials.length > 0) entry += socials.join("  ") + "\n";
       entry += "\n";
 
-      // Stop before exceeding Telegram's message size limit
-      if (msg.length + entry.length > MSG_LIMIT) break;
-
-      msg += entry;
-      shown++;
+      entries.push(entry);
     }
 
-    if (tokens.length > shown) {
-      msg += `<i>…and ${tokens.length - shown} more not shown.</i>`;
+    // ── Pack entries into pages ────────────────────────────────────────────
+    // We don't know total pages until we've packed, so we pack first, then
+    // prepend the header with the final page count.
+
+    const pages: string[] = [];
+    let current = "";
+
+    for (const entry of entries) {
+      // +1 for the header we'll prepend (estimated ~60 chars); bail if oversized
+      if (current.length + entry.length > MSG_LIMIT - 80) {
+        if (current.length > 0) pages.push(current);
+        current = entry;
+      } else {
+        current += entry;
+      }
     }
+    if (current.length > 0) pages.push(current);
 
-    console.log(`[bot/dex] Sending message: ${msg.length} chars, ${shown} tokens shown`);
+    const totalPages = pages.length;
 
-    await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, msg, {
-      parse_mode: "HTML",
-      link_preview_options: { is_disabled: true },
-    });
+    // ── Send pages ─────────────────────────────────────────────────────────
+
+    for (let p = 0; p < totalPages; p++) {
+      const pageLabel = totalPages > 1 ? `  <i>${p + 1}/${totalPages}</i>` : "";
+      const header    = `${title}${pageLabel}\n<i>${tokens.length} token${tokens.length !== 1 ? "s" : ""} found</i>\n\n`;
+      const msg       = header + pages[p];
+
+      console.log(`[bot/dex] Sending page ${p + 1}/${totalPages}: ${msg.length} chars`);
+
+      if (p === 0) {
+        await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, msg, {
+          parse_mode: "HTML",
+          link_preview_options: { is_disabled: true },
+        });
+      } else {
+        await ctx.reply(msg, {
+          parse_mode: "HTML",
+          link_preview_options: { is_disabled: true },
+        });
+      }
+    }
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    console.error("[bot/dex] editMessageText error:", errMsg);
+    console.error("[bot/dex] error:", errMsg);
     await ctx.api.editMessageText(
       ctx.chat!.id,
       loading.message_id,
