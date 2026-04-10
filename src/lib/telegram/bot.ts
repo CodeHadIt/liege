@@ -38,8 +38,8 @@ export async function getBot(): Promise<Bot<MyContext>> {
       `👋 Welcome to <b>Liège</b> — on-chain alpha, straight to Telegram.\n\n` +
         `<b>Commands:</b>\n` +
         `/token &lt;address&gt; — full token analysis\n` +
-        `/holders &lt;address&gt; — top 20 holders\n` +
-        `/toptraders &lt;address&gt; — top traders with PnL\n` +
+        `/th &lt;address&gt; — top holders\n` +
+        `/tt &lt;address&gt; — top traders with PnL\n` +
         `/common — find common top traders across 2–10 tokens\n` +
         `/dp &lt;address&gt; — check DexScreener ad payment status\n` +
         `/dex &lt;bond|unbond&gt; &lt;timeframe&gt; [mcap] — browse DEX Paid tokens\n` +
@@ -54,9 +54,9 @@ export async function getBot(): Promise<Bot<MyContext>> {
       `<b>Liège Bot Commands</b>\n\n` +
         `<b>/token</b> <code>&lt;address&gt;</code>\n` +
         `Full token analysis — price, market cap, liquidity, DD score, safety flags.\n\n` +
-        `<b>/holders</b> <code>&lt;address&gt;</code>\n` +
-        `Top 20 holders with % ownership.\n\n` +
-        `<b>/toptraders</b> <code>&lt;address&gt;</code>\n` +
+        `<b>/th</b> <code>&lt;address&gt;</code>\n` +
+        `Top holders with % ownership.\n\n` +
+        `<b>/tt</b> <code>&lt;address&gt;</code>\n` +
         `Top traders with realized PnL and trade counts.\n\n` +
         `<b>/common</b>\n` +
         `Find wallets that traded 2–10 tokens in common. Great for finding smart money.\n\n` +
@@ -92,14 +92,14 @@ export async function getBot(): Promise<Bot<MyContext>> {
     await handleToken(ctx, chain, address);
   });
 
-  // ── /holders ─────────────────────────────────────────────────────────────────
+  // ── /th (top holders) ────────────────────────────────────────────────────────
 
-  bot.command("holders", async (ctx) => {
+  bot.command("th", async (ctx) => {
     const { handleHolders } = await import("./commands/holders");
     const { detectEvmChain } = await import("./commands/token");
     const address = ctx.match?.trim();
     if (!address) {
-      await ctx.reply("Usage: /holders <code>&lt;address&gt;</code>", {
+      await ctx.reply("Usage: /th <code>&lt;address&gt;</code>", {
         parse_mode: "HTML",
       });
       return;
@@ -113,14 +113,14 @@ export async function getBot(): Promise<Bot<MyContext>> {
     await handleHolders(ctx, chain, address);
   });
 
-  // ── /toptraders ───────────────────────────────────────────────────────────────
+  // ── /tt (top traders) ────────────────────────────────────────────────────────
 
-  bot.command("toptraders", async (ctx) => {
+  bot.command("tt", async (ctx) => {
     const { handleTopTraders } = await import("./commands/toptraders");
     const { detectEvmChain } = await import("./commands/token");
     const address = ctx.match?.trim();
     if (!address) {
-      await ctx.reply("Usage: /toptraders <code>&lt;address&gt;</code>", {
+      await ctx.reply("Usage: /tt <code>&lt;address&gt;</code>", {
         parse_mode: "HTML",
       });
       return;
@@ -253,13 +253,13 @@ export async function getBot(): Promise<Bot<MyContext>> {
 
     // Register commands so they appear as suggestions when users type "/"
     await bot.api.setMyCommands([
-      { command: "token",      description: "Analyze a token — price, MC, DD score, safety" },
-      { command: "holders",    description: "Top 20 holders with % ownership" },
-      { command: "toptraders", description: "Top traders with realized PnL" },
-      { command: "common",     description: "Find common traders across 2–10 tokens" },
-      { command: "dp",         description: "Check DexScreener ad payment for a token" },
-      { command: "dex",        description: "Browse DEX Paid tokens — /dex bond 1h" },
-      { command: "help",       description: "Show all commands" },
+      { command: "token",  description: "Analyze a token — price, MC, DD score, safety" },
+      { command: "th",     description: "Top holders with % ownership" },
+      { command: "tt",     description: "Top traders with realized PnL" },
+      { command: "common", description: "Find common traders across 2–10 tokens" },
+      { command: "dp",     description: "Check DexScreener ad payment for a token" },
+      { command: "dex",    description: "Browse DEX Paid tokens — /dex bond 1h" },
+      { command: "help",   description: "Show all commands" },
     ]);
 
     return bot;
