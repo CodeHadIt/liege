@@ -10,23 +10,6 @@ import {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Escape special chars in URLs for use inside HTML href attributes. */
-function escapeUrl(url: string): string {
-  return url
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-/** Only accept proper http/https URLs to avoid Telegram HTML parse errors. */
-function validUrl(url: string | null | undefined): string | null {
-  if (!url) return null;
-  const trimmed = url.trim();
-  if (trimmed.startsWith("https://") || trimmed.startsWith("http://")) return trimmed;
-  return null;
-}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -150,21 +133,9 @@ export async function handleDex(ctx: MyContext, args: string): Promise<void> {
       const age      = formatAge(t.createdAt ? new Date(t.createdAt).getTime() : null);
       const dexPaidAgo = formatTimeAgo(new Date(t.discoveredAt).getTime());
 
-      // Social links — only valid http(s) URLs to avoid Telegram HTML parse errors
-      const socials: string[] = [];
-      const twUrl  = validUrl(t.twitter);
-      const tgUrl  = validUrl(t.socials?.find((s) => s.type === "telegram")?.url);
-      const discUrl = validUrl(t.socials?.find((s) => s.type === "discord")?.url);
-      const webUrl = validUrl(t.websites?.[0]);
-      if (twUrl)  socials.push(`<a href="${escapeUrl(twUrl)}">𝕏</a>`);
-      if (tgUrl)  socials.push(`<a href="${escapeUrl(tgUrl)}">TG</a>`);
-      if (discUrl) socials.push(`<a href="${escapeUrl(discUrl)}">DISC</a>`);
-      if (webUrl) socials.push(`<a href="${escapeUrl(webUrl)}">Web</a>`);
-
       let entry = `${shown + 1}. <b>${name}${symbol}</b>  <i>${dexPaidAgo}</i>\n`;
       entry += `<code>${escapeHtml(t.address)}</code>\n`;
       entry += `💰 ${price}  📈 ${mcNow}  📊 @dex ${mcAtDex}  🕐 ${age}\n`;
-      if (socials.length > 0) entry += socials.join("  ") + "\n";
       entry += "\n";
 
       // Stop before exceeding Telegram's message size limit
