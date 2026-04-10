@@ -11,13 +11,25 @@ import {
 import { tokenKeyboard } from "../utils/keyboards";
 import type { ChainId } from "@/types/chain";
 
+const GMGN_CHAIN: Record<string, string> = {
+  solana: "sol",
+  base:   "base",
+  bsc:    "bsc",
+  eth:    "eth",
+};
+
+function gmgnWalletUrl(chain: ChainId, wallet: string): string {
+  const slug = GMGN_CHAIN[chain] ?? chain;
+  return `https://gmgn.ai/${slug}/address/${wallet}`;
+}
+
 export async function handleTopTraders(
   ctx: MyContext,
   chain: ChainId,
   address: string
 ): Promise<void> {
   const loading = await ctx.reply(
-    "🔍 Fetching top traders… this may take up to 60s ⏳"
+    "🔍 Fetching top traders… this may take up to 2 mins ⏳"
   );
 
   try {
@@ -38,9 +50,9 @@ export async function handleTopTraders(
     traders.slice(0, 10).forEach((t, i) => {
       const pnl = formatPnl(t.realizedProfitUsd);
       const pnlClass = t.realizedProfitUsd >= 0 ? "📈" : "📉";
-      const trades = `${t.buyCount}B/${t.sellCount}S`;
-      msg += `${i + 1}. <code>${escapeHtml(truncateAddress(t.walletAddress))}</code>\n`;
-      msg += `   ${pnlClass} PnL: <b>${escapeHtml(pnl)}</b> · ${trades} trades\n`;
+      const url = gmgnWalletUrl(chain, t.walletAddress);
+      msg += `${i + 1}. <a href="${url}">${escapeHtml(truncateAddress(t.walletAddress))}</a>\n`;
+      msg += `   ${pnlClass} PnL: <b>${escapeHtml(pnl)}</b>\n`;
       if (t.balanceUsd > 0) {
         msg += `   💼 Holding: $${escapeHtml(formatCompact(t.balanceUsd))}\n`;
       }
