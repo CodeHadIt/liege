@@ -20,6 +20,14 @@ function escapeUrl(url: string): string {
     .replace(/>/g, "&gt;");
 }
 
+/** Only accept proper http/https URLs to avoid Telegram HTML parse errors. */
+function validUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const trimmed = url.trim();
+  if (trimmed.startsWith("https://") || trimmed.startsWith("http://")) return trimmed;
+  return null;
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type Timeframe = "10m" | "30m" | "1h" | "2h" | "4h" | "8h" | "12h" | "24h";
@@ -142,14 +150,16 @@ export async function handleDex(ctx: MyContext, args: string): Promise<void> {
       const age      = formatAge(t.createdAt ? new Date(t.createdAt).getTime() : null);
       const dexPaidAgo = formatTimeAgo(new Date(t.discoveredAt).getTime());
 
-      // Social links — all URL chars that break Telegram HTML must be escaped
+      // Social links — only valid http(s) URLs to avoid Telegram HTML parse errors
       const socials: string[] = [];
-      if (t.twitter)    socials.push(`<a href="${escapeUrl(t.twitter)}">𝕏</a>`);
-      const tg   = t.socials?.find((s) => s.type === "telegram")?.url;
-      const disc = t.socials?.find((s) => s.type === "discord")?.url;
-      if (tg)   socials.push(`<a href="${escapeUrl(tg)}">TG</a>`);
-      if (disc) socials.push(`<a href="${escapeUrl(disc)}">DISC</a>`);
-      if (t.websites?.[0]) socials.push(`<a href="${escapeUrl(t.websites[0])}">Web</a>`);
+      const twUrl  = validUrl(t.twitter);
+      const tgUrl  = validUrl(t.socials?.find((s) => s.type === "telegram")?.url);
+      const discUrl = validUrl(t.socials?.find((s) => s.type === "discord")?.url);
+      const webUrl = validUrl(t.websites?.[0]);
+      if (twUrl)  socials.push(`<a href="${escapeUrl(twUrl)}">𝕏</a>`);
+      if (tgUrl)  socials.push(`<a href="${escapeUrl(tgUrl)}">TG</a>`);
+      if (discUrl) socials.push(`<a href="${escapeUrl(discUrl)}">DISC</a>`);
+      if (webUrl) socials.push(`<a href="${escapeUrl(webUrl)}">Web</a>`);
 
       let entry = `${shown + 1}. <b>${name}${symbol}</b>  <i>${dexPaidAgo}</i>\n`;
       entry += `<code>${escapeHtml(t.address)}</code>\n`;
@@ -176,7 +186,7 @@ export async function handleDex(ctx: MyContext, args: string): Promise<void> {
     });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    console.error("[bot/dex] error:", errMsg);
+    console.error("[bot/dex] editMessageText error:", errMsg);
     await ctx.api.editMessageText(
       ctx.chat!.id,
       loading.message_id,
