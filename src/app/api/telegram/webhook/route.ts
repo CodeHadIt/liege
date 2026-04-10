@@ -24,16 +24,14 @@ export async function POST(req: Request): Promise<Response> {
 
   console.log("[telegram/webhook] Update received:", JSON.stringify(update).slice(0, 200));
 
-  try {
-    const bot = await getBot();
-    // Await the handler so errors are visible in Railway logs.
-    // maxDuration = 120 gives us enough headroom for the 60s Telegram timeout.
-    await bot.handleUpdate(update as Parameters<typeof bot.handleUpdate>[0]);
-    console.log("[telegram/webhook] Update handled OK");
-  } catch (err) {
-    // Log the error but still return 200 — returning non-200 causes Telegram to retry endlessly.
-    console.error("[telegram/webhook] Handler error:", err);
-  }
+  // Return 200 immediately — Telegram retries any webhook that doesn't respond
+  // within ~15s, which causes infinite loops for slow commands like /tt (GMGN
+  // scraping takes up to 60s). Fire-and-forget is safe on Railway (persistent
+  // process) since the server stays alive after the response is sent.
+  getBot()
+    .then((bot) => bot.handleUpdate(update as Parameters<typeof bot.handleUpdate>[0]))
+    .then(() => console.log("[telegram/webhook] Update handled OK"))
+    .catch((err) => console.error("[telegram/webhook] Handler error:", err));
 
   return new Response("OK", { status: 200 });
 }
