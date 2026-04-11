@@ -29,7 +29,7 @@ export async function handleTopTraders(
   address: string
 ): Promise<void> {
   const loading = await ctx.reply(
-    "🔍 Fetching top traders… this may take up to 2 mins ⏳"
+    "🔍 Fetching top traders… this may take a minute ⏳"
   );
 
   try {
