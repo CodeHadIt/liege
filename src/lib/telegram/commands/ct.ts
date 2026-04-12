@@ -42,40 +42,20 @@ export async function handleCtChainSelected(
   );
 }
 
-export async function handleCtAddresses(
+/** Core fetch-and-display logic, shared by both the session flow and direct invocation. */
+async function runCommonTraders(
   ctx: MyContext,
-  text: string
+  chain: ChainId,
+  addresses: string[]
 ): Promise<void> {
-  const flow = ctx.session.ctFlow;
-  if (!flow || flow.step !== "awaiting_addresses") return;
-
-  const chain = flow.chain;
-
-  // Parse addresses — one per line, trim whitespace
-  const raw = text
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-
-  if (raw.length < 2 || raw.length > 10) {
-    await ctx.reply(
-      `⚠️ Please send between <b>2 and 10</b> addresses (you sent ${raw.length}).`,
-      { parse_mode: "HTML" }
-    );
-    return;
-  }
-
-  // Clear the flow before the long-running fetch
-  ctx.session.ctFlow = undefined;
-
   const loading = await ctx.reply(
-    `⏳ Searching for common traders across <b>${raw.length}</b> tokens on ${chainEmoji(chain)} ${chainLabel(chain)}…\n\n` +
+    `⏳ Searching for common traders across <b>${addresses.length}</b> tokens on ${chainEmoji(chain)} ${chainLabel(chain)}…\n\n` +
       `<i>This may take up to 60 seconds.</i>`,
     { parse_mode: "HTML" }
   );
 
   try {
-    const tokens = raw.map((address) => ({ chain, address }));
+    const tokens = addresses.map((address) => ({ chain, address }));
 
     const res = await fetch(`${APP_URL}/api/traders/common`, {
       method: "POST",
@@ -108,7 +88,6 @@ export async function handleCtAddresses(
       return;
     }
 
-    // Header: show which tokens were analyzed
     const tokenList = tokensMeta
       .map(
         (t) =>
@@ -120,7 +99,6 @@ export async function handleCtAddresses(
     msg += `<i>Tokens analyzed:</i>\n${tokenList}\n\n`;
     msg += `Found <b>${traders.length}</b> common trader${traders.length === 1 ? "" : "s"}\n\n`;
 
-    // Top 10 traders
     traders.slice(0, 10).forEach((trader, i) => {
       const pnl = formatPnl(trader.totalPnlUsd);
       const pnlEmoji = trader.totalPnlUsd >= 0 ? "📈" : "📉";
@@ -129,7 +107,6 @@ export async function handleCtAddresses(
       msg += `${i + 1}. <a href="${walletUrl}">${escapeHtml(truncateAddress(trader.walletAddress))}</a>\n`;
       msg += `   ${pnlEmoji} Total PnL: <b>${escapeHtml(pnl)}</b> across ${trader.tokenCount} tokens\n`;
 
-      // Per-token breakdown (up to 3)
       trader.tokens.slice(0, 3).forEach((t) => {
         const tPnl = formatPnl(t.pnlUsd);
         const tEmoji = t.pnlUsd >= 0 ? "▲" : "▼";
@@ -159,4 +136,39 @@ export async function handleCtAddresses(
       "❌ Failed to find common traders. Please try again."
     );
   }
+}
+
+/** Direct invocation: /common addr1 addr2 ... (addresses space- or newline-separated) */
+export async function handleCtDirect(
+  ctx: MyContext,
+  chain: ChainId,
+  addresses: string[]
+): Promise<void> {
+  await runCommonTraders(ctx, chain, addresses);
+}
+
+export async function handleCtAddresses(
+  ctx: MyContext,
+  text: string
+): Promise<void> {
+  const flow = ctx.session.ctFlow;
+  if (!flow || flow.step !== "awaiting_addresses") return;
+
+  const chain = flow.chain;
+
+  const raw = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  if (raw.length < 2 || raw.length > 10) {
+    await ctx.reply(
+      `⚠️ Please send between <b>2 and 10</b> addresses (you sent ${raw.length}).`,
+      { parse_mode: "HTML" }
+    );
+    return;
+  }
+
+  ctx.session.ctFlow = undefined;
+  await runCommonTraders(ctx, chain, raw);
 }

@@ -137,6 +137,27 @@ export async function getBot(): Promise<Bot<MyContext>> {
   // ── /common ──────────────────────────────────────────────────────────────────
 
   bot.command("common", async (ctx) => {
+    const args = ctx.match?.trim();
+
+    // Direct invocation: /common addr1 addr2 ... (space or newline separated)
+    if (args) {
+      const addresses = args.split(/[\s\n]+/).map((a) => a.trim()).filter(Boolean);
+      if (addresses.length >= 2 && addresses.length <= 10) {
+        const chain = detectChainFromAddress(addresses[0]);
+        if (chain) {
+          const { handleCtDirect } = await import("./commands/ct");
+          await handleCtDirect(ctx, chain, addresses);
+          return;
+        }
+      }
+      // Invalid args — fall through to guided flow with a hint
+      await ctx.reply(
+        `⚠️ Could not parse addresses. Make sure you pass 2–10 valid addresses.\n\n` +
+        `Starting guided flow instead…`,
+        { parse_mode: "HTML" }
+      );
+    }
+
     const { promptCtChain } = await import("./commands/ct");
     await promptCtChain(ctx);
   });
