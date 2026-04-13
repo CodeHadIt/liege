@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getChainProvider } from "@/lib/chains/registry";
 import { scrapeGmgnTopTraders } from "@/lib/api/gmgn-scraper";
-import * as helius from "@/lib/api/helius";
 import { serverCache, CACHE_TTL } from "@/lib/cache";
 import type { ChainId } from "@/types/chain";
 import type {
@@ -92,70 +91,34 @@ export async function POST(request: Request) {
           unrealizedPnlUsd?: number;
         }>();
 
-        // Whether authoritative GMGN data was fetched (Solana uses Helius, always authoritative).
-        let usedGmgn = chain === "solana";
+        // GMGN scraper for all chains (Solana + EVM).
+        // Solana addresses are case-sensitive and passed as-is; EVM are lowercased inside the scraper.
+        const gmgnTraders = await scrapeGmgnTopTraders(chain, address).catch(() => []);
+        let usedGmgn = false;
 
-        if (chain === "solana") {
-          // Helius: fetch parsed swaps for the token mint address
-          const swaps = await helius.getParsedSwapsAll(address, {
-            maxPages: 5,
-            limit: 100,
-          });
-
-          for (const tx of swaps) {
-            for (const transfer of tx.tokenTransfers) {
-              if (transfer.mint !== address) continue;
-              const amount = transfer.tokenAmount;
-              if (amount <= 0) continue;
-
-              const buyer = transfer.toUserAccount;
-              if (buyer && !ZERO_ADDRESSES.has(buyer)) {
-                const stats = walletStats.get(buyer) || {
-                  totalBought: 0,
-                  totalSold: 0,
-                };
-                stats.totalBought += amount;
-                walletStats.set(buyer, stats);
-              }
-
-              const seller = transfer.fromUserAccount;
-              if (seller && !ZERO_ADDRESSES.has(seller)) {
-                const stats = walletStats.get(seller) || {
-                  totalBought: 0,
-                  totalSold: 0,
-                };
-                stats.totalSold += amount;
-                walletStats.set(seller, stats);
-              }
-            }
+        if (gmgnTraders.length > 0) {
+          console.log(`[common-traders] GMGN: ${gmgnTraders.length} traders for ${chain}:${address}`);
+          usedGmgn = true;
+          for (const t of gmgnTraders) {
+            // Solana wallets are base58 (case-sensitive); EVM lowercase for dedup consistency
+            const addr = chain === "solana" ? t.walletAddress : t.walletAddress.toLowerCase();
+            if (ZERO_ADDRESSES.has(addr)) continue;
+            walletStats.set(addr, {
+              totalBought: t.avgCostUsd > 0 ? t.historyBoughtCostUsd / t.avgCostUsd : t.balance,
+              totalSold: t.avgSoldUsd > 0 ? t.historySoldIncomeUsd / t.avgSoldUsd : 0,
+              boughtUsd: t.historyBoughtCostUsd,
+              soldUsd: t.historySoldIncomeUsd,
+              avgBuyPrice: t.avgCostUsd,
+              avgSellPrice: t.avgSoldUsd,
+              buyCount: t.buyCount,
+              sellCount: t.sellCount,
+              realizedPnlUsd: t.realizedProfitUsd,
+              unrealizedPnlUsd: t.unrealizedProfitUsd,
+            });
           }
         } else {
-          // EVM: GMGN scraper — exact historical PnL including fully-exited wallets.
-          // No fallback; if GMGN fails the token is surfaced as an error to the caller.
-          const gmgnTraders = await scrapeGmgnTopTraders(chain, address).catch(() => []);
-          if (gmgnTraders.length > 0) {
-            console.log(`[common-traders] GMGN: ${gmgnTraders.length} traders for ${address}`);
-            usedGmgn = true;
-            for (const t of gmgnTraders) {
-              const addr = t.walletAddress.toLowerCase();
-              if (ZERO_ADDRESSES.has(addr)) continue;
-              walletStats.set(addr, {
-                totalBought: t.avgCostUsd > 0 ? t.historyBoughtCostUsd / t.avgCostUsd : t.balance,
-                totalSold: t.avgSoldUsd > 0 ? t.historySoldIncomeUsd / t.avgSoldUsd : 0,
-                boughtUsd: t.historyBoughtCostUsd,
-                soldUsd: t.historySoldIncomeUsd,
-                avgBuyPrice: t.avgCostUsd,
-                avgSellPrice: t.avgSoldUsd,
-                buyCount: t.buyCount,
-                sellCount: t.sellCount,
-                realizedPnlUsd: t.realizedProfitUsd,
-                unrealizedPnlUsd: t.unrealizedProfitUsd,
-              });
-            }
-          } else {
-            console.log(`[common-traders] GMGN returned 0 for ${address} — marking as failed`);
-            return { chain, address, walletPnls: [], symbol: clientSymbol ?? "???", priceUsd: null, marketCap: null, fetchError: true };
-          }
+          console.log(`[common-traders] GMGN returned 0 for ${chain}:${address} — marking as failed`);
+          return { chain, address, walletPnls: [], symbol: clientSymbol ?? "???", priceUsd: null, marketCap: null, fetchError: true };
         }
 
         // Compute PnL per wallet — use exact realizedPnlUsd from GMGN when available,
