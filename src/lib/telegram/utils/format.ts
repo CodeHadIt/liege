@@ -1,3 +1,31 @@
+export const MSG_LIMIT = 3800; // Telegram max is 4096; leave headroom
+
+/**
+ * Pack pre-built entry strings into pages that each fit within MSG_LIMIT.
+ * headerFn(page, total) returns the header string prepended to each page.
+ */
+export function splitPages(
+  entries: string[],
+  headerFn: (page: number, total: number) => string
+): string[] {
+  const HEADER_RESERVE = 150;
+  const rawPages: string[] = [];
+  let current = "";
+
+  for (const entry of entries) {
+    if (current.length + entry.length > MSG_LIMIT - HEADER_RESERVE) {
+      if (current.length > 0) rawPages.push(current);
+      current = entry;
+    } else {
+      current += entry;
+    }
+  }
+  if (current.length > 0) rawPages.push(current);
+
+  const total = rawPages.length;
+  return rawPages.map((body, i) => headerFn(i + 1, total) + body);
+}
+
 export function escapeHtml(text: string): string {
   return String(text)
     .replace(/&/g, "&amp;")

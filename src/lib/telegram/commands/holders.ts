@@ -7,6 +7,7 @@ import {
   chainEmoji,
   chainLabel,
   formatAge,
+  splitPages,
 } from "../utils/format";
 import { tokenKeyboard } from "../utils/keyboards";
 import type { ChainId } from "@/types/chain";
@@ -114,16 +115,13 @@ export async function handleHolders(
     const gmgnChain = GMGN_CHAIN[chain] ?? chain;
     const chainColor = CHAIN_COLOR[chain] ?? chainEmoji(chain);
 
-    // Header
+    // Build summary stats (always on page 1 as preamble)
     const tokenLabel = tokenSymbol ? ` <b>${escapeHtml(tokenSymbol)}</b> ·` : "";
-    let msg = `${chainColor}${tokenLabel} Top Holders · ${chainLabel(chain)}\n`;
-    msg += `<code>${escapeHtml(address)}</code>\n\n`;
+    const titleBase = `${chainColor}${tokenLabel} Top Holders · ${chainLabel(chain)}\n<code>${escapeHtml(address)}</code>`;
 
-    // Concentration summary
     const top10pct = holders.slice(0, 10).reduce((s, h) => s + h.percentage, 0);
-    msg += `📊 Top 10 hold <b>${top10pct.toFixed(1)}%</b> of supply\n`;
+    let preamble = `📊 Top 10 hold <b>${top10pct.toFixed(1)}%</b> of supply\n`;
 
-    // Wealth tier breakdown across all top-20 holders
     const tiers: WealthTier[] = ["whale", "dolphin", "fish", "shrimp"];
     const tierStats = tiers.map((tier) => {
       const group = holders.filter((h) => wealthTier(h.balanceUsd) === tier);
@@ -132,29 +130,41 @@ export async function handleHolders(
     }).filter((t) => t.count > 0);
 
     if (tierStats.length > 0) {
-      const breakdown = tierStats
-        .map((t) => `${TIER_EMOJI[t.tier]} ${t.count} (${t.pct.toFixed(1)}%)`)
-        .join("  ");
-      msg += `${breakdown}\n`;
+      preamble += tierStats.map((t) => `${TIER_EMOJI[t.tier]} ${t.count} (${t.pct.toFixed(1)}%)`).join("  ") + "\n";
     }
-    msg += "\n";
+    preamble += "\n";
 
-    for (let i = 0; i < holders.length; i++) {
-      const h = holders[i];
+    // Build one entry per holder
+    const entries: string[] = holders.map((h, i) => {
       const tier = wealthTier(h.balanceUsd);
       const emoji = TIER_EMOJI[tier];
       const pct = h.percentage > 0 ? ` — ${h.percentage.toFixed(2)}%` : "";
       const holdDur = h.openTimestamp ? `  · <i>${formatAge(h.openTimestamp)}</i>` : "";
       const gmgnUrl = `https://gmgn.ai/${gmgnChain}/address/${h.address}`;
       const addrLabel = escapeHtml(truncateAddress(h.address));
-      msg += `${i + 1}. <a href="${gmgnUrl}">${addrLabel}</a>${pct}  ${emoji}${holdDur}\n`;
-    }
-
-    await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, msg, {
-      parse_mode: "HTML",
-      reply_markup: tokenKeyboard(chain, address),
-      link_preview_options: { is_disabled: true },
+      return `${i + 1}. <a href="${gmgnUrl}">${addrLabel}</a>${pct}  ${emoji}${holdDur}\n`;
     });
+
+    const pages = splitPages(entries, (page, total) => {
+      const pageLabel = total > 1 ? `  <i>${page}/${total}</i>` : "";
+      const header = `${titleBase}${pageLabel}\n\n`;
+      return page === 1 ? header + preamble : header;
+    });
+
+    for (let p = 0; p < pages.length; p++) {
+      if (p === 0) {
+        await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, pages[p], {
+          parse_mode: "HTML",
+          reply_markup: tokenKeyboard(chain, address),
+          link_preview_options: { is_disabled: true },
+        });
+      } else {
+        await ctx.reply(pages[p], {
+          parse_mode: "HTML",
+          link_preview_options: { is_disabled: true },
+        });
+      }
+    }
   } catch (err) {
     console.error("[bot/holders]", err);
     await ctx.api.editMessageText(

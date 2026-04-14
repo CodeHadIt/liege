@@ -7,6 +7,7 @@ import {
   chainEmoji,
   chainLabel,
   formatCompact,
+  splitPages,
 } from "../utils/format";
 import { tokenKeyboard } from "../utils/keyboards";
 import type { ChainId } from "@/types/chain";
@@ -44,25 +45,40 @@ export async function handleTopTraders(
       return;
     }
 
-    let msg = `${chainEmoji(chain)} <b>Top Traders</b> · ${chainLabel(chain)}\n`;
-    msg += `<code>${escapeHtml(address)}</code>\n\n`;
+    const titleBase = `${chainEmoji(chain)} <b>Top Traders</b> · ${chainLabel(chain)}\n<code>${escapeHtml(address)}</code>`;
 
-    traders.slice(0, 10).forEach((t, i) => {
+    const entries: string[] = traders.map((t, i) => {
       const pnl = formatPnl(t.realizedProfitUsd);
       const pnlClass = t.realizedProfitUsd >= 0 ? "📈" : "📉";
       const url = gmgnWalletUrl(chain, t.walletAddress);
-      msg += `${i + 1}. <a href="${url}">${escapeHtml(truncateAddress(t.walletAddress))}</a>\n`;
-      msg += `   ${pnlClass} PnL: <b>${escapeHtml(pnl)}</b>\n`;
+      let entry = `${i + 1}. <a href="${url}">${escapeHtml(truncateAddress(t.walletAddress))}</a>\n`;
+      entry += `   ${pnlClass} PnL: <b>${escapeHtml(pnl)}</b>\n`;
       if (t.balanceUsd > 0) {
-        msg += `   💼 Holding: $${escapeHtml(formatCompact(t.balanceUsd))}\n`;
+        entry += `   💼 Holding: $${escapeHtml(formatCompact(t.balanceUsd))}\n`;
       }
+      entry += "\n";
+      return entry;
     });
 
-    await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, msg, {
-      parse_mode: "HTML",
-      reply_markup: tokenKeyboard(chain, address),
-      link_preview_options: { is_disabled: true },
+    const pages = splitPages(entries, (page, total) => {
+      const pageLabel = total > 1 ? `  <i>${page}/${total}</i>` : "";
+      return `${titleBase}${pageLabel}\n\n`;
     });
+
+    for (let p = 0; p < pages.length; p++) {
+      if (p === 0) {
+        await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, pages[p], {
+          parse_mode: "HTML",
+          reply_markup: tokenKeyboard(chain, address),
+          link_preview_options: { is_disabled: true },
+        });
+      } else {
+        await ctx.reply(pages[p], {
+          parse_mode: "HTML",
+          link_preview_options: { is_disabled: true },
+        });
+      }
+    }
   } catch (err) {
     console.error("[bot/toptraders]", err);
     await ctx.api.editMessageText(

@@ -6,6 +6,7 @@ import {
   truncateAddress,
   chainEmoji,
   chainLabel,
+  splitPages,
 } from "../utils/format";
 import type { ChainId } from "@/types/chain";
 import type { CommonTradersResponse } from "@/types/traders";
@@ -53,7 +54,7 @@ async function runCommonTraders(
 ): Promise<void> {
   const loading = await ctx.reply(
     `⏳ Searching for common traders across <b>${addresses.length}</b> tokens on ${chainEmoji(chain)} ${chainLabel(chain)}…\n\n` +
-      `<i>This may take up to 60 seconds.</i>`,
+      `<i>This may take a minute.</i>`,
     { parse_mode: "HTML" }
   );
 
@@ -98,39 +99,51 @@ async function runCommonTraders(
       )
       .join("\n");
 
-    let msg = `${chainEmoji(chain)} <b>Common Top Traders</b> · ${chainLabel(chain)}\n`;
-    msg += `<i>Tokens analyzed:</i>\n${tokenList}\n\n`;
-    msg += `Found <b>${traders.length}</b> common trader${traders.length === 1 ? "" : "s"}\n\n`;
+    const titleBase = `${chainEmoji(chain)} <b>Common Top Traders</b> · ${chainLabel(chain)}`;
+    const preamble = `<i>Tokens analyzed:</i>\n${tokenList}\n\nFound <b>${traders.length}</b> common trader${traders.length === 1 ? "" : "s"}\n\n`;
 
-    traders.slice(0, 10).forEach((trader, i) => {
+    // Build one entry string per trader
+    const entries: string[] = traders.map((trader, i) => {
       const pnl = formatPnl(trader.totalPnlUsd);
       const pnlEmoji = trader.totalPnlUsd >= 0 ? "📈" : "📉";
       const walletUrl = `${APP_URL}/wallet/${chain}/${trader.walletAddress}`;
 
-      msg += `${i + 1}. <a href="${walletUrl}">${escapeHtml(truncateAddress(trader.walletAddress))}</a>\n`;
-      msg += `   ${pnlEmoji} Total PnL: <b>${escapeHtml(pnl)}</b> across ${trader.tokenCount} tokens\n`;
+      let entry = `${i + 1}. <a href="${walletUrl}">${escapeHtml(truncateAddress(trader.walletAddress))}</a>\n`;
+      entry += `   ${pnlEmoji} Total PnL: <b>${escapeHtml(pnl)}</b> across ${trader.tokenCount} tokens\n`;
 
       trader.tokens.slice(0, 3).forEach((t) => {
         const tPnl = formatPnl(t.pnlUsd);
         const tEmoji = t.pnlUsd >= 0 ? "▲" : "▼";
-        msg += `   ${tEmoji} ${escapeHtml(t.symbol)}: ${escapeHtml(tPnl)}`;
+        entry += `   ${tEmoji} ${escapeHtml(t.symbol)}: ${escapeHtml(tPnl)}`;
         if (t.buyCount !== undefined && t.sellCount !== undefined) {
-          msg += ` (🟢${t.buyCount}/🔴${t.sellCount})`;
+          entry += ` (🟢${t.buyCount}/🔴${t.sellCount})`;
         }
-        msg += "\n";
+        entry += "\n";
       });
 
-      msg += "\n";
+      entry += "\n";
+      return entry;
     });
 
-    if (traders.length > 10) {
-      msg += `<i>…and ${traders.length - 10} more.</i>`;
+    const pages = splitPages(entries, (page, total) => {
+      const pageLabel = total > 1 ? `  <i>${page}/${total}</i>` : "";
+      const header = `${titleBase}${pageLabel}\n`;
+      return page === 1 ? header + preamble : header + "\n";
+    });
+
+    for (let p = 0; p < pages.length; p++) {
+      if (p === 0) {
+        await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, pages[p], {
+          parse_mode: "HTML",
+          link_preview_options: { is_disabled: true },
+        });
+      } else {
+        await ctx.reply(pages[p], {
+          parse_mode: "HTML",
+          link_preview_options: { is_disabled: true },
+        });
+      }
     }
-
-    await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, msg, {
-      parse_mode: "HTML",
-      link_preview_options: { is_disabled: true },
-    });
   } catch (err) {
     console.error("[bot/ct]", err);
     await ctx.api.editMessageText(
