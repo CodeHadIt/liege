@@ -10,8 +10,11 @@ import {
 import type { ChainId } from "@/types/chain";
 import type { CommonTradersResponse } from "@/types/traders";
 
-const APP_URL =
+const _rawAppUrl =
   process.env.NEXT_PUBLIC_APP_URL ?? "https://liege.up.railway.app";
+const APP_URL = _rawAppUrl.startsWith("http")
+  ? _rawAppUrl
+  : `https://${_rawAppUrl}`;
 
 export async function promptCtChain(ctx: MyContext): Promise<void> {
   // Clear any previous flow state
