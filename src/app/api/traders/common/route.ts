@@ -34,6 +34,9 @@ const ZERO_ADDRESSES = new Set([
   "11111111111111111111111111111111",
 ]);
 
+// Allow up to 5 minutes — GMGN scraping per token takes ~60s and tokens run in parallel
+export const maxDuration = 300;
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as CommonTradersRequest;
@@ -46,10 +49,8 @@ export async function POST(request: Request) {
       );
     }
 
-    // Phase 1: Fetch top traders + price per token (sequential to avoid rate-limiting)
-    const tokenResults = [];
-    for (const { chain, address, symbol: clientSymbol } of tokens) {
-      const result = await (async (): Promise<{
+    // Phase 1: Fetch top traders + price per token in parallel
+    const tokenResults = await Promise.all(tokens.map(async ({ chain, address, symbol: clientSymbol }): Promise<{
         chain: string;
         address: string;
         walletPnls: WalletPnl[];
@@ -150,9 +151,8 @@ export async function POST(request: Request) {
         }
 
         return { chain, address, ...resultData, fetchError: false };
-      })();
-      tokenResults.push(result);
-    }
+      })
+    );
 
     // Surface per-token fetch failures
     const failedTokens = tokenResults.filter((tr) => tr.fetchError);
