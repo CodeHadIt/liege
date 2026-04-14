@@ -17,6 +17,17 @@ const APP_URL = _rawAppUrl.startsWith("http")
   ? _rawAppUrl
   : `https://${_rawAppUrl}`;
 
+const GMGN_CHAIN: Record<string, string> = {
+  solana: "sol",
+  base:   "base",
+  bsc:    "bsc",
+};
+
+function gmgnWalletUrl(chain: ChainId, wallet: string): string {
+  const slug = GMGN_CHAIN[chain] ?? chain;
+  return `https://gmgn.ai/${slug}/address/${wallet}`;
+}
+
 export async function promptCtChain(ctx: MyContext): Promise<void> {
   // Clear any previous flow state
   ctx.session.ctFlow = undefined;
@@ -95,7 +106,7 @@ async function runCommonTraders(
     const tokenList = tokensMeta
       .map(
         (t) =>
-          `  • <b>${escapeHtml(t.symbol)}</b> <code>${escapeHtml(truncateAddress(t.address))}</code>`
+          `  • <b>${escapeHtml(t.symbol)}</b> <code>${escapeHtml(t.address)}</code>`
       )
       .join("\n");
 
@@ -106,9 +117,9 @@ async function runCommonTraders(
     const entries: string[] = traders.map((trader, i) => {
       const pnl = formatPnl(trader.totalPnlUsd);
       const pnlEmoji = trader.totalPnlUsd >= 0 ? "📈" : "📉";
-      const walletUrl = `${APP_URL}/wallet/${chain}/${trader.walletAddress}`;
+      const walletUrl = gmgnWalletUrl(chain, trader.walletAddress);
 
-      let entry = `${i + 1}. <code>${escapeHtml(trader.walletAddress)}</code> <a href="${walletUrl}">↗</a>\n`;
+      let entry = `${i + 1}. <a href="${walletUrl}">${escapeHtml(truncateAddress(trader.walletAddress))}</a>\n`;
       entry += `   ${pnlEmoji} Total PnL: <b>${escapeHtml(pnl)}</b> across ${trader.tokenCount} tokens\n`;
 
       trader.tokens.slice(0, 3).forEach((t) => {
