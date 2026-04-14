@@ -115,7 +115,7 @@ async function runCommonTraders(
         const tEmoji = t.pnlUsd >= 0 ? "▲" : "▼";
         msg += `   ${tEmoji} ${escapeHtml(t.symbol)}: ${escapeHtml(tPnl)}`;
         if (t.buyCount !== undefined && t.sellCount !== undefined) {
-          msg += ` (${t.buyCount}B/${t.sellCount}S)`;
+          msg += ` (🟢${t.buyCount}/🔴${t.sellCount})`;
         }
         msg += "\n";
       });
