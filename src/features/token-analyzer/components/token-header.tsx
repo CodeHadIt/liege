@@ -72,7 +72,7 @@ export function TokenHeader({ token }: TokenHeaderProps) {
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors" style={{ cursor: "pointer" }}
             >
-              <img src="/images/axiom_favicon.ico" alt="Axiom" className="h-3.5 w-3.5 rounded-sm" />
+              <img src="/images/terminals/axiom_favicon.ico" alt="Axiom" className="h-3.5 w-3.5 rounded-sm" />
               Axiom
               <ArrowSquareOut className="h-3 w-3 opacity-50" />
             </a>
@@ -82,7 +82,7 @@ export function TokenHeader({ token }: TokenHeaderProps) {
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors" style={{ cursor: "pointer" }}
             >
-              <img src="/images/trojan_favicon.png" alt="Trojan" className="h-3.5 w-3.5 rounded-sm brightness-0 invert" />
+              <img src="/images/terminals/trojan_favicon.png" alt="Trojan" className="h-3.5 w-3.5 rounded-sm brightness-0 invert" />
               Trojan
               <ArrowSquareOut className="h-3 w-3 opacity-50" />
             </a>
@@ -92,7 +92,7 @@ export function TokenHeader({ token }: TokenHeaderProps) {
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 text-xs text-[#6B6B80] hover:text-[#00F0FF] transition-colors" style={{ cursor: "pointer" }}
             >
-              <img src="/images/terminal_favicon.png" alt="Terminal" className="h-4 w-4 rounded-sm object-contain" />
+              <img src="/images/terminals/terminal_favicon.png" alt="Terminal" className="h-4 w-4 rounded-sm object-contain" />
               Terminal
               <ArrowSquareOut className="h-3 w-3 opacity-50" />
             </a>

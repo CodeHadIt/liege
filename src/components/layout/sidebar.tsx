@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import {
   TrendUp,
   MagnifyingGlass,
   Shield,
-  Crown,
   Pulse,
   Wallet,
   Scan,
@@ -35,9 +35,7 @@ export function Sidebar() {
       {/* Logo */}
       <div className="flex items-center gap-3 px-6 py-5 border-b border-white/[0.04]">
         <div className="relative">
-          <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-[#00F0FF] to-[#0080FF] flex items-center justify-center">
-            <Crown className="h-5 w-5 text-[#0A0A0F]" strokeWidth={2.5} />
-          </div>
+          <Image src="/images/native/liege_1.png" alt="Liege" width={36} height={36} className="rounded-lg" />
           <div className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-[#00FF88] pulse-dot" />
         </div>
         <div>

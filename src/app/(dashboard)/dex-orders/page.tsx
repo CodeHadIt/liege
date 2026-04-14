@@ -705,7 +705,7 @@ export default function DexOrdersPage() {
                               className="opacity-60 hover:opacity-100 transition-opacity" style={{ cursor: "pointer" }}
                               title="Axiom"
                             >
-                              <img src="/images/axiom_favicon.ico" alt="Axiom" className="h-3.5 w-3.5 rounded-sm" />
+                              <img src="/images/terminals/axiom_favicon.ico" alt="Axiom" className="h-3.5 w-3.5 rounded-sm" />
                             </a>
                             <a
                               href={`https://trojan.com/terminal?token=${token.address}&ref=garriwenes`}
@@ -715,7 +715,7 @@ export default function DexOrdersPage() {
                               className="opacity-60 hover:opacity-100 transition-opacity" style={{ cursor: "pointer" }}
                               title="Trojan"
                             >
-                              <img src="/images/trojan_favicon.png" alt="Trojan" className="h-3.5 w-3.5 rounded-sm brightness-0 invert" />
+                              <img src="/images/terminals/trojan_favicon.png" alt="Trojan" className="h-3.5 w-3.5 rounded-sm brightness-0 invert" />
                             </a>
                             <a
                               href={`https://trade.padre.gg/trade/solana/${token.address}?rk=warri`}
@@ -725,7 +725,7 @@ export default function DexOrdersPage() {
                               className="opacity-60 hover:opacity-100 transition-opacity" style={{ cursor: "pointer" }}
                               title="Terminal"
                             >
-                              <img src="/images/terminal_favicon.png" alt="Terminal" className="h-4 w-4 rounded-sm object-contain" />
+                              <img src="/images/terminals/terminal_favicon.png" alt="Terminal" className="h-4 w-4 rounded-sm object-contain" />
                             </a>
                           </div>
                         </td>
@@ -967,9 +967,9 @@ export default function DexOrdersPage() {
                     </span>
                     <div className="flex gap-2">
                       {[
-                        { label: "Axiom", href: `https://axiom.trade/t/${token.address}/@genes?chain=sol`, icon: "/images/axiom_favicon.ico", imgClass: "" },
-                        { label: "Trojan", href: `https://trojan.com/terminal?token=${token.address}&ref=garriwenes`, icon: "/images/trojan_favicon.png", imgClass: "brightness-0 invert" },
-                        { label: "Terminal", href: `https://trade.padre.gg/trade/solana/${token.address}?rk=warri`, icon: "/images/terminal_favicon.png", imgClass: "object-contain" },
+                        { label: "Axiom", href: `https://axiom.trade/t/${token.address}/@genes?chain=sol`, icon: "/images/terminals/axiom_favicon.ico", imgClass: "" },
+                        { label: "Trojan", href: `https://trojan.com/terminal?token=${token.address}&ref=garriwenes`, icon: "/images/terminals/trojan_favicon.png", imgClass: "brightness-0 invert" },
+                        { label: "Terminal", href: `https://trade.padre.gg/trade/solana/${token.address}?rk=warri`, icon: "/images/terminals/terminal_favicon.png", imgClass: "object-contain" },
                       ].map((link) => (
                         <a
                           key={link.label}

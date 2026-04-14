@@ -26,6 +26,14 @@ export const metadata: Metadata = {
   title: "Liege — Crypto Intelligence",
   description:
     "Onchain analysis, token research, and wallet tracking for Solana, Base, and BSC.",
+  icons: {
+    icon: [
+      { url: "/favicon.ico" },
+      { url: "/favicon-96x96.png", sizes: "96x96", type: "image/png" },
+      { url: "/favicon.svg", type: "image/svg+xml" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
 };
 
 export default function RootLayout({

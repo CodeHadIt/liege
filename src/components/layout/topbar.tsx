@@ -1,6 +1,7 @@
 "use client";
 
-import { Crown, List, Scan } from "@phosphor-icons/react";
+import { List, Scan } from "@phosphor-icons/react";
+import Image from "next/image";
 import { AuthButton } from "./auth-button";
 import { ChainSelector } from "./chain-selector";
 
@@ -27,9 +28,7 @@ export function Topbar() {
 
       {/* Mobile logo */}
       <div className="flex items-center gap-2 md:hidden">
-        <div className="h-7 w-7 rounded-md bg-gradient-to-br from-[#00F0FF] to-[#0080FF] flex items-center justify-center">
-          <Crown className="h-4 w-4 text-[#0A0A0F]" strokeWidth={2.5} />
-        </div>
+        <Image src="/images/native/liege_1.png" alt="Liege" width={28} height={28} className="rounded-md" />
         <span className="font-bold text-neon tracking-wide text-sm">LIEGE</span>
       </div>
 
