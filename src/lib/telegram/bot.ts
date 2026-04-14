@@ -65,7 +65,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `<b>/dex</b> <code>&lt;bond|unbond&gt; &lt;timeframe&gt; [mcap]</code>\n` +
         `Browse DEX paid tokens. Filter by bonded status, time window (10m–24h), and optional max MC.\n` +
         `Example: <code>/dex bond 1h 50k</code>\n\n` +
-        `<i>Solana addresses are detected automatically. For Base/BSC, you'll be prompted to choose.</i>`,
+        `<i>Chain is detected automatically from the address.</i>`,
       { parse_mode: "HTML" }
     );
   });

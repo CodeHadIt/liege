@@ -108,7 +108,7 @@ async function runCommonTraders(
       const pnlEmoji = trader.totalPnlUsd >= 0 ? "📈" : "📉";
       const walletUrl = `${APP_URL}/wallet/${chain}/${trader.walletAddress}`;
 
-      let entry = `${i + 1}. <a href="${walletUrl}">${escapeHtml(truncateAddress(trader.walletAddress))}</a>\n`;
+      let entry = `${i + 1}. <code>${escapeHtml(trader.walletAddress)}</code> <a href="${walletUrl}">↗</a>\n`;
       entry += `   ${pnlEmoji} Total PnL: <b>${escapeHtml(pnl)}</b> across ${trader.tokenCount} tokens\n`;
 
       trader.tokens.slice(0, 3).forEach((t) => {
