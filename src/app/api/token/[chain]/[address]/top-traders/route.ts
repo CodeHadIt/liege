@@ -70,7 +70,6 @@ export async function GET(
       );
 
       if (gmgnTraders.length > 0) {
-        console.log(`[top-traders] Using ${gmgnTraders.length} traders from GMGN`);
         traders = gmgnTraders.map((t) => {
           const nativeEth = parseInt(t.nativeBalanceWei) / 1e18 || 0;
           return {

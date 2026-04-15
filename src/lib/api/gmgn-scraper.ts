@@ -236,7 +236,6 @@ export async function scrapeGmgnTopTraders(
     `https://gmgn.ai/vas/api/v1/token_holders/${gmgnChain}/${tokenNorm}` +
     `?orderby=realized_profit&direction=desc&limit=100`;
 
-  console.log(`[gmgn-scraper] top-traders ${chain}:${tokenNorm}`);
   const { customBody } = await fetchGmgnWithSession(pageUrl, customApiUrl, `traders:${tokenNorm.slice(0, 10)}`);
   if (!customBody) return [];
 
@@ -272,7 +271,6 @@ export async function scrapeGmgnTopHolders(
     `https://gmgn.ai/vas/api/v1/token_holders/${gmgnChain}/${tokenNorm}` +
     `?orderby=realized_profit&direction=desc&limit=100`;
 
-  console.log(`[gmgn-scraper] top-holders ${chain}:${tokenNorm}`);
   const { autoBody, customBody } = await fetchGmgnWithSession(
     pageUrl,
     customApiUrl,

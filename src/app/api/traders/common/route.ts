@@ -98,7 +98,6 @@ export async function POST(request: Request) {
         let usedGmgn = false;
 
         if (gmgnTraders.length > 0) {
-          console.log(`[common-traders] GMGN: ${gmgnTraders.length} traders for ${chain}:${address}`);
           usedGmgn = true;
           for (const t of gmgnTraders) {
             // Solana wallets are base58 (case-sensitive); EVM lowercase for dedup consistency

@@ -22,15 +22,12 @@ export async function POST(req: Request): Promise<Response> {
     return new Response("Bad Request", { status: 400 });
   }
 
-  console.log("[telegram/webhook] Update received:", JSON.stringify(update).slice(0, 200));
-
   // Return 200 immediately — Telegram retries any webhook that doesn't respond
   // within ~15s, which causes infinite loops for slow commands like /tt (GMGN
   // scraping takes up to 60s). Fire-and-forget is safe on Railway (persistent
   // process) since the server stays alive after the response is sent.
   getBot()
     .then((bot) => bot.handleUpdate(update as Parameters<typeof bot.handleUpdate>[0]))
-    .then(() => console.log("[telegram/webhook] Update handled OK"))
     .catch((err) => console.error("[telegram/webhook] Handler error:", err));
 
   return new Response("OK", { status: 200 });

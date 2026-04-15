@@ -182,8 +182,6 @@ export async function handleDex(ctx: MyContext, args: string): Promise<void> {
       const header    = `${title}${pageLabel}\n<i>${tokens.length} token${tokens.length !== 1 ? "s" : ""} found</i>\n\n`;
       const msg       = header + pages[p];
 
-      console.log(`[bot/dex] Sending page ${p + 1}/${totalPages}: ${msg.length} chars`);
-
       if (p === 0) {
         await ctx.api.editMessageText(ctx.chat!.id, loading.message_id, msg, {
           parse_mode: "HTML",
