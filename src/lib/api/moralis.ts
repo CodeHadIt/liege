@@ -1,6 +1,43 @@
 import { rateLimit } from "@/lib/rate-limiter";
 
 const BASE_URL = "https://solana-gateway.moralis.io";
+const EVM_BASE_URL = "https://deep-index.moralis.io/api/v2.2";
+
+const MORALIS_CHAIN: Record<string, string> = {
+  base: "base",
+  bsc:  "bsc",
+  eth:  "eth",
+};
+
+/**
+ * Fetch a token's image URL from Moralis ERC20 metadata for EVM chains.
+ * Returns null if unavailable or not found.
+ */
+export async function getEvmTokenImage(
+  chain: string,
+  address: string
+): Promise<string | null> {
+  const apiKey = process.env.MORALIS_API_KEY;
+  if (!apiKey) return null;
+
+  const moralisChain = MORALIS_CHAIN[chain];
+  if (!moralisChain) return null;
+
+  await rateLimit("moralis");
+  try {
+    const params = new URLSearchParams({ chain: moralisChain });
+    params.append("addresses[0]", address.toLowerCase());
+    const res = await fetch(`${EVM_BASE_URL}/erc20/metadata?${params}`, {
+      headers: { Accept: "application/json", "X-API-Key": apiKey },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const token = Array.isArray(data) ? data[0] : null;
+    return token?.logo ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export interface MoralisPumpToken {
   tokenAddress: string;

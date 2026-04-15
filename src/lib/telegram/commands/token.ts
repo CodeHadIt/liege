@@ -6,6 +6,7 @@ import { CHAIN_CONFIGS } from "@/config/chains";
 import { getChainProvider } from "@/lib/chains/registry";
 import { scrapeGmgnTopHolders } from "@/lib/api/gmgn-scraper";
 import { getAssetImage } from "@/lib/api/helius";
+import { getEvmTokenImage } from "@/lib/api/moralis";
 import {
   escapeHtml,
   formatPrice,
@@ -389,16 +390,17 @@ export async function handleToken(
     fetchDexPaid(chain, address),
   ]);
 
-  // If DexScreener has no image and this is a Solana token, try Helius DAS on-chain metadata
+  // If DexScreener has no image, fall back to chain-specific on-chain metadata
   const dexBannerUrl = tokenInfo.headerUrl ?? tokenInfo.imageUrl ?? null;
-  const bannerUrl = dexBannerUrl ?? (
-    chain === "solana"
-      ? await Promise.race([
-          getAssetImage(address).catch(() => null),
-          new Promise<null>((r) => setTimeout(() => r(null), 8_000)),
-        ])
-      : null
-  );
+  let bannerUrl = dexBannerUrl;
+  if (!bannerUrl) {
+    bannerUrl = await Promise.race([
+      chain === "solana"
+        ? getAssetImage(address).catch(() => null)
+        : getEvmTokenImage(chain, address).catch(() => null),
+      new Promise<null>((r) => setTimeout(() => r(null), 8_000)),
+    ]);
+  }
   const keyboard  = tokenKeyboard(chain, address);
 
   if (!data) {
