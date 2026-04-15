@@ -485,6 +485,35 @@ export async function getAssetBatch(
   return result;
 }
 
+/**
+ * Resolve a single mint address to its on-chain image URL via Helius DAS getAsset.
+ * Returns null if unavailable or Helius API key not set.
+ */
+export async function getAssetImage(mintAddress: string): Promise<string | null> {
+  const key = getApiKey();
+  if (!key) return null;
+  try {
+    await rateLimit("helius");
+    const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${key}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getAsset",
+        params: { id: mintAddress },
+      }),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const content = json.result?.content;
+    // Prefer content.links.image; fall back to first file URI
+    return content?.links?.image ?? content?.files?.[0]?.uri ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Token Socials (off-chain metadata) ───
 
 export interface TokenSocials {

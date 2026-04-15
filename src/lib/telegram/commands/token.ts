@@ -5,6 +5,7 @@ import { getTokenPools, getOHLCV } from "@/lib/api/geckoterminal";
 import { CHAIN_CONFIGS } from "@/config/chains";
 import { getChainProvider } from "@/lib/chains/registry";
 import { scrapeGmgnTopHolders } from "@/lib/api/gmgn-scraper";
+import { getAssetImage } from "@/lib/api/helius";
 import {
   escapeHtml,
   formatPrice,
@@ -388,7 +389,16 @@ export async function handleToken(
     fetchDexPaid(chain, address),
   ]);
 
-  const bannerUrl = tokenInfo.headerUrl ?? tokenInfo.imageUrl ?? null;
+  // If DexScreener has no image and this is a Solana token, try Helius DAS on-chain metadata
+  const dexBannerUrl = tokenInfo.headerUrl ?? tokenInfo.imageUrl ?? null;
+  const bannerUrl = dexBannerUrl ?? (
+    chain === "solana"
+      ? await Promise.race([
+          getAssetImage(address).catch(() => null),
+          new Promise<null>((r) => setTimeout(() => r(null), 8_000)),
+        ])
+      : null
+  );
   const keyboard  = tokenKeyboard(chain, address);
 
   if (!data) {
