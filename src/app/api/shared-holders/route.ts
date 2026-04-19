@@ -8,6 +8,27 @@ import type {
   SharedHoldersResponse,
 } from "@/types/shared-holders";
 
+const DEX_CHAIN: Record<SharedHoldChain, string> = {
+  eth:  "ethereum",
+  base: "base",
+  bsc:  "bsc",
+};
+
+async function fetchDexImage(chain: SharedHoldChain, address: string): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://api.dexscreener.com/tokens/v1/${DEX_CHAIN[chain]}/${address}`,
+      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(6000) }
+    );
+    if (!res.ok) return null;
+    const pairs: Array<{ info?: { imageUrl?: string } }> = await res.json();
+    if (!Array.isArray(pairs) || pairs.length === 0) return null;
+    return pairs[0]?.info?.imageUrl ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export const maxDuration = 120;
 
 const MORALIS_BASE = "https://deep-index.moralis.io/api/v2.2";
@@ -65,10 +86,6 @@ interface MoralisProfitEntry {
   realized_profit_usd: string | null;
 }
 
-interface MoralisProfitResponse {
-  result: MoralisProfitEntry[];
-}
-
 interface MoralisTokenMeta {
   address: string;
   name: string;
@@ -118,6 +135,14 @@ async function fetchHolders(
 }
 
 // ── Fetch wallet profitability for two specific tokens ────────────────────────
+// Moralis paginates profitability results — paginate until both tokens found.
+
+interface MoralisProfitPage {
+  result: MoralisProfitEntry[];
+  cursor: string | null;
+}
+
+const MAX_PROFIT_PAGES = 10;
 
 async function fetchProfitability(
   walletAddress: string,
@@ -125,19 +150,32 @@ async function fetchProfitability(
   tokenA: string,
   tokenB: string
 ): Promise<Map<string, MoralisProfitEntry>> {
-  const data = await moralisFetch<MoralisProfitResponse>(
-    `/wallets/${walletAddress}/profitability`,
-    { chain: moralisChain, "token_addresses[0]": tokenA, "token_addresses[1]": tokenB }
-  );
-
   const result = new Map<string, MoralisProfitEntry>();
-  if (!data?.result) return result;
-
   const targets = new Set([tokenA.toLowerCase(), tokenB.toLowerCase()]);
-  for (const entry of data.result) {
-    const addr = entry.token_address?.toLowerCase();
-    if (addr && targets.has(addr)) result.set(addr, entry);
+  let cursor: string | null = null;
+
+  for (let page = 0; page < MAX_PROFIT_PAGES; page++) {
+    const params: Record<string, string> = { chain: moralisChain };
+    if (cursor) params.cursor = cursor;
+
+    const data = await moralisFetch<MoralisProfitPage>(
+      `/wallets/${walletAddress}/profitability`,
+      params
+    );
+    if (!data?.result?.length) break;
+
+    for (const entry of data.result) {
+      const addr = entry.token_address?.toLowerCase();
+      if (addr && targets.has(addr)) result.set(addr, entry);
+    }
+
+    // Stop early if both tokens found
+    if (result.size >= 2) break;
+
+    cursor = data.cursor ?? null;
+    if (!cursor) break;
   }
+
   return result;
 }
 
@@ -206,18 +244,22 @@ export async function POST(request: Request) {
     const addrA = addressA.toLowerCase();
     const addrB = addressB.toLowerCase();
 
-    // Fetch token metadata + holders in parallel
-    const [metaRaw, holdersA, holdersB] = await Promise.all([
+    // Fetch token metadata + holders + DexScreener images in parallel
+    const [metaRaw, holdersA, holdersB, dexImgA, dexImgB] = await Promise.all([
       moralisFetch<MoralisTokenMeta[]>(
         `/erc20/metadata`,
         { chain: moralisChain, "addresses[0]": addrA, "addresses[1]": addrB }
       ),
       fetchHolders(addrA, moralisChain),
       fetchHolders(addrB, moralisChain),
+      fetchDexImage(chain, addrA),
+      fetchDexImage(chain, addrB),
     ]);
 
     const metaA = metaRaw?.find((m) => m.address?.toLowerCase() === addrA);
     const metaB = metaRaw?.find((m) => m.address?.toLowerCase() === addrB);
+    const imageA = dexImgA ?? metaA?.logo ?? null;
+    const imageB = dexImgB ?? metaB?.logo ?? null;
 
     const totalSupplyA = metaA?.total_supply_formatted != null
       ? parseFloat(metaA.total_supply_formatted) || null : null;
@@ -236,7 +278,7 @@ export async function POST(request: Request) {
         priceUsd: null,
         marketCap: null,
         totalSupply: totalSupplyA,
-        imageUrl: metaA?.logo ?? null,
+        imageUrl: imageA,
       };
       const tokenBMeta: SharedHolderTokenMeta = {
         address: addrB,
@@ -246,7 +288,7 @@ export async function POST(request: Request) {
         priceUsd: null,
         marketCap: null,
         totalSupply: totalSupplyB,
-        imageUrl: metaB?.logo ?? null,
+        imageUrl: imageB,
       };
       const resp: SharedHoldersResponse = { holders: [], tokenA: tokenAMeta, tokenB: tokenBMeta, chain };
       return NextResponse.json(resp);
