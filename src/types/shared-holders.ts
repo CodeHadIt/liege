@@ -27,6 +27,7 @@ export interface SharedHolderTokenMeta {
   priceUsd: number | null;
   marketCap: number | null;
   totalSupply: number | null;
+  imageUrl: string | null;
 }
 
 export interface SharedHoldersRequest {

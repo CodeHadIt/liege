@@ -77,7 +77,7 @@ function TokenCell({
         <span className="text-[#6B6B80]">{data.percentage > 0 ? `${data.percentage.toFixed(3)}%` : "—"}</span>
       </div>
       <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] font-mono">
-        <span className="text-[#6B6B80]">Invested</span>
+        <span className="text-[#6B6B80]">Bought</span>
         <span className="text-[#9B9BAA] text-right">{fmt(data.investedUsd)}</span>
         <span className="text-[#6B6B80]">Sold</span>
         <span className="text-[#9B9BAA] text-right">{fmt(data.soldUsd)}</span>
@@ -393,13 +393,32 @@ export default function SharedHoldPage() {
             {[result.tokenA, result.tokenB].map((t) => (
               <div
                 key={t.address}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-xs font-mono"
+                className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.06] text-xs font-mono"
               >
-                <span className="font-bold text-[#E8E8ED]">{t.symbol}</span>
-                <span className="text-[#6B6B80]">{t.address.slice(0, 8)}…{t.address.slice(-4)}</span>
-                {t.totalSupply != null && (
-                  <span className="text-[#6B6B80]">supply: {fmtTokens(String(t.totalSupply))}</span>
+                {t.imageUrl ? (
+                  <img
+                    src={t.imageUrl}
+                    alt={t.symbol}
+                    className="h-8 w-8 rounded-full object-cover flex-shrink-0 ring-1 ring-white/10"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                  />
+                ) : (
+                  <div className="h-8 w-8 rounded-full bg-gradient-to-br from-[#00F0FF]/20 to-[#A855F7]/20 border border-white/10 flex items-center justify-center flex-shrink-0">
+                    <span className="text-[9px] font-bold text-[#00F0FF]">{t.symbol.slice(0, 2)}</span>
+                  </div>
                 )}
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-[#E8E8ED]">{t.symbol}</span>
+                    <span className="text-[#6B6B80] text-[10px]">{t.name}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-[#6B6B80] text-[10px]">
+                    <span>{t.address.slice(0, 8)}…{t.address.slice(-4)}</span>
+                    {t.totalSupply != null && (
+                      <span>· supply: {fmtTokens(String(t.totalSupply))}</span>
+                    )}
+                  </div>
+                </div>
               </div>
             ))}
           </div>

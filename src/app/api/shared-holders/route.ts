@@ -75,6 +75,7 @@ interface MoralisTokenMeta {
   symbol: string;
   decimals: string;
   total_supply_formatted: string | null;
+  logo: string | null;
 }
 
 // ── Fetch all holders for a token (up to MAX_PAGES pages) ────────────────────
@@ -126,7 +127,7 @@ async function fetchProfitability(
 ): Promise<Map<string, MoralisProfitEntry>> {
   const data = await moralisFetch<MoralisProfitResponse>(
     `/wallets/${walletAddress}/profitability`,
-    { chain: moralisChain }
+    { chain: moralisChain, "token_addresses[0]": tokenA, "token_addresses[1]": tokenB }
   );
 
   const result = new Map<string, MoralisProfitEntry>();
@@ -235,6 +236,7 @@ export async function POST(request: Request) {
         priceUsd: null,
         marketCap: null,
         totalSupply: totalSupplyA,
+        imageUrl: metaA?.logo ?? null,
       };
       const tokenBMeta: SharedHolderTokenMeta = {
         address: addrB,
@@ -244,6 +246,7 @@ export async function POST(request: Request) {
         priceUsd: null,
         marketCap: null,
         totalSupply: totalSupplyB,
+        imageUrl: metaB?.logo ?? null,
       };
       const resp: SharedHoldersResponse = { holders: [], tokenA: tokenAMeta, tokenB: tokenBMeta, chain };
       return NextResponse.json(resp);
@@ -296,6 +299,7 @@ export async function POST(request: Request) {
       priceUsd: null,
       marketCap: null,
       totalSupply: totalSupplyA,
+      imageUrl: metaA?.logo ?? null,
     };
     const tokenBMeta: SharedHolderTokenMeta = {
       address: addrB,
@@ -305,6 +309,7 @@ export async function POST(request: Request) {
       priceUsd: null,
       marketCap: null,
       totalSupply: totalSupplyB,
+      imageUrl: metaB?.logo ?? null,
     };
 
     const response: SharedHoldersResponse = {
