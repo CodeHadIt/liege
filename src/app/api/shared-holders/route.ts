@@ -55,8 +55,18 @@ async function moralisFetch<T>(path: string, params?: Record<string, string>): P
     const res = await fetch(url.toString(), {
       headers: { "X-API-Key": key, "Accept": "application/json" },
     });
-    if (!res.ok) return null;
-    return res.json();
+    if (!res.ok) {
+      console.error(`[moralis] ${res.status} ${url.pathname}`);
+      return null;
+    }
+    const json = await res.json();
+    if (url.pathname.includes("/profitability")) {
+      console.log(`[moralis-profit] ${url.pathname.slice(-20)} raw keys:`, Object.keys(json));
+      const first = Array.isArray(json?.result) ? json.result[0] : null;
+      if (first) console.log(`[moralis-profit] first entry keys:`, Object.keys(first), "| sample:", JSON.stringify(first).slice(0, 200));
+      else console.log(`[moralis-profit] result array:`, JSON.stringify(json).slice(0, 300));
+    }
+    return json;
   } catch {
     return null;
   }
