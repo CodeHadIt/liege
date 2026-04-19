@@ -165,7 +165,7 @@ async function fetchProfitability(
   let cursor: string | null = null;
 
   for (let page = 0; page < MAX_PROFIT_PAGES; page++) {
-    const params: Record<string, string> = { chain: moralisChain };
+    const params: Record<string, string> = { chain: moralisChain, include_possible_spam: "true" };
     if (cursor) params.cursor = cursor;
 
     const data = await moralisFetch<MoralisProfitPage>(
