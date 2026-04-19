@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { UsersThree, MagnifyingGlass, ArrowSquareOut, Lightning } from "@phosphor-icons/react";
+import { useState, useEffect, useCallback } from "react";
+import { UsersThree, MagnifyingGlass, ArrowSquareOut, Lightning, Copy, Check } from "@phosphor-icons/react";
 import type { SharedHoldChain, SharedHoldersResponse, SharedHolder } from "@/types/shared-holders";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -94,6 +94,27 @@ function TokenCell({
   );
 }
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = useCallback(() => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [text]);
+  return (
+    <button
+      onClick={copy}
+      className="text-[#6B6B80] hover:text-[#E8E8ED] transition-colors"
+      title="Copy address"
+    >
+      {copied
+        ? <Check className="h-3 w-3 text-[#00FF88]" />
+        : <Copy className="h-3 w-3" />}
+    </button>
+  );
+}
+
 function HolderRow({
   holder,
   chain,
@@ -109,15 +130,18 @@ function HolderRow({
     <div className="glow-card rounded-xl p-4 space-y-3">
       {/* Address + combined PnL */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <a
-          href={scanUrl(chain, holder.address)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1.5 font-mono text-xs text-[#00F0FF] hover:text-white transition-colors"
-        >
-          <span>{truncAddr(holder.address)}</span>
-          <ArrowSquareOut className="h-3 w-3 opacity-60" />
-        </a>
+        <div className="flex items-center gap-2">
+          <a
+            href={scanUrl(chain, holder.address)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 font-mono text-xs text-[#00F0FF] hover:text-white transition-colors"
+          >
+            <span>{truncAddr(holder.address)}</span>
+            <ArrowSquareOut className="h-3 w-3 opacity-60" />
+          </a>
+          <CopyButton text={holder.address} />
+        </div>
         <div className={`text-sm font-bold font-mono ${pnlColor(holder.combinedPnl)}`}>
           {holder.combinedPnl != null
             ? `${holder.combinedPnl >= 0 ? "+" : ""}${fmt(holder.combinedPnl)} combined`
