@@ -152,43 +152,41 @@ interface MoralisProfitPage {
   cursor: string | null;
 }
 
-const MAX_PROFIT_PAGES = 10;
-
 async function fetchProfitability(
   walletAddress: string,
   moralisChain: string,
   tokenA: string,
   tokenB: string
 ): Promise<Map<string, MoralisProfitEntry>> {
-  const result = new Map<string, MoralisProfitEntry>();
-  const targets = new Set([tokenA.toLowerCase(), tokenB.toLowerCase()]);
-  let cursor: string | null = null;
+  const key = process.env.MORALIS_API_KEY;
+  if (!key) return new Map();
 
-  for (let page = 0; page < MAX_PROFIT_PAGES; page++) {
-    const params: Record<string, string> = { chain: moralisChain, include_possible_spam: "true" };
-    if (cursor) params.cursor = cursor;
+  // Use literal bracket notation in the query string — URLSearchParams encodes
+  // brackets as %5B%5D which Moralis does not accept for array params.
+  const qs = `chain=${moralisChain}&include_possible_spam=true&token_addresses[0]=${tokenA}&token_addresses[1]=${tokenB}`;
+  const url = `${MORALIS_BASE}/wallets/${walletAddress}/profitability?${qs}`;
 
-    const data = await moralisFetch<MoralisProfitPage>(
-      `/wallets/${walletAddress}/profitability`,
-      params
-    );
-    if (!data?.result?.length) break;
+  try {
+    const res = await fetch(url, {
+      headers: { "X-API-Key": key, Accept: "application/json" },
+    });
+    if (!res.ok) {
+      console.error(`[profit] ${res.status} for ${walletAddress.slice(0, 8)}`);
+      return new Map();
+    }
+    const data: MoralisProfitPage = await res.json();
+    console.log(`[profit] ${walletAddress.slice(0, 8)}: ${data.result?.length ?? 0} entries returned`);
 
-    for (const entry of data.result) {
+    const result = new Map<string, MoralisProfitEntry>();
+    const targets = new Set([tokenA.toLowerCase(), tokenB.toLowerCase()]);
+    for (const entry of data.result ?? []) {
       const addr = entry.token_address?.toLowerCase();
       if (addr && targets.has(addr)) result.set(addr, entry);
     }
-
-    // Stop early if both tokens found
-    if (result.size >= 2) break;
-
-    console.log(`[profit] ${walletAddress.slice(0,8)} page${page+1}: ${data.result.length} entries, found=${[...result.keys()].join(",")||"none"}, cursor=${!!data.cursor}`);
-
-    cursor = data.cursor ?? null;
-    if (!cursor) break;
+    return result;
+  } catch {
+    return new Map();
   }
-
-  return result;
 }
 
 // ── Build SharedHolderTokenData ───────────────────────────────────────────────
