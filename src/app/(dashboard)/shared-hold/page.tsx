@@ -1,0 +1,406 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { UsersThree, MagnifyingGlass, ArrowSquareOut, Lightning } from "@phosphor-icons/react";
+import type { SharedHoldChain, SharedHoldersResponse, SharedHolder } from "@/types/shared-holders";
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const CHAINS: { id: SharedHoldChain; label: string; logo: string }[] = [
+  { id: "eth",  label: "ETH",  logo: "/chains/eth.svg"  },
+  { id: "base", label: "Base", logo: "/chains/base.svg" },
+  { id: "bsc",  label: "BSC",  logo: "/chains/bsc.svg"  },
+];
+
+const LS_KEY = "shared-hold:state";
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function truncAddr(addr: string) {
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+function fmt(n: number | null, prefix = "$"): string {
+  if (n == null) return "—";
+  const abs = Math.abs(n);
+  const sign = n < 0 ? "-" : "";
+  if (abs >= 1e9) return `${sign}${prefix}${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${sign}${prefix}${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${sign}${prefix}${(abs / 1e3).toFixed(1)}K`;
+  return `${sign}${prefix}${abs.toFixed(2)}`;
+}
+
+function fmtTokens(bal: string): string {
+  const n = parseFloat(bal);
+  if (isNaN(n)) return bal;
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return n.toFixed(2);
+}
+
+function pnlColor(pnl: number | null): string {
+  if (pnl == null) return "text-[#6B6B80]";
+  if (pnl > 0) return "text-[#00FF88]";
+  if (pnl < 0) return "text-red-400";
+  return "text-[#6B6B80]";
+}
+
+function scanUrl(chain: SharedHoldChain, address: string): string {
+  const bases: Record<SharedHoldChain, string> = {
+    eth:  "https://etherscan.io/address",
+    base: "https://basescan.org/address",
+    bsc:  "https://bscscan.com/address",
+  };
+  return `${bases[chain]}/${address}`;
+}
+
+// ── Sub-components ─────────────────────────────────────────────────────────────
+
+function TokenCell({
+  data,
+  symbol,
+}: {
+  data: SharedHolder["tokenA"];
+  symbol: string;
+}) {
+  return (
+    <div className="space-y-1 min-w-[180px]">
+      <div className="flex items-baseline gap-2">
+        <span className="text-sm font-semibold text-[#E8E8ED]">
+          {fmtTokens(data.balance)}
+        </span>
+        <span className="text-[10px] font-mono text-[#6B6B80] uppercase">{symbol}</span>
+      </div>
+      <div className="flex items-center gap-3 text-[11px] font-mono">
+        <span className="text-[#9B9BAA]">{fmt(data.balanceUsd)}</span>
+        <span className="text-[#6B6B80]">{data.percentage > 0 ? `${data.percentage.toFixed(3)}%` : "—"}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] font-mono">
+        <span className="text-[#6B6B80]">Invested</span>
+        <span className="text-[#9B9BAA] text-right">{fmt(data.investedUsd)}</span>
+        <span className="text-[#6B6B80]">Sold</span>
+        <span className="text-[#9B9BAA] text-right">{fmt(data.soldUsd)}</span>
+        <span className="text-[#6B6B80]">Buy MC</span>
+        <span className="text-[#9B9BAA] text-right">{fmt(data.buyMarketCap)}</span>
+        <span className="text-[#6B6B80]">PnL</span>
+        <span className={`text-right font-semibold ${pnlColor(data.totalPnl)}`}>
+          {data.totalPnl != null
+            ? `${data.totalPnl >= 0 ? "+" : ""}${fmt(data.totalPnl)}`
+            : "—"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function HolderRow({
+  holder,
+  chain,
+  symbolA,
+  symbolB,
+}: {
+  holder: SharedHolder;
+  chain: SharedHoldChain;
+  symbolA: string;
+  symbolB: string;
+}) {
+  return (
+    <div className="glow-card rounded-xl p-4 space-y-3">
+      {/* Address + combined PnL */}
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <a
+          href={scanUrl(chain, holder.address)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 font-mono text-xs text-[#00F0FF] hover:text-white transition-colors"
+        >
+          <span>{truncAddr(holder.address)}</span>
+          <ArrowSquareOut className="h-3 w-3 opacity-60" />
+        </a>
+        <div className={`text-sm font-bold font-mono ${pnlColor(holder.combinedPnl)}`}>
+          {holder.combinedPnl != null
+            ? `${holder.combinedPnl >= 0 ? "+" : ""}${fmt(holder.combinedPnl)} combined`
+            : "—"}
+        </div>
+      </div>
+
+      {/* Token columns */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1 border-t border-white/[0.04]">
+        <div>
+          <div className="text-[9px] font-mono font-semibold uppercase tracking-widest text-[#6B6B80] mb-2">
+            {symbolA}
+          </div>
+          <TokenCell data={holder.tokenA} symbol={symbolA} />
+        </div>
+        <div className="sm:border-l sm:border-white/[0.04] sm:pl-4">
+          <div className="text-[9px] font-mono font-semibold uppercase tracking-widest text-[#6B6B80] mb-2">
+            {symbolB}
+          </div>
+          <TokenCell data={holder.tokenB} symbol={symbolB} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
+
+export default function SharedHoldPage() {
+  const [chain, setChain] = useState<SharedHoldChain>("eth");
+  const [addressA, setAddressA] = useState("");
+  const [addressB, setAddressB] = useState("");
+  const [result, setResult] = useState<SharedHoldersResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Restore state from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(LS_KEY);
+      if (saved) {
+        const { chain: c, addressA: a, addressB: b, result: r } = JSON.parse(saved);
+        if (c) setChain(c);
+        if (a) setAddressA(a);
+        if (b) setAddressB(b);
+        if (r) setResult(r);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const isValid =
+    /^0x[a-fA-F0-9]{40}$/.test(addressA.trim()) &&
+    /^0x[a-fA-F0-9]{40}$/.test(addressB.trim()) &&
+    addressA.trim().toLowerCase() !== addressB.trim().toLowerCase();
+
+  async function handleSearch() {
+    if (!isValid || loading) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+
+    try {
+      const res = await fetch("/api/shared-holders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chain, addressA: addressA.trim(), addressB: addressB.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? "Failed to fetch data.");
+        return;
+      }
+      setResult(data as SharedHoldersResponse);
+      try {
+        localStorage.setItem(
+          LS_KEY,
+          JSON.stringify({ chain, addressA: addressA.trim(), addressB: addressB.trim(), result: data })
+        );
+      } catch { /* ignore */ }
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const chainCfg = CHAINS.find((c) => c.id === chain)!;
+
+  return (
+    <div className="space-y-6">
+      {/* Page header */}
+      <div className="flex items-center gap-3">
+        <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#00F0FF]/20 to-[#A855F7]/20 border border-[#00F0FF]/10 flex items-center justify-center">
+          <UsersThree className="h-5 w-5 text-[#00F0FF]" />
+        </div>
+        <div>
+          <h1 className="text-xl font-bold text-[#E8E8ED]">Shared Holders</h1>
+          <p className="text-xs text-[#6B6B80] font-mono">
+            Find wallets that currently hold two tokens at the same time
+          </p>
+        </div>
+      </div>
+
+      {/* Input card */}
+      <div className="glow-card rounded-xl overflow-hidden">
+        {/* Chain selector */}
+        <div className="px-5 py-3 border-b border-white/[0.04] flex items-center justify-between">
+          <span className="text-[10px] font-mono font-semibold uppercase tracking-[0.15em] text-[#6B6B80]">
+            Chain
+          </span>
+          <div className="flex items-center gap-1.5">
+            {CHAINS.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => {
+                  setChain(c.id);
+                  setResult(null);
+                  setError(null);
+                }}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-mono font-semibold uppercase tracking-wider transition-all ${
+                  chain === c.id
+                    ? "bg-[#00F0FF]/10 text-[#00F0FF] border border-[#00F0FF]/20"
+                    : "text-[#6B6B80] hover:text-[#E8E8ED] hover:bg-white/[0.04] border border-transparent"
+                }`}
+              >
+                <img
+                  src={c.logo}
+                  alt={c.label}
+                  className="h-3.5 w-3.5 rounded-full"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                />
+                {c.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Address inputs */}
+        <div className="p-5 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-mono font-semibold uppercase tracking-widest text-[#6B6B80]">
+                Token A
+              </label>
+              <div className="relative">
+                <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#6B6B80]" />
+                <input
+                  type="text"
+                  placeholder="0x contract address"
+                  value={addressA}
+                  onChange={(e) => { setAddressA(e.target.value); setResult(null); setError(null); }}
+                  className="w-full pl-8 pr-3 py-2.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-xs font-mono text-[#E8E8ED] placeholder:text-[#6B6B80] focus:outline-none focus:border-[#00F0FF]/40 focus:bg-white/[0.06] transition-all"
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-mono font-semibold uppercase tracking-widest text-[#6B6B80]">
+                Token B
+              </label>
+              <div className="relative">
+                <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#6B6B80]" />
+                <input
+                  type="text"
+                  placeholder="0x contract address"
+                  value={addressB}
+                  onChange={(e) => { setAddressB(e.target.value); setResult(null); setError(null); }}
+                  className="w-full pl-8 pr-3 py-2.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-xs font-mono text-[#E8E8ED] placeholder:text-[#6B6B80] focus:outline-none focus:border-[#00F0FF]/40 focus:bg-white/[0.06] transition-all"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-mono text-[#6B6B80]">
+              Searches top 500 holders per token · EOA wallets only · min $1 held
+            </span>
+            <button
+              onClick={handleSearch}
+              disabled={!isValid || loading}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-[#00F0FF]/20 to-[#0080FF]/20 border border-[#00F0FF]/20 text-sm font-mono font-semibold text-[#00F0FF] hover:from-[#00F0FF]/30 hover:to-[#0080FF]/30 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              {loading ? (
+                <>
+                  <div className="h-3.5 w-3.5 border border-[#00F0FF]/40 border-t-transparent rounded-full animate-spin" />
+                  Searching…
+                </>
+              ) : (
+                <>
+                  <Lightning className="h-3.5 w-3.5" />
+                  Find Shared Holders
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Error */}
+      {error && !loading && (
+        <div className="glow-card rounded-xl px-5 py-4 border border-red-500/20 bg-red-500/[0.04]">
+          <p className="text-sm font-mono text-red-400">{error}</p>
+        </div>
+      )}
+
+      {/* Loading skeleton */}
+      {loading && (
+        <div className="space-y-3">
+          <div className="text-xs font-mono text-[#6B6B80] animate-pulse">
+            Fetching holders across both tokens… this may take ~30 seconds
+          </div>
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="glow-card rounded-xl p-4 h-32 animate-pulse bg-white/[0.02]" />
+          ))}
+        </div>
+      )}
+
+      {/* Results */}
+      {result && !loading && (
+        <div className="space-y-4">
+          {/* Summary bar */}
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-bold text-[#E8E8ED]">
+                {result.holders.length} shared holder{result.holders.length !== 1 ? "s" : ""}
+              </span>
+              <span className="text-[10px] font-mono text-[#6B6B80]">
+                holding both{" "}
+                <span className="text-[#00F0FF]">{result.tokenA.symbol}</span>
+                {" & "}
+                <span className="text-[#00F0FF]">{result.tokenB.symbol}</span>
+                {" on "}
+                <span className="text-[#E8E8ED]">{chainCfg.label}</span>
+              </span>
+            </div>
+            {chain !== "bsc" && (
+              <span className="text-[10px] font-mono text-[#6B6B80]">
+                PnL data included · sorted by combined PnL
+              </span>
+            )}
+            {chain === "bsc" && (
+              <span className="text-[10px] font-mono text-amber-500/70">
+                PnL data not available for BSC
+              </span>
+            )}
+          </div>
+
+          {/* Token info pills */}
+          <div className="flex items-center gap-3 flex-wrap">
+            {[result.tokenA, result.tokenB].map((t) => (
+              <div
+                key={t.address}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.06] text-xs font-mono"
+              >
+                <span className="font-bold text-[#E8E8ED]">{t.symbol}</span>
+                <span className="text-[#6B6B80]">{t.address.slice(0, 8)}…{t.address.slice(-4)}</span>
+                {t.totalSupply != null && (
+                  <span className="text-[#6B6B80]">supply: {fmtTokens(String(t.totalSupply))}</span>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {result.holders.length === 0 ? (
+            <div className="glow-card rounded-xl px-5 py-8 text-center">
+              <p className="text-sm font-mono text-[#6B6B80]">
+                No shared holders found in the top 500 holders of each token.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {result.holders.map((holder) => (
+                <HolderRow
+                  key={holder.address}
+                  holder={holder}
+                  chain={result.chain}
+                  symbolA={result.tokenA.symbol}
+                  symbolB={result.tokenB.symbol}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

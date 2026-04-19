@@ -14,6 +14,7 @@ import {
   Rocket,
   ShieldCheck,
   Star,
+  UsersThree,
 } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +26,7 @@ const navItems = [
   { href: "/common-top-traders", label: "Common Traders", icon: GitDiff, shortcut: "C" },
   { href: "/pump-fun", label: "Pump.fun", icon: Rocket, shortcut: "P" },
   { href: "/dex-orders", label: "Dex Orders", icon: ShieldCheck, shortcut: "D" },
+  { href: "/shared-hold", label: "Shared Holders", icon: UsersThree, shortcut: "H" },
 ];
 
 export function Sidebar() {
