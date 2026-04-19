@@ -172,6 +172,8 @@ async function fetchProfitability(
     // Stop early if both tokens found
     if (result.size >= 2) break;
 
+    console.log(`[profit] ${walletAddress.slice(0,8)} page${page+1}: ${data.result.length} entries, found=${[...result.keys()].join(",")||"none"}, cursor=${!!data.cursor}`);
+
     cursor = data.cursor ?? null;
     if (!cursor) break;
   }

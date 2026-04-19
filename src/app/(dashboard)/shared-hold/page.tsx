@@ -316,7 +316,7 @@ export default function SharedHoldPage() {
 
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-mono text-[#6B6B80]">
-              Searches top 500 holders per token · EOA wallets only · min $1 held
+              Searches top 500 holders per token · min $1 held
             </span>
             <button
               onClick={handleSearch}
