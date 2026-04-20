@@ -7,9 +7,10 @@ import type { SharedHoldChain, SharedHoldersResponse, SharedHolder } from "@/typ
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const CHAINS: { id: SharedHoldChain; label: string; logo: string }[] = [
-  { id: "eth",  label: "ETH",  logo: "/chains/eth.svg"  },
-  { id: "base", label: "Base", logo: "/chains/base.svg" },
-  { id: "bsc",  label: "BSC",  logo: "/chains/bsc.svg"  },
+  { id: "solana", label: "Solana", logo: "/chains/solana.svg" },
+  { id: "eth",    label: "ETH",    logo: "/chains/eth.svg"    },
+  { id: "base",   label: "Base",   logo: "/chains/base.svg"   },
+  { id: "bsc",    label: "BSC",    logo: "/chains/bsc.svg"    },
 ];
 
 const LS_KEY = "shared-hold:state";
@@ -48,11 +49,17 @@ function pnlColor(pnl: number | null): string {
 
 function scanUrl(chain: SharedHoldChain, address: string): string {
   const bases: Record<SharedHoldChain, string> = {
-    eth:  "https://etherscan.io/address",
-    base: "https://basescan.org/address",
-    bsc:  "https://bscscan.com/address",
+    eth:    "https://etherscan.io/address",
+    base:   "https://basescan.org/address",
+    bsc:    "https://bscscan.com/address",
+    solana: "https://solscan.io/account",
   };
   return `${bases[chain]}/${address}`;
+}
+
+function isValidAddress(chain: SharedHoldChain, addr: string): boolean {
+  if (chain === "solana") return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(addr);
+  return /^0x[a-fA-F0-9]{40}$/.test(addr);
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -192,10 +199,13 @@ export default function SharedHoldPage() {
     } catch { /* ignore */ }
   }, []);
 
+  const trimA = addressA.trim();
+  const trimB = addressB.trim();
+  const isSolana = chain === "solana";
   const isValid =
-    /^0x[a-fA-F0-9]{40}$/.test(addressA.trim()) &&
-    /^0x[a-fA-F0-9]{40}$/.test(addressB.trim()) &&
-    addressA.trim().toLowerCase() !== addressB.trim().toLowerCase();
+    isValidAddress(chain, trimA) &&
+    isValidAddress(chain, trimB) &&
+    (isSolana ? trimA !== trimB : trimA.toLowerCase() !== trimB.toLowerCase());
 
   async function handleSearch() {
     if (!isValid || loading) return;
@@ -207,7 +217,7 @@ export default function SharedHoldPage() {
       const res = await fetch("/api/shared-holders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chain, addressA: addressA.trim(), addressB: addressB.trim() }),
+        body: JSON.stringify({ chain, addressA: trimA, addressB: trimB }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -218,7 +228,7 @@ export default function SharedHoldPage() {
       try {
         localStorage.setItem(
           LS_KEY,
-          JSON.stringify({ chain, addressA: addressA.trim(), addressB: addressB.trim(), result: data })
+          JSON.stringify({ chain, addressA: trimA, addressB: trimB, result: data })
         );
       } catch { /* ignore */ }
     } catch {
@@ -290,7 +300,7 @@ export default function SharedHoldPage() {
                 <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#6B6B80]" />
                 <input
                   type="text"
-                  placeholder="0x contract address"
+                  placeholder={isSolana ? "Token mint address" : "0x contract address"}
                   value={addressA}
                   onChange={(e) => { setAddressA(e.target.value); setResult(null); setError(null); }}
                   className="w-full pl-8 pr-3 py-2.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-xs font-mono text-[#E8E8ED] placeholder:text-[#6B6B80] focus:outline-none focus:border-[#00F0FF]/40 focus:bg-white/[0.06] transition-all"
@@ -305,7 +315,7 @@ export default function SharedHoldPage() {
                 <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#6B6B80]" />
                 <input
                   type="text"
-                  placeholder="0x contract address"
+                  placeholder={isSolana ? "Token mint address" : "0x contract address"}
                   value={addressB}
                   onChange={(e) => { setAddressB(e.target.value); setResult(null); setError(null); }}
                   className="w-full pl-8 pr-3 py-2.5 rounded-lg bg-white/[0.04] border border-white/[0.08] text-xs font-mono text-[#E8E8ED] placeholder:text-[#6B6B80] focus:outline-none focus:border-[#00F0FF]/40 focus:bg-white/[0.06] transition-all"

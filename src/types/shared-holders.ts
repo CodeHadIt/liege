@@ -1,4 +1,4 @@
-export type SharedHoldChain = "eth" | "base" | "bsc";
+export type SharedHoldChain = "eth" | "base" | "bsc" | "solana";
 
 export interface SharedHolderTokenData {
   balance: string;             // human-readable token balance
@@ -9,14 +9,14 @@ export interface SharedHolderTokenData {
   avgBuyPrice: number | null;  // average buy price per token
   buyMarketCap: number | null; // avgBuyPrice × totalSupply (MC when bought)
   realizedPnl: number | null;  // realized PnL in USD
-  totalPnl: number | null;     // current balance + sold - invested
+  totalPnl: number;            // realizedPnl + unrealizedPnl
 }
 
 export interface SharedHolder {
   address: string;
   tokenA: SharedHolderTokenData;
   tokenB: SharedHolderTokenData;
-  combinedPnl: number | null;  // sum of both tokens' totalPnl
+  combinedPnl: number;  // sum of both tokens' totalPnl
 }
 
 export interface SharedHolderTokenMeta {

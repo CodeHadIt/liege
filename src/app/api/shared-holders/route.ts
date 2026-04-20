@@ -7,11 +7,37 @@ import type {
   SharedHoldersRequest,
   SharedHoldersResponse,
 } from "@/types/shared-holders";
+import { scrapeGmgnHoldersPaginated, type GmgnTopTrader } from "@/lib/api/gmgn-scraper";
+import { getAssetBatch, getMintInfo } from "@/lib/api/helius";
+
+export const maxDuration = 120;
+
+// ── Address validation ────────────────────────────────────────────────────────
+
+const EVM_RE    = /^0x[a-fA-F0-9]{40}$/;
+const SOLANA_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+function validateAddresses(chain: SharedHoldChain, a: string, b: string): string | null {
+  const re = chain === "solana" ? SOLANA_RE : EVM_RE;
+  if (!re.test(a) || !re.test(b)) {
+    return chain === "solana"
+      ? "Provide two valid Solana mint addresses."
+      : "Provide two valid EVM contract addresses (0x…).";
+  }
+  const norm = chain === "solana"
+    ? (s: string) => s          // Solana: case-sensitive
+    : (s: string) => s.toLowerCase();
+  if (norm(a) === norm(b)) return "Addresses must be different.";
+  return null;
+}
+
+// ── DexScreener image ─────────────────────────────────────────────────────────
 
 const DEX_CHAIN: Record<SharedHoldChain, string> = {
-  eth:  "ethereum",
-  base: "base",
-  bsc:  "bsc",
+  eth:    "ethereum",
+  base:   "base",
+  bsc:    "bsc",
+  solana: "solana",
 };
 
 async function fetchDexImage(chain: SharedHoldChain, address: string): Promise<string | null> {
@@ -29,72 +55,14 @@ async function fetchDexImage(chain: SharedHoldChain, address: string): Promise<s
   }
 }
 
-export const maxDuration = 120;
+// ── EVM token metadata via Moralis ────────────────────────────────────────────
 
-const MORALIS_BASE = "https://deep-index.moralis.io/api/v2.2";
-const MORALIS_CHAIN: Record<SharedHoldChain, string> = {
+const MORALIS_BASE  = "https://deep-index.moralis.io/api/v2.2";
+const MORALIS_CHAIN: Record<string, string> = {
   eth:  "eth",
   base: "base",
   bsc:  "bsc",
 };
-// Moralis wallet profitability is only supported on ETH and Base
-const PROFITABILITY_CHAINS = new Set<SharedHoldChain>(["eth", "base"]);
-
-// ── Moralis fetch helper ──────────────────────────────────────────────────────
-
-async function moralisFetch<T>(path: string, params?: Record<string, string>): Promise<T | null> {
-  const key = process.env.MORALIS_API_KEY;
-  if (!key) return null;
-
-  const url = new URL(`${MORALIS_BASE}${path}`);
-  if (params) {
-    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-  }
-
-  try {
-    const res = await fetch(url.toString(), {
-      headers: { "X-API-Key": key, "Accept": "application/json" },
-    });
-    if (!res.ok) {
-      console.error(`[moralis] ${res.status} ${url.pathname}`);
-      return null;
-    }
-    const json = await res.json();
-    if (url.pathname.includes("/profitability")) {
-      console.log(`[moralis-profit] ${url.pathname.slice(-20)} raw keys:`, Object.keys(json));
-      const first = Array.isArray(json?.result) ? json.result[0] : null;
-      if (first) console.log(`[moralis-profit] first entry keys:`, Object.keys(first), "| sample:", JSON.stringify(first).slice(0, 200));
-      else console.log(`[moralis-profit] result array:`, JSON.stringify(json).slice(0, 300));
-    }
-    return json;
-  } catch {
-    return null;
-  }
-}
-
-// ── Types for Moralis responses ───────────────────────────────────────────────
-
-interface MoralisHolder {
-  owner_address: string;
-  balance_formatted: string;
-  usd_value: string | null;
-  percentage_relative_to_total_supply: number | null;
-  is_contract: boolean;
-}
-
-interface MoralisHoldersPage {
-  result: MoralisHolder[];
-  cursor: string | null;
-}
-
-interface MoralisProfitEntry {
-  token_address: string;
-  avg_buy_price_usd: string | null;
-  total_usd_invested: string | null;
-  total_tokens_bought: string | null;
-  total_sold_usd: string | null;
-  realized_profit_usd: string | null;
-}
 
 interface MoralisTokenMeta {
   address: string;
@@ -105,131 +73,81 @@ interface MoralisTokenMeta {
   logo: string | null;
 }
 
-// ── Fetch all holders for a token (up to MAX_PAGES pages) ────────────────────
-
-const MAX_PAGES = 5; // 500 holders max per token
-
-async function fetchHolders(
-  tokenAddress: string,
-  moralisChain: string
-): Promise<Map<string, { balance: string; usd: number; pct: number }>> {
-  const map = new Map<string, { balance: string; usd: number; pct: number }>();
-  let cursor: string | null = null;
-
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const params: Record<string, string> = { chain: moralisChain, limit: "100" };
-    if (cursor) params.cursor = cursor;
-
-    const data = await moralisFetch<MoralisHoldersPage>(
-      `/erc20/${tokenAddress.toLowerCase()}/owners`,
-      params
-    );
-    if (!data?.result?.length) break;
-
-    for (const h of data.result) {
-      if (h.is_contract) continue;
-      const usd = parseFloat(h.usd_value ?? "0") || 0;
-      if (usd < 1) continue; // filter < $1
-      map.set(h.owner_address.toLowerCase(), {
-        balance: h.balance_formatted,
-        usd,
-        pct: h.percentage_relative_to_total_supply ?? 0,
-      });
-    }
-
-    cursor = data.cursor ?? null;
-    if (!cursor) break;
-  }
-
-  return map;
-}
-
-// ── Fetch wallet profitability for two specific tokens ────────────────────────
-// Moralis paginates profitability results — paginate until both tokens found.
-
-interface MoralisProfitPage {
-  result: MoralisProfitEntry[];
-  cursor: string | null;
-}
-
-async function fetchProfitability(
-  walletAddress: string,
-  moralisChain: string,
-  tokenA: string,
-  tokenB: string
-): Promise<Map<string, MoralisProfitEntry>> {
+async function fetchEvmTokenMeta(
+  chain: string,
+  addrA: string,
+  addrB: string
+): Promise<MoralisTokenMeta[] | null> {
   const key = process.env.MORALIS_API_KEY;
-  if (!key) return new Map();
-
-  // Use literal bracket notation in the query string — URLSearchParams encodes
-  // brackets as %5B%5D which Moralis does not accept for array params.
-  const qs = `chain=${moralisChain}&include_possible_spam=true&token_addresses[0]=${tokenA}&token_addresses[1]=${tokenB}`;
-  const url = `${MORALIS_BASE}/wallets/${walletAddress}/profitability?${qs}`;
-
+  if (!key) return null;
+  const url = new URL(`${MORALIS_BASE}/erc20/metadata`);
+  url.searchParams.set("chain", chain);
+  url.searchParams.set("addresses[0]", addrA);
+  url.searchParams.set("addresses[1]", addrB);
   try {
-    const res = await fetch(url, {
+    const res = await fetch(url.toString(), {
       headers: { "X-API-Key": key, Accept: "application/json" },
     });
-    if (!res.ok) {
-      console.error(`[profit] ${res.status} for ${walletAddress.slice(0, 8)}`);
-      return new Map();
-    }
-    const data: MoralisProfitPage = await res.json();
-    console.log(`[profit] ${walletAddress.slice(0, 8)}: ${data.result?.length ?? 0} entries returned`);
-
-    const result = new Map<string, MoralisProfitEntry>();
-    const targets = new Set([tokenA.toLowerCase(), tokenB.toLowerCase()]);
-    for (const entry of data.result ?? []) {
-      const addr = entry.token_address?.toLowerCase();
-      if (addr && targets.has(addr)) result.set(addr, entry);
-    }
-    return result;
+    if (!res.ok) return null;
+    return res.json();
   } catch {
-    return new Map();
+    return null;
   }
 }
 
-// ── Build SharedHolderTokenData ───────────────────────────────────────────────
+// ── Solana token metadata via Helius ──────────────────────────────────────────
 
-function buildTokenData(
-  holderInfo: { balance: string; usd: number; pct: number },
-  profitEntry: MoralisProfitEntry | undefined,
-  totalSupply: number | null
-): SharedHolderTokenData {
-  const investedUsd = profitEntry?.total_usd_invested != null
-    ? parseFloat(profitEntry.total_usd_invested) || null
-    : null;
-  const soldUsd = profitEntry?.total_sold_usd != null
-    ? parseFloat(profitEntry.total_sold_usd) || null
-    : null;
-  const avgBuyPrice = profitEntry?.avg_buy_price_usd != null
-    ? parseFloat(profitEntry.avg_buy_price_usd) || null
-    : null;
-  const realizedPnl = profitEntry?.realized_profit_usd != null
-    ? parseFloat(profitEntry.realized_profit_usd) || null
-    : null;
+interface SolTokenMeta {
+  symbol: string;
+  name: string;
+  imageUrl: string | null;
+  totalSupply: number | null;
+}
 
+async function fetchSolanaTokenMeta(mintA: string, mintB: string): Promise<[SolTokenMeta, SolTokenMeta]> {
+  const [assetMap, mintInfoA, mintInfoB] = await Promise.all([
+    getAssetBatch([mintA, mintB]),
+    getMintInfo(mintA),
+    getMintInfo(mintB),
+  ]);
+
+  function toMeta(mint: string, mintInfo: Awaited<ReturnType<typeof getMintInfo>>): SolTokenMeta {
+    const asset = assetMap.get(mint);
+    const decimals = mintInfo?.decimals ?? 6;
+    const rawSupply = mintInfo?.supply ? parseInt(mintInfo.supply) : null;
+    const totalSupply = rawSupply != null ? rawSupply / Math.pow(10, decimals) : null;
+    return {
+      symbol:     asset?.symbol   ?? "???",
+      name:       asset?.name     ?? "Unknown",
+      imageUrl:   asset?.logoUrl  ?? null,
+      totalSupply,
+    };
+  }
+
+  return [toMeta(mintA, mintInfoA), toMeta(mintB, mintInfoB)];
+}
+
+// ── Build per-token data from GMGN holder record ──────────────────────────────
+
+function buildTokenData(trader: GmgnTopTrader, totalSupply: number | null): SharedHolderTokenData {
+  const investedUsd = trader.historyBoughtCostUsd > 0 ? trader.historyBoughtCostUsd : null;
+  const soldUsd     = trader.historySoldIncomeUsd > 0 ? trader.historySoldIncomeUsd : null;
+  const avgBuyPrice = trader.avgCostUsd > 0 ? trader.avgCostUsd : null;
   const buyMarketCap =
     avgBuyPrice != null && totalSupply != null && totalSupply > 0
       ? avgBuyPrice * totalSupply
       : null;
 
-  // Total PnL = current balance + what you got from selling - what you put in
-  const totalPnl =
-    investedUsd != null
-      ? holderInfo.usd + (soldUsd ?? 0) - investedUsd
-      : null;
-
   return {
-    balance: holderInfo.balance,
-    balanceUsd: holderInfo.usd,
-    percentage: holderInfo.pct,
+    balance:      String(trader.balance),
+    balanceUsd:   trader.balanceUsd,
+    percentage:   trader.supplyPercent,
     investedUsd,
     soldUsd,
     avgBuyPrice,
     buyMarketCap,
-    realizedPnl,
-    totalPnl,
+    realizedPnl:  trader.realizedProfitUsd,
+    totalPnl:     trader.realizedProfitUsd + trader.unrealizedProfitUsd,
   };
 }
 
@@ -240,138 +158,99 @@ export async function POST(request: Request) {
     const body = (await request.json()) as SharedHoldersRequest;
     const { chain, addressA, addressB } = body;
 
-    if (!chain || !MORALIS_CHAIN[chain]) {
-      return NextResponse.json({ error: "Invalid chain. Use eth, base, or bsc." }, { status: 400 });
-    }
-    if (!addressA || !addressB || !/^0x[a-fA-F0-9]{40}$/.test(addressA) || !/^0x[a-fA-F0-9]{40}$/.test(addressB)) {
-      return NextResponse.json({ error: "Provide two valid EVM contract addresses." }, { status: 400 });
-    }
-    if (addressA.toLowerCase() === addressB.toLowerCase()) {
-      return NextResponse.json({ error: "Addresses must be different." }, { status: 400 });
+    const VALID_CHAINS: SharedHoldChain[] = ["eth", "base", "bsc", "solana"];
+    if (!chain || !VALID_CHAINS.includes(chain)) {
+      return NextResponse.json({ error: "Invalid chain. Use eth, base, bsc, or solana." }, { status: 400 });
     }
 
-    const moralisChain = MORALIS_CHAIN[chain];
-    const addrA = addressA.toLowerCase();
-    const addrB = addressB.toLowerCase();
+    const validationError = validateAddresses(chain, addressA ?? "", addressB ?? "");
+    if (validationError) {
+      return NextResponse.json({ error: validationError }, { status: 400 });
+    }
 
-    // Fetch token metadata + holders + DexScreener images in parallel
-    const [metaRaw, holdersA, holdersB, dexImgA, dexImgB] = await Promise.all([
-      moralisFetch<MoralisTokenMeta[]>(
-        `/erc20/metadata`,
-        { chain: moralisChain, "addresses[0]": addrA, "addresses[1]": addrB }
-      ),
-      fetchHolders(addrA, moralisChain),
-      fetchHolders(addrB, moralisChain),
+    const isSolana = chain === "solana";
+    const addrA = isSolana ? addressA : addressA.toLowerCase();
+    const addrB = isSolana ? addressB : addressB.toLowerCase();
+
+    // Scrape GMGN holders for both tokens + fetch metadata + images — all in parallel
+    const [rawHoldersA, rawHoldersB, metaResult, dexImgA, dexImgB] = await Promise.all([
+      scrapeGmgnHoldersPaginated(chain, addrA),
+      scrapeGmgnHoldersPaginated(chain, addrB),
+      isSolana
+        ? fetchSolanaTokenMeta(addrA, addrB)
+        : fetchEvmTokenMeta(MORALIS_CHAIN[chain], addrA, addrB),
       fetchDexImage(chain, addrA),
       fetchDexImage(chain, addrB),
     ]);
 
-    const metaA = metaRaw?.find((m) => m.address?.toLowerCase() === addrA);
-    const metaB = metaRaw?.find((m) => m.address?.toLowerCase() === addrB);
-    const imageA = dexImgA ?? metaA?.logo ?? null;
-    const imageB = dexImgB ?? metaB?.logo ?? null;
+    // Resolve metadata per chain
+    let symbolA = "???", nameA = "Unknown", totalSupplyA: number | null = null, logoA: string | null = null;
+    let symbolB = "???", nameB = "Unknown", totalSupplyB: number | null = null, logoB: string | null = null;
 
-    const totalSupplyA = metaA?.total_supply_formatted != null
-      ? parseFloat(metaA.total_supply_formatted) || null : null;
-    const totalSupplyB = metaB?.total_supply_formatted != null
-      ? parseFloat(metaB.total_supply_formatted) || null : null;
+    if (isSolana) {
+      const [mA, mB] = metaResult as unknown as [SolTokenMeta, SolTokenMeta];
+      symbolA = mA.symbol; nameA = mA.name; totalSupplyA = mA.totalSupply; logoA = mA.imageUrl;
+      symbolB = mB.symbol; nameB = mB.name; totalSupplyB = mB.totalSupply; logoB = mB.imageUrl;
+    } else {
+      const evmMeta = metaResult as MoralisTokenMeta[] | null;
+      const mA = evmMeta?.find((m) => m.address?.toLowerCase() === addrA);
+      const mB = evmMeta?.find((m) => m.address?.toLowerCase() === addrB);
+      symbolA = mA?.symbol ?? "???"; nameA = mA?.name ?? "Unknown";
+      totalSupplyA = mA?.total_supply_formatted != null ? parseFloat(mA.total_supply_formatted) || null : null;
+      logoA = mA?.logo ?? null;
+      symbolB = mB?.symbol ?? "???"; nameB = mB?.name ?? "Unknown";
+      totalSupplyB = mB?.total_supply_formatted != null ? parseFloat(mB.total_supply_formatted) || null : null;
+      logoB = mB?.logo ?? null;
+    }
 
-    // Intersect — wallets that hold both tokens with > $1 in each
+    const imageA = dexImgA ?? logoA ?? null;
+    const imageB = dexImgB ?? logoB ?? null;
+
+    // Filter: ≥$1 USD value, OR for Solana (pump.fun tokens often lack USD price)
+    // fall back to balance > 0 so price-less tokens aren't excluded entirely.
+    const meetsThreshold = (t: GmgnTopTrader) =>
+      t.balanceUsd >= 1 || (isSolana && t.balance > 0);
+
+    const holdersA = new Map<string, GmgnTopTrader>(
+      rawHoldersA.filter(meetsThreshold).map((t) => [t.walletAddress, t])
+    );
+    const holdersB = new Map<string, GmgnTopTrader>(
+      rawHoldersB.filter(meetsThreshold).map((t) => [t.walletAddress, t])
+    );
+
+    const tokenAMeta: SharedHolderTokenMeta = {
+      address: addrA, symbol: symbolA, name: nameA,
+      decimals: 18, priceUsd: null, marketCap: null,
+      totalSupply: totalSupplyA, imageUrl: imageA,
+    };
+    const tokenBMeta: SharedHolderTokenMeta = {
+      address: addrB, symbol: symbolB, name: nameB,
+      decimals: 18, priceUsd: null, marketCap: null,
+      totalSupply: totalSupplyB, imageUrl: imageB,
+    };
+
+    // Intersection
     const commonAddresses = [...holdersA.keys()].filter((addr) => holdersB.has(addr));
 
     if (commonAddresses.length === 0) {
-      const tokenAMeta: SharedHolderTokenMeta = {
-        address: addrA,
-        symbol: metaA?.symbol ?? "???",
-        name: metaA?.name ?? "Unknown",
-        decimals: parseInt(metaA?.decimals ?? "18"),
-        priceUsd: null,
-        marketCap: null,
-        totalSupply: totalSupplyA,
-        imageUrl: imageA,
-      };
-      const tokenBMeta: SharedHolderTokenMeta = {
-        address: addrB,
-        symbol: metaB?.symbol ?? "???",
-        name: metaB?.name ?? "Unknown",
-        decimals: parseInt(metaB?.decimals ?? "18"),
-        priceUsd: null,
-        marketCap: null,
-        totalSupply: totalSupplyB,
-        imageUrl: imageB,
-      };
-      const resp: SharedHoldersResponse = { holders: [], tokenA: tokenAMeta, tokenB: tokenBMeta, chain };
-      return NextResponse.json(resp);
+      return NextResponse.json({
+        holders: [], tokenA: tokenAMeta, tokenB: tokenBMeta, chain,
+      } satisfies SharedHoldersResponse);
     }
 
-    // Fetch profitability for all common holders in parallel (skip for BSC)
-    const supportsProfit = PROFITABILITY_CHAINS.has(chain);
-    const profitResults = supportsProfit
-      ? await Promise.allSettled(
-          commonAddresses.map((addr) =>
-            fetchProfitability(addr, moralisChain, addrA, addrB)
-          )
-        )
-      : null;
-
-    // Build response holders
     const holders: SharedHolder[] = commonAddresses
-      .map((addr, i) => {
-        const profitMap =
-          profitResults?.[i]?.status === "fulfilled"
-            ? (profitResults[i] as PromiseFulfilledResult<Map<string, MoralisProfitEntry>>).value
-            : undefined;
-
-        const tokenAData = buildTokenData(
-          holdersA.get(addr)!,
-          profitMap?.get(addrA),
-          totalSupplyA
-        );
-        const tokenBData = buildTokenData(
-          holdersB.get(addr)!,
-          profitMap?.get(addrB),
-          totalSupplyB
-        );
-
-        const combinedPnl =
-          tokenAData.totalPnl != null || tokenBData.totalPnl != null
-            ? (tokenAData.totalPnl ?? 0) + (tokenBData.totalPnl ?? 0)
-            : null;
-
+      .map((addr) => {
+        const tokenAData = buildTokenData(holdersA.get(addr)!, totalSupplyA);
+        const tokenBData = buildTokenData(holdersB.get(addr)!, totalSupplyB);
+        const combinedPnl = tokenAData.totalPnl + tokenBData.totalPnl;
         return { address: addr, tokenA: tokenAData, tokenB: tokenBData, combinedPnl };
       })
-      .sort((a, b) => (b.combinedPnl ?? b.tokenA.balanceUsd + b.tokenB.balanceUsd) -
-                       (a.combinedPnl ?? a.tokenA.balanceUsd + a.tokenB.balanceUsd));
+      .sort((a, b) => b.combinedPnl - a.combinedPnl);
 
-    const tokenAMeta: SharedHolderTokenMeta = {
-      address: addrA,
-      symbol: metaA?.symbol ?? "???",
-      name: metaA?.name ?? "Unknown",
-      decimals: parseInt(metaA?.decimals ?? "18"),
-      priceUsd: null,
-      marketCap: null,
-      totalSupply: totalSupplyA,
-      imageUrl: metaA?.logo ?? null,
-    };
-    const tokenBMeta: SharedHolderTokenMeta = {
-      address: addrB,
-      symbol: metaB?.symbol ?? "???",
-      name: metaB?.name ?? "Unknown",
-      decimals: parseInt(metaB?.decimals ?? "18"),
-      priceUsd: null,
-      marketCap: null,
-      totalSupply: totalSupplyB,
-      imageUrl: metaB?.logo ?? null,
-    };
+    return NextResponse.json({
+      holders, tokenA: tokenAMeta, tokenB: tokenBMeta, chain,
+    } satisfies SharedHoldersResponse);
 
-    const response: SharedHoldersResponse = {
-      holders,
-      tokenA: tokenAMeta,
-      tokenB: tokenBMeta,
-      chain,
-    };
-
-    return NextResponse.json(response);
   } catch (error) {
     console.error("[shared-holders]", error);
     return NextResponse.json({ error: "Failed to find shared holders." }, { status: 500 });

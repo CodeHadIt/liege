@@ -104,16 +104,18 @@ const CHAIN_TO_GMGN: Record<string, string> = {
 
 /**
  * Navigate to the GMGN token page, capture the page's auto-fired token_holders
- * response (session signal), then optionally fire a second credentialed fetch
- * to `customApiUrl`.
+ * response (session signal + auth params), then optionally fire a second
+ * credentialed fetch using the same URL base with custom param overrides.
+ *
+ * GMGN now requires device_id / client_id / fp_did in every API URL.
+ * We capture those from the auto-fired request and inject them into custom calls.
  *
  * Returns { autoBody, customBody } where autoBody is from the page's natural
- * request (whatever GMGN fires by default) and customBody is from the custom
- * URL (null if no custom URL provided).
+ * request and customBody is from the URL with overridden params (null if none).
  */
 async function fetchGmgnWithSession(
   pageUrl: string,
-  customApiUrl: string | null,
+  customParamOverrides: Record<string, string> | null,
   label: string
 ): Promise<{ autoBody: Record<string, unknown> | null; customBody: Record<string, unknown> | null }> {
   const browser = await getBrowser();
@@ -128,14 +130,17 @@ async function fetchGmgnWithSession(
 
   const page = await context.newPage();
   let autoBody: Record<string, unknown> | null = null;
+  let autoUrl = "";
   let customBody: Record<string, unknown> | null = null;
 
   try {
-    // Capture the page's auto-fired token_holders response AND use it as session signal
+    // Capture the page's auto-fired token_holders response — body AND full URL
+    // (GMGN now embeds device_id / client_id in the URL; we reuse those for custom fetches)
     const sessionReady = page
       .waitForResponse(
         async (res) => {
           if (!res.url().includes("/vas/api/v1/token_holders/")) return false;
+          autoUrl = res.url();
           try { autoBody = await res.json(); } catch { /* ignore */ }
           return true;
         },
@@ -150,7 +155,14 @@ async function fetchGmgnWithSession(
     const elapsed = Date.now() - readyAt;
     if (elapsed < 6_000) await new Promise((r) => setTimeout(r, 6_000 - elapsed));
 
-    if (customApiUrl) {
+    if (customParamOverrides && autoUrl) {
+      // Build custom URL from the captured auto URL, overriding specific params
+      const u = new URL(autoUrl);
+      for (const [k, v] of Object.entries(customParamOverrides)) {
+        u.searchParams.set(k, v);
+      }
+      const customApiUrl = u.toString();
+
       for (let attempt = 1; attempt <= 3; attempt++) {
         if (attempt > 1) {
           console.log(`[gmgn-scraper] ${label} retry ${attempt}/3`);
@@ -175,6 +187,8 @@ async function fetchGmgnWithSession(
         }
         console.log(`[gmgn-scraper] ${label} attempt ${attempt} failed: status=${result.status}`);
       }
+    } else if (customParamOverrides && !autoUrl) {
+      console.log(`[gmgn-scraper] ${label} no auto URL captured — skipping custom fetch`);
     }
   } catch (err) {
     console.log(`[gmgn-scraper] ${label} page error: ${err}`);
@@ -232,11 +246,12 @@ export async function scrapeGmgnTopTraders(
   if (!gmgnChain) return [];
 
   const pageUrl = `https://gmgn.ai/${gmgnChain}/token/${tokenNorm}`;
-  const customApiUrl =
-    `https://gmgn.ai/vas/api/v1/token_holders/${gmgnChain}/${tokenNorm}` +
-    `?orderby=realized_profit&direction=desc&limit=100`;
 
-  const { customBody } = await fetchGmgnWithSession(pageUrl, customApiUrl, `traders:${tokenNorm.slice(0, 10)}`);
+  const { customBody } = await fetchGmgnWithSession(
+    pageUrl,
+    { orderby: "realized_profit", direction: "desc", limit: "100" },
+    `traders:${tokenNorm.slice(0, 10)}`
+  );
   if (!customBody) return [];
 
   const traders = parseGmgnList(customBody).sort((a, b) => b.realizedProfitUsd - a.realizedProfitUsd);
@@ -264,16 +279,12 @@ export async function scrapeGmgnTopHolders(
 
   const pageUrl = `https://gmgn.ai/${gmgnChain}/token/${tokenNorm}`;
 
-  // Fire the realized_profit custom fetch (known working) while also capturing
+  // Fire a custom fetch sorted by realized_profit while also capturing
   // the page's auto-fired request (GMGN's default sort — often balance-based).
-  // We'll use whichever returns more balance data.
-  const customApiUrl =
-    `https://gmgn.ai/vas/api/v1/token_holders/${gmgnChain}/${tokenNorm}` +
-    `?orderby=realized_profit&direction=desc&limit=100`;
-
+  // We'll merge both so the final list has maximum coverage.
   const { autoBody, customBody } = await fetchGmgnWithSession(
     pageUrl,
-    customApiUrl,
+    { orderby: "realized_profit", direction: "desc", limit: "100" },
     `holders:${tokenNorm.slice(0, 10)}`
   );
 
@@ -301,4 +312,135 @@ export async function scrapeGmgnTopHolders(
     }
   }
   return holders;
+}
+
+// ─── Paginated holder fetch (for shared-holders feature) ─────────────────────
+// Uses the `next` cursor from GMGN to fetch multiple pages within one session.
+// Sorts by balance (largest holders first) rather than realized_profit.
+
+export async function scrapeGmgnHoldersPaginated(
+  chain: string,
+  tokenAddress: string,
+  maxPages = 5
+): Promise<GmgnTopTrader[]> {
+  const isSolana = chain.toLowerCase() === "solana";
+  const tokenNorm = isSolana ? tokenAddress : tokenAddress.toLowerCase();
+
+  const gmgnChain = CHAIN_TO_GMGN[chain.toLowerCase()];
+  if (!gmgnChain) return [];
+
+  const pageUrl = `https://gmgn.ai/${gmgnChain}/token/${tokenNorm}`;
+  // Fallback URL used only if we fail to capture the auto-fired URL with auth params
+  const fallbackApiUrl =
+    `https://gmgn.ai/vas/api/v1/token_holders/${gmgnChain}/${tokenNorm}` +
+    `?orderby=balance&direction=desc&limit=100`;
+
+  const browser = await getBrowser();
+  const context = await browser.newContext({
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  });
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", { get: () => false });
+  });
+
+  const page = await context.newPage();
+  const allItems: unknown[] = [];
+
+  try {
+    // Capture the auto-fired token_holders URL — GMGN now embeds auth params
+    // (device_id, client_id, fp_did) that must be present in every API call.
+    let capturedAutoUrl = "";
+    const sessionReady = page
+      .waitForResponse(
+        async (res) => {
+          if (!res.url().includes("/vas/api/v1/token_holders/")) return false;
+          capturedAutoUrl = res.url();
+          // Also seed page 1 from the auto-fired response to avoid a redundant fetch
+          try {
+            const body = await res.json();
+            const list = body?.data?.list;
+            if (Array.isArray(list)) allItems.push(...list);
+          } catch { /* ignore */ }
+          return true;
+        },
+        { timeout: 20_000 }
+      )
+      .catch(() => null);
+
+    await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+
+    const readyAt = Date.now();
+    await sessionReady;
+    const elapsed = Date.now() - readyAt;
+    if (elapsed < 6_000) await new Promise((r) => setTimeout(r, 6_000 - elapsed));
+
+    // Build the base URL for paginated fetches:
+    // Re-use all GMGN auth params from the captured URL, but force balance sort.
+    let baseApiUrl = fallbackApiUrl;
+    if (capturedAutoUrl) {
+      try {
+        const u = new URL(capturedAutoUrl);
+        u.searchParams.set("orderby", "balance");
+        u.searchParams.set("direction", "desc");
+        u.searchParams.set("limit", "100");
+        u.searchParams.delete("cursor");
+        baseApiUrl = u.toString();
+      } catch { /* keep fallback */ }
+    }
+
+    // Paginate within the same session — pass base URL + maxPages to evaluate
+    // Start from page 2 if page 1 was already seeded from the auto-fired response.
+    const startPage = allItems.length > 0 ? 1 : 0;
+    if (startPage < maxPages) {
+      const result = await page
+        .evaluate(
+          async ({ baseUrl, pages, seedCursor }: { baseUrl: string; pages: number; seedCursor: string | null }) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const collected: any[] = [];
+            let cursor: string | null = seedCursor;
+
+            for (let p = 0; p < pages; p++) {
+              const fetchUrl: string = cursor
+                ? `${baseUrl}&cursor=${encodeURIComponent(cursor)}`
+                : baseUrl;
+              try {
+                const r: Response = await fetch(fetchUrl, { credentials: "include" });
+                if (!r.ok) break;
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const body: any = await r.json();
+                const list = body?.data?.list;
+                if (Array.isArray(list)) collected.push(...list);
+                cursor = body?.data?.next ?? null;
+                if (!cursor) break;
+              } catch {
+                break;
+              }
+            }
+            return collected;
+          },
+          { baseUrl: baseApiUrl, pages: maxPages - startPage, seedCursor: null }
+        )
+        .catch(() => [] as unknown[]);
+
+      allItems.push(...result);
+    }
+
+    console.log(`[gmgn-scraper] paginated:${tokenNorm.slice(0, 10)} fetched ${allItems.length} raw holders across ≤${maxPages} pages (autoUrl=${!!capturedAutoUrl})`);
+  } catch (err) {
+    console.log(`[gmgn-scraper] paginated error: ${err}`);
+  } finally {
+    await context.close();
+  }
+
+  // Parse and deduplicate
+  const fakeBody = { code: 0, data: { list: allItems } };
+  const holders = parseGmgnList(fakeBody as Record<string, unknown>);
+  const byAddress = new Map<string, GmgnTopTrader>();
+  for (const t of holders) {
+    const existing = byAddress.get(t.walletAddress);
+    if (!existing || t.balance > existing.balance) byAddress.set(t.walletAddress, t);
+  }
+  return [...byAddress.values()].sort((a, b) => b.balance - a.balance);
 }
