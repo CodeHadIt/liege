@@ -41,10 +41,11 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `/th &lt;address&gt; — top holders\n` +
         `/tt &lt;address&gt; — top traders with PnL\n` +
         `/common — find common top traders across 2–10 tokens\n` +
+        `/sh &lt;addrA&gt; &lt;addrB&gt; — find wallets holding two tokens\n` +
         `/dp &lt;address&gt; — check DexScreener ad payment status\n` +
         `/dex &lt;bond|unbond&gt; &lt;timeframe&gt; [mcap] — browse DEX Paid tokens\n` +
         `/help — show this message\n\n` +
-        `<i>Supports Solana, Base, and BSC.</i>`,
+        `<i>Supports Solana, Base, BSC, and Ethereum. Chain detected automatically.</i>`,
       { parse_mode: "HTML" }
     );
   });
@@ -60,6 +61,8 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `Top traders with realized PnL and trade counts.\n\n` +
         `<b>/common</b>\n` +
         `Find wallets that traded 2–10 tokens in common. Great for finding smart money.\n\n` +
+        `<b>/sh</b> <code>&lt;addressA&gt; &lt;addressB&gt;</code>\n` +
+        `Find wallets currently holding two tokens at the same time. Chain auto-detected.\n\n` +
         `<b>/dp</b> <code>&lt;address&gt;</code>\n` +
         `Check whether a token has paid for DexScreener ad placement.\n\n` +
         `<b>/dex</b> <code>&lt;bond|unbond&gt; &lt;timeframe&gt; [mcap]</code>\n` +
@@ -160,6 +163,30 @@ export async function getBot(): Promise<Bot<MyContext>> {
 
     const { promptCtChain } = await import("./commands/ct");
     await promptCtChain(ctx);
+  });
+
+  // ── /sh (shared holders) ─────────────────────────────────────────────────────
+
+  bot.command("sh", async (ctx) => {
+    const { handleSharedHolders } = await import("./commands/sh");
+    const args = ctx.match?.trim() ?? "";
+
+    // Accept both space-separated and newline-separated addresses
+    const parts = args.split(/[\s\n]+/).map((a) => a.trim()).filter(Boolean);
+
+    if (parts.length !== 2) {
+      await ctx.reply(
+        `<b>Usage:</b> <code>/sh &lt;addressA&gt; &lt;addressB&gt;</code>\n\n` +
+        `Find wallets that hold two tokens at the same time.\n` +
+        `Chain is detected automatically from the address format.\n\n` +
+        `<i>Example:</i>\n` +
+        `<code>/sh 0xTokenA 0xTokenB</code>`,
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
+    await handleSharedHolders(ctx, parts[0], parts[1]);
   });
 
   // ── /dp ───────────────────────────────────────────────────────────────────────
@@ -278,6 +305,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
       { command: "th",     description: "Top holders with % ownership" },
       { command: "tt",     description: "Top traders with realized PnL" },
       { command: "common", description: "Find common traders across 2–10 tokens" },
+      { command: "sh",     description: "Find wallets holding two tokens — /sh addrA addrB" },
       { command: "dp",     description: "Check DexScreener ad payment for a token" },
       { command: "dex",    description: "Browse DEX Paid tokens — /dex bond 1h" },
       { command: "help",   description: "Show all commands" },
