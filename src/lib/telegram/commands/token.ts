@@ -27,12 +27,14 @@ const CHAIN_LOGO: Record<ChainId, string> = {
   solana: "🟣",
   base:   "🔵",
   bsc:    "🟡",
+  eth:    "🔷",
 };
 
 const GMGN_CHAIN: Record<ChainId, string> = {
   solana: "sol",
   base:   "base",
   bsc:    "bsc",
+  eth:    "eth",
 };
 
 // ── Chain detection ───────────────────────────────────────────────────────────
@@ -42,26 +44,32 @@ export async function detectEvmChain(address: string): Promise<ChainId> {
     const results = await searchPairs(address).catch(() => []);
     const evmPairs = results.filter((p) => {
       const c = p.chainId?.toLowerCase();
-      return c === "base" || c === "bsc";
+      return c === "base" || c === "bsc" || c === "ethereum";
     });
     if (evmPairs.length > 0) {
-      const liq: Record<string, number> = { base: 0, bsc: 0 };
+      const liq: Record<string, number> = { base: 0, bsc: 0, ethereum: 0 };
       for (const p of evmPairs) {
-        const c = p.chainId?.toLowerCase() as "base" | "bsc";
+        const c = p.chainId?.toLowerCase() as string;
         liq[c] = (liq[c] ?? 0) + (p.liquidity?.usd ?? 0);
       }
+      if (liq.ethereum >= liq.base && liq.ethereum >= liq.bsc) return "eth";
       return liq.bsc > liq.base ? "bsc" : "base";
     }
   } catch { /* fall through */ }
 
   try {
-    const [basePairs, bscPairs] = await Promise.all([
-      getTokenPairs("base", address).catch(() => []),
-      getTokenPairs("bsc",  address).catch(() => []),
+    const [basePairs, bscPairs, ethPairs] = await Promise.all([
+      getTokenPairs("base",     address).catch(() => []),
+      getTokenPairs("bsc",      address).catch(() => []),
+      getTokenPairs("ethereum", address).catch(() => []),
     ]);
     const baseLiq = basePairs.reduce((s, p) => s + (p.liquidity?.usd ?? 0), 0);
     const bscLiq  = bscPairs.reduce( (s, p) => s + (p.liquidity?.usd ?? 0), 0);
-    if (bscLiq > 0 || baseLiq > 0) return bscLiq > baseLiq ? "bsc" : "base";
+    const ethLiq  = ethPairs.reduce( (s, p) => s + (p.liquidity?.usd ?? 0), 0);
+    if (ethLiq > 0 || bscLiq > 0 || baseLiq > 0) {
+      if (ethLiq >= baseLiq && ethLiq >= bscLiq) return "eth";
+      return bscLiq > baseLiq ? "bsc" : "base";
+    }
   } catch { /* ignore */ }
 
   return "base";
@@ -205,9 +213,9 @@ async function fetchDexPaid(chain: ChainId, address: string): Promise<DexPaidRes
 // ── Trading links ─────────────────────────────────────────────────────────────
 
 function tradingLinks(chain: ChainId, address: string, dexUrl?: string | null) {
-  const gmgnChain:     Record<ChainId, string> = { solana: "sol",    base: "base", bsc: "bsc" };
-  const axiomChain:    Record<ChainId, string> = { solana: "sol",    base: "base", bsc: "bsc" };
-  const terminalChain: Record<ChainId, string> = { solana: "solana", base: "base", bsc: "bsc" };
+  const gmgnChain:     Record<ChainId, string> = { solana: "sol",    base: "base", bsc: "bsc", eth: "eth"    };
+  const axiomChain:    Record<ChainId, string> = { solana: "sol",    base: "base", bsc: "bsc", eth: "eth"    };
+  const terminalChain: Record<ChainId, string> = { solana: "solana", base: "base", bsc: "bsc", eth: "ethereum" };
 
   return {
     axi: `https://axiom.trade/t/${address}/@genes?chain=${axiomChain[chain]}`,

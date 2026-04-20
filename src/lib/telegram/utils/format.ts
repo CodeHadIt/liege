@@ -76,8 +76,9 @@ export function truncateAddress(address: string): string {
 export function chainEmoji(chain: string): string {
   switch (chain) {
     case "solana": return "◎";
-    case "base": return "🔵";
-    case "bsc": return "🟡";
+    case "base":   return "🔵";
+    case "bsc":    return "🟡";
+    case "eth":    return "🔷";
     default: return "⛓";
   }
 }
@@ -85,8 +86,9 @@ export function chainEmoji(chain: string): string {
 export function chainLabel(chain: string): string {
   switch (chain) {
     case "solana": return "Solana";
-    case "base": return "Base";
-    case "bsc": return "BSC";
+    case "base":   return "Base";
+    case "bsc":    return "BSC";
+    case "eth":    return "Ethereum";
     default: return chain;
   }
 }

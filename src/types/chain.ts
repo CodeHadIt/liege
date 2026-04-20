@@ -1,4 +1,4 @@
-export type ChainId = "solana" | "base" | "bsc";
+export type ChainId = "solana" | "base" | "bsc" | "eth";
 
 export interface ChainConfig {
   id: ChainId;

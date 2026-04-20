@@ -47,9 +47,23 @@ export const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
     isEvm: true,
   },
+  eth: {
+    id: "eth",
+    name: "Ethereum",
+    shortName: "ETH",
+    logo: "/chains/eth.svg",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrl: "https://ethereum.publicnode.com",
+    explorerUrl: "https://etherscan.io",
+    explorerApiUrl: "https://api.etherscan.io/api",
+    dexScreenerChainId: "ethereum",
+    geckoTerminalNetwork: "eth",
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+    isEvm: true,
+  },
 };
 
-export const SUPPORTED_CHAINS: ChainId[] = ["solana", "base", "bsc"];
+export const SUPPORTED_CHAINS: ChainId[] = ["solana", "base", "bsc", "eth"];
 
 export function getChainConfig(chainId: ChainId): ChainConfig {
   return CHAIN_CONFIGS[chainId];

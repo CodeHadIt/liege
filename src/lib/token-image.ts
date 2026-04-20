@@ -86,6 +86,7 @@ async function fetchDexScreenerImage(
     solana: "solana",
     base: "base",
     bsc: "bsc",
+    eth: "ethereum",
   };
   const dsChain = chainMap[chain];
   if (!dsChain) return null;

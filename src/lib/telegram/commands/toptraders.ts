@@ -40,7 +40,7 @@ export async function handleTopTraders(
       await ctx.api.editMessageText(
         ctx.chat!.id,
         loading.message_id,
-        "⚠️ No trader data available. GMGN may be temporarily unavailable — please try again."
+        "⚠️ No trader data available. Our servers may be temporarily busy — please try again."
       );
       return;
     }

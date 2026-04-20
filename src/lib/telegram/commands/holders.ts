@@ -16,12 +16,14 @@ const GMGN_CHAIN: Record<string, string> = {
   solana: "sol",
   base:   "base",
   bsc:    "bsc",
+  eth:    "eth",
 };
 
 const CHAIN_COLOR: Record<string, string> = {
   solana: "🟣",
   base:   "🔵",
   bsc:    "🟡",
+  eth:    "🔷",
 };
 
 type WealthTier = "whale" | "dolphin" | "fish" | "shrimp" | "unknown";

@@ -16,6 +16,11 @@ const providers: Record<string, ChainProvider> = {
     apiKey: process.env.BSCSCAN_API_KEY || "",
     rateLimiterKey: "bscscan",
   }),
+  eth: new EvmChainProvider("eth", {
+    apiUrl: "https://api.etherscan.io/api",
+    apiKey: process.env.ETHERSCAN_API_KEY || "",
+    rateLimiterKey: "etherscan",
+  }),
 };
 
 export function getChainProvider(chainId: ChainId): ChainProvider {

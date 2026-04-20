@@ -160,7 +160,7 @@ export async function POST(request: Request) {
         .map((tr) => `${tr.symbol !== "???" ? tr.symbol : tr.address.slice(0, 10) + "…"} (${tr.chain})`)
         .join(", ");
       return NextResponse.json(
-        { error: `Could not fetch trader data for: ${names}. GMGN may be temporarily unavailable — please try again in a moment.` },
+        { error: `Could not fetch trader data for: ${names}. Our servers may be temporarily busy — please try again in a moment.` },
         { status: 503 }
       );
     }

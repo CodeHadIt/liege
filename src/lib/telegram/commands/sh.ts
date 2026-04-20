@@ -131,8 +131,8 @@ export async function handleSharedHolders(
     chain = await detectEvmChain(addrA);
   }
 
-  const chainName = chain === "eth" ? "Ethereum" : chainLabel(chain as ChainId);
-  const emoji     = chain === "eth" ? "🔷" : chainEmoji(chain as ChainId);
+  const chainName = chainLabel(chain as ChainId);
+  const emoji     = chainEmoji(chain as ChainId);
 
   const loading = await ctx.reply(
     `⏳ Finding shared holders on ${emoji} <b>${chainName}</b>…\n\n` +
