@@ -42,6 +42,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `/tt &lt;address&gt; — top traders with PnL\n` +
         `/common — find common top traders across 2–10 tokens\n` +
         `/sh &lt;addrA&gt; &lt;addrB&gt; — find wallets holding two tokens\n` +
+        `/wallet &lt;address&gt; [chain] — analyze a wallet\n` +
         `/dp &lt;address&gt; — check DexScreener ad payment status\n` +
         `/dex &lt;bond|unbond&gt; &lt;timeframe&gt; [mcap] — browse DEX Paid tokens\n` +
         `/help — show this message\n\n` +
@@ -63,6 +64,9 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `Find wallets that traded 2–10 tokens in common. Great for finding smart money.\n\n` +
         `<b>/sh</b> <code>&lt;addressA&gt; &lt;addressB&gt;</code>\n` +
         `Find wallets currently holding two tokens at the same time. Chain auto-detected.\n\n` +
+        `<b>/wallet</b> <code>&lt;address&gt; [chain]</code>\n` +
+        `Analyze a wallet — age, portfolio, top holdings, recent PnL.\n` +
+        `Solana addresses are detected automatically. For EVM wallets, add chain: <code>eth</code>, <code>base</code>, or <code>bsc</code>.\n\n` +
         `<b>/dp</b> <code>&lt;address&gt;</code>\n` +
         `Check whether a token has paid for DexScreener ad placement.\n\n` +
         `<b>/dex</b> <code>&lt;bond|unbond&gt; &lt;timeframe&gt; [mcap]</code>\n` +
@@ -189,6 +193,55 @@ export async function getBot(): Promise<Bot<MyContext>> {
     await handleSharedHolders(ctx, parts[0], parts[1]);
   });
 
+  // ── /wallet ───────────────────────────────────────────────────────────────────
+
+  bot.command("wallet", async (ctx) => {
+    const { handleWallet, getAddressType } = await import("./commands/wallet");
+    const args = ctx.match?.trim() ?? "";
+    const parts = args.split(/\s+/).filter(Boolean);
+
+    if (!parts.length) {
+      await ctx.reply(
+        `<b>Usage:</b>\n` +
+        `• Solana: <code>/wallet &lt;address&gt;</code>\n` +
+        `• EVM:    <code>/wallet &lt;address&gt; &lt;eth|base|bsc&gt;</code>`,
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
+    const address = parts[0];
+    const addrType = getAddressType(address);
+
+    if (!addrType) {
+      await ctx.reply("❌ Could not recognize this address. Please provide a valid Solana or EVM wallet address.");
+      return;
+    }
+
+    if (addrType === "solana") {
+      await handleWallet(ctx, "solana", address);
+      return;
+    }
+
+    // EVM — chain must be specified
+    const chainArg = parts[1]?.toLowerCase();
+    const VALID_EVM_CHAINS = ["eth", "base", "bsc"] as const;
+    type EvmChain = typeof VALID_EVM_CHAINS[number];
+
+    if (!chainArg || !VALID_EVM_CHAINS.includes(chainArg as EvmChain)) {
+      await ctx.reply(
+        `⚠️ EVM wallet detected. Please specify the chain:\n` +
+        `<code>/wallet ${address} eth</code>\n` +
+        `<code>/wallet ${address} base</code>\n` +
+        `<code>/wallet ${address} bsc</code>`,
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
+    await handleWallet(ctx, chainArg as EvmChain, address);
+  });
+
   // ── /dp ───────────────────────────────────────────────────────────────────────
 
   bot.command("dp", async (ctx) => {
@@ -278,17 +331,24 @@ export async function getBot(): Promise<Bot<MyContext>> {
     // Ignore slash commands — let their own handlers deal with them
     if (text.startsWith("/")) return;
 
-    // Auto-analyze bare Solana address
+    // Auto-analyze bare Solana address — detect wallet vs token mint
     if (SOLANA_ADDR.test(text)) {
-      const { handleToken } = await import("./commands/token");
-      await handleToken(ctx, "solana", text);
+      const { isSolanaTokenMint, handleWallet } = await import("./commands/wallet");
+      const isToken = await isSolanaTokenMint(text).catch(() => false);
+      if (isToken) {
+        const { handleToken } = await import("./commands/token");
+        await handleToken(ctx, "solana", text);
+      } else {
+        await handleWallet(ctx, "solana", text);
+      }
       return;
     }
 
-    // Auto-analyze bare EVM address (auto-detect Base vs BSC)
+    // Bare EVM address — could be token or wallet; prompt for intent if wallet
     if (EVM_ADDR.test(text)) {
       const { handleToken, detectEvmChain } = await import("./commands/token");
       const chain = await detectEvmChain(text);
+      // Try token analysis first; if it has no pairs it may be a wallet
       await handleToken(ctx, chain, text);
       return;
     }
@@ -306,6 +366,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
       { command: "tt",     description: "Top traders with realized PnL" },
       { command: "common", description: "Find common traders across 2–10 tokens" },
       { command: "sh",     description: "Find wallets holding two tokens — /sh addrA addrB" },
+      { command: "wallet", description: "Analyze a wallet — portfolio, holdings, PnL" },
       { command: "dp",     description: "Check DexScreener ad payment for a token" },
       { command: "dex",    description: "Browse DEX Paid tokens — /dex bond 1h" },
       { command: "help",   description: "Show all commands" },

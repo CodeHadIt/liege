@@ -444,3 +444,126 @@ export async function scrapeGmgnHoldersPaginated(
   }
   return [...byAddress.values()].sort((a, b) => b.balance - a.balance);
 }
+
+// ─── Wallet holdings / PnL (for wallet analysis) ─────────────────────────────
+
+export interface GmgnWalletHolding {
+  tokenAddress: string;
+  symbol: string;
+  realizedPnlUsd: number;
+  unrealizedPnlUsd: number;
+  totalPnlUsd: number;
+  investedUsd: number;
+  currentValueUsd: number;
+  lastActiveTimestamp: number | null;
+}
+
+/**
+ * Scrape GMGN wallet holdings page to get per-token PnL data.
+ * Returns holdings sorted by |realizedPnlUsd| desc (most significant recent trades).
+ */
+export async function scrapeGmgnWalletHoldings(
+  chain: string,
+  walletAddress: string
+): Promise<GmgnWalletHolding[]> {
+  const gmgnChain = CHAIN_TO_GMGN[chain.toLowerCase()];
+  if (!gmgnChain) return [];
+
+  const cacheKey = `gmgn-wallet-holdings:${chain}:${walletAddress}`;
+  const cached = serverCache.get<GmgnWalletHolding[]>(cacheKey);
+  if (cached) return cached;
+
+  const pageUrl = `https://gmgn.ai/${gmgnChain}/address/${walletAddress}`;
+
+  const browser = await getBrowser();
+  const context = await browser.newContext({
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  });
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", { get: () => false });
+  });
+
+  const page = await context.newPage();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let autoBody: any = null;
+  let autoUrl = "";
+
+  try {
+    // Capture auto-fired wallet holdings request (includes auth params)
+    const sessionReady = page
+      .waitForResponse(
+        async (res) => {
+          const url = res.url();
+          if (!url.includes("/wallet_holdings/") && !url.includes("wallet/holdings")) return false;
+          autoUrl = url;
+          try { autoBody = await res.json(); } catch { /* ignore */ }
+          return true;
+        },
+        { timeout: 20_000 }
+      )
+      .catch(() => null);
+
+    await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+
+    const readyAt = Date.now();
+    await sessionReady;
+    const elapsed = Date.now() - readyAt;
+    if (elapsed < 6_000) await new Promise((r) => setTimeout(r, 6_000 - elapsed));
+
+    // If we didn't capture the auto URL, try fetching with a constructed URL
+    // using the realized_profit sort to get the most impactful trades first
+    if (!autoUrl) {
+      console.log(`[gmgn-scraper] wallet:${walletAddress.slice(0, 8)} no auto URL, trying constructed`);
+    } else {
+      // Re-fetch with realized_profit sort using captured auth params
+      const u = new URL(autoUrl);
+      u.searchParams.set("orderby", "last_active_timestamp");
+      u.searchParams.set("direction", "desc");
+      u.searchParams.set("limit", "20");
+      const fetchUrl = u.toString();
+
+      const result = await page.evaluate(async (url: string) => {
+        try {
+          const r = await fetch(url, { credentials: "include" });
+          const body = await r.json();
+          return { ok: r.ok, body };
+        } catch { return { ok: false, body: null }; }
+      }, fetchUrl).catch(() => ({ ok: false, body: null }));
+
+      if (result.ok && result.body) autoBody = result.body;
+    }
+  } catch (err) {
+    console.log(`[gmgn-scraper] wallet error: ${err}`);
+  } finally {
+    await context.close();
+  }
+
+  if (!autoBody) return [];
+
+  // Parse wallet holdings list
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const list: any[] = autoBody?.data?.holdings ?? autoBody?.data?.list ?? [];
+  if (!Array.isArray(list) || list.length === 0) return [];
+
+  const holdings: GmgnWalletHolding[] = list
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .map((item: any) => ({
+      tokenAddress:       String(item.token?.address ?? item.address ?? ""),
+      symbol:             String(item.token?.symbol ?? item.symbol ?? "???"),
+      realizedPnlUsd:     parseFloat(String(item.realized_profit ?? 0)) || 0,
+      unrealizedPnlUsd:   parseFloat(String(item.unrealized_profit ?? 0)) || 0,
+      totalPnlUsd:        parseFloat(String(item.realized_profit ?? 0)) + parseFloat(String(item.unrealized_profit ?? 0)) || 0,
+      investedUsd:        parseFloat(String(item.cost ?? item.history_bought_cost ?? 0)) || 0,
+      currentValueUsd:    parseFloat(String(item.usd_value ?? 0)) || 0,
+      lastActiveTimestamp: typeof item.last_active_timestamp === "number" ? item.last_active_timestamp : null,
+    }))
+    .filter((h) => h.tokenAddress.length > 0);
+
+  if (holdings.length > 0) {
+    serverCache.set(cacheKey, holdings, CACHE_TTL.GMGN_TRADERS);
+  }
+
+  return holdings;
+}

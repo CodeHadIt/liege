@@ -514,6 +514,57 @@ export async function getAssetImage(mintAddress: string): Promise<string | null>
   }
 }
 
+// ─── Signatures for Address ───
+
+export interface SignatureInfo {
+  signature: string;
+  slot: number;
+  blockTime: number | null;
+  err: unknown;
+}
+
+/**
+ * Get recent transaction signatures for a wallet address.
+ * Sorted newest-first. Use `before` cursor for pagination.
+ */
+export async function getSignaturesForAddress(
+  address: string,
+  options?: { limit?: number; before?: string }
+): Promise<SignatureInfo[]> {
+  const params: Record<string, unknown> = { limit: options?.limit ?? 100 };
+  if (options?.before) params.before = options.before;
+
+  interface SigResult { value: SignatureInfo[] }
+  const result = await rpcCall<SigResult>("getSignaturesForAddress", [address, params]);
+  return result?.value ?? [];
+}
+
+/**
+ * Find approximate wallet creation date by paginating signatures backwards.
+ * Stops after maxPages * 1000 signatures (enough for all but the most active wallets).
+ * Returns { timestamp, isExact } — isExact=false means wallet is older than what we fetched.
+ */
+export async function getWalletFirstTransaction(
+  address: string,
+  maxPages = 3
+): Promise<{ timestamp: number; isExact: boolean } | null> {
+  let cursor: string | undefined;
+  let oldest: SignatureInfo | null = null;
+  let isExact = true;
+
+  for (let i = 0; i < maxPages; i++) {
+    const sigs = await getSignaturesForAddress(address, { limit: 1000, before: cursor });
+    if (sigs.length === 0) break;
+    oldest = sigs[sigs.length - 1];
+    if (sigs.length < 1000) break; // reached the beginning
+    cursor = oldest.signature;
+    if (i === maxPages - 1) isExact = false; // ran out of pages
+  }
+
+  if (!oldest?.blockTime) return null;
+  return { timestamp: oldest.blockTime, isExact };
+}
+
 // ─── Token Socials (off-chain metadata) ───
 
 export interface TokenSocials {
