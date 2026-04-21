@@ -117,6 +117,20 @@ export function createEtherscanClient(config: EtherscanConfig) {
       });
     },
 
+    async getFirstTx(address: string): Promise<EtherscanTx | null> {
+      const result = await fetchEtherscan<EtherscanTx[]>(config, {
+        module: "account",
+        action: "txlist",
+        address,
+        startblock: "0",
+        endblock: "99999999",
+        page: "1",
+        offset: "1",
+        sort: "asc",
+      });
+      return result?.[0] ?? null;
+    },
+
     async getTokenTxList(address: string, limit = 50): Promise<EtherscanTokenTx[] | null> {
       return fetchEtherscan<EtherscanTokenTx[]>(config, {
         module: "account",

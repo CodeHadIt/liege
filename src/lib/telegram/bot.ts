@@ -344,11 +344,21 @@ export async function getBot(): Promise<Bot<MyContext>> {
       return;
     }
 
-    // Bare EVM address — could be token or wallet; prompt for intent if wallet
+    // Bare EVM address + chain: "0x... eth" / "0x... base" / "0x... bsc"
+    const parts = text.split(/\s+/);
+    if (parts.length === 2 && EVM_ADDR.test(parts[0])) {
+      const chainArg = parts[1].toLowerCase();
+      if (chainArg === "eth" || chainArg === "base" || chainArg === "bsc") {
+        const { handleWallet } = await import("./commands/wallet");
+        await handleWallet(ctx, chainArg as "eth" | "base" | "bsc", parts[0]);
+        return;
+      }
+    }
+
+    // Bare EVM address (no chain) — token analysis with auto-detected chain
     if (EVM_ADDR.test(text)) {
       const { handleToken, detectEvmChain } = await import("./commands/token");
       const chain = await detectEvmChain(text);
-      // Try token analysis first; if it has no pairs it may be a wallet
       await handleToken(ctx, chain, text);
       return;
     }
