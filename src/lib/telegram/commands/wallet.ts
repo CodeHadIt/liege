@@ -4,6 +4,7 @@ import {
   getTransactionHistory,
   getWalletFirstTransaction,
   getMintInfo,
+  type HeliusTransaction,
 } from "@/lib/api/helius";
 import { scrapeGmgnWalletHoldings } from "@/lib/api/gmgn-scraper";
 import {
@@ -63,6 +64,79 @@ function fmtDate(unixSecs: number): string {
   return d.toUTCString().replace(" GMT", " UTC");
 }
 
+/**
+ * Build a human-readable, HTML-formatted description for a transaction.
+ * Mint addresses are wrapped in <code> so Telegram makes them tap-to-copy.
+ */
+function describeTx(
+  tx: HeliusTransaction,
+  walletAddress: string,
+  mintToSymbol: Map<string, string>
+): string {
+  const SOL_LAMPORTS = 1_000_000_000;
+
+  const tokensIn  = (tx.tokenTransfers ?? []).filter((t) => t.toUserAccount   === walletAddress);
+  const tokensOut = (tx.tokenTransfers ?? []).filter((t) => t.fromUserAccount === walletAddress);
+
+  const solSent = (tx.nativeTransfers ?? [])
+    .filter((t) => t.fromUserAccount === walletAddress)
+    .reduce((s, t) => s + t.amount, 0);
+  const solReceived = (tx.nativeTransfers ?? [])
+    .filter((t) => t.toUserAccount === walletAddress)
+    .reduce((s, t) => s + t.amount, 0);
+
+  // BUY: wallet sent SOL and received a token
+  if (solSent > 0 && tokensIn.length > 0) {
+    const token = tokensIn[0];
+    const sym   = mintToSymbol.get(token.mint) ?? token.mint.slice(0, 6) + "…";
+    const sol   = (solSent / SOL_LAMPORTS).toFixed(3);
+    return `🟢 Bought <b>${escapeHtml(sol)} SOL</b> of <b>${escapeHtml(sym)}</b> (<code>${escapeHtml(token.mint)}</code>)`;
+  }
+
+  // SELL: wallet sent a token and received SOL
+  if (solReceived > 0 && tokensOut.length > 0) {
+    const token = tokensOut[0];
+    const sym   = mintToSymbol.get(token.mint) ?? token.mint.slice(0, 6) + "…";
+    const sol   = (solReceived / SOL_LAMPORTS).toFixed(3);
+    return `🔴 Sold <b>${escapeHtml(sym)}</b> (<code>${escapeHtml(token.mint)}</code>) for <b>${escapeHtml(sol)} SOL</b>`;
+  }
+
+  // Token received (no SOL involved)
+  if (tokensIn.length > 0 && tokensOut.length === 0) {
+    const token = tokensIn[0];
+    const sym   = mintToSymbol.get(token.mint) ?? token.mint.slice(0, 6) + "…";
+    return `📥 Received <b>${escapeHtml(sym)}</b> (<code>${escapeHtml(token.mint)}</code>)`;
+  }
+
+  // Token sent (no SOL involved)
+  if (tokensOut.length > 0 && tokensIn.length === 0) {
+    const token = tokensOut[0];
+    const sym   = mintToSymbol.get(token.mint) ?? token.mint.slice(0, 6) + "…";
+    return `📤 Sent <b>${escapeHtml(sym)}</b> (<code>${escapeHtml(token.mint)}</code>)`;
+  }
+
+  // Pure SOL receive
+  if (solReceived > 0 && tokensIn.length === 0 && tokensOut.length === 0) {
+    const sol = (solReceived / SOL_LAMPORTS).toFixed(3);
+    return `📥 Received <b>${escapeHtml(sol)} SOL</b>`;
+  }
+
+  // Pure SOL send
+  if (solSent > 0 && tokensIn.length === 0 && tokensOut.length === 0) {
+    const sol = (solSent / SOL_LAMPORTS).toFixed(3);
+    return `📤 Sent <b>${escapeHtml(sol)} SOL</b>`;
+  }
+
+  // Fallback: Helius description (capped) or generic type label
+  if (tx.description) {
+    return escapeHtml(tx.description.slice(0, 100));
+  }
+  const label = tx.type
+    ? tx.type.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())
+    : "Transaction";
+  return escapeHtml(label);
+}
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 export async function handleWallet(
@@ -120,7 +194,7 @@ export async function handleWallet(
     );
     const stableTotal = stables.reduce((s, b) => s + (b.usdValue ?? 0), 0);
 
-    // Top 5 non-stable, non-native tokens by USD value
+    // Top 10 non-stable, non-native tokens by USD value
     const SOL_MINT = "So11111111111111111111111111111111111111112";
     const nonStable = balances
       .filter(
@@ -132,7 +206,12 @@ export async function handleWallet(
           (b.usdValue ?? 0) > 0
       )
       .sort((a, b) => (b.usdValue ?? 0) - (a.usdValue ?? 0))
-      .slice(0, 5);
+      .slice(0, 10);
+
+    // Mint → symbol lookup for transaction descriptions
+    const mintToSymbol = new Map<string, string>(
+      balances.filter((b) => b.symbol).map((b) => [b.mint, b.symbol])
+    );
 
     // SOL balance
     const solBalance = balances.find(
@@ -205,7 +284,7 @@ export async function handleWallet(
 
     msg += "\n";
 
-    // Top 5 tokens
+    // Top 10 tokens
     if (nonStable.length > 0) {
       msg += `🏆 <b>Top Holdings</b>\n`;
       nonStable.forEach((b, i) => {
@@ -236,14 +315,9 @@ export async function handleWallet(
       msg += `🔁 <b>Recent Transactions</b>\n`;
       last5Txns.forEach((tx, i) => {
         const timeAgo = escapeHtml(formatTimeAgo(tx.timestamp));
-        const txType = escapeHtml(
-          tx.type
-            ? tx.type.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())
-            : "Transaction"
-        );
-        const shortSig = tx.signature.slice(0, 8) + "…";
+        const desc = describeTx(tx, address, mintToSymbol);
         const solscanTxUrl = `https://solscan.io/tx/${tx.signature}`;
-        msg += `   ${i + 1}. <a href="${solscanTxUrl}"><code>${shortSig}</code></a> · ${txType} · <i>${timeAgo}</i>\n`;
+        msg += `   ${i + 1}. ${desc} · <a href="${solscanTxUrl}"><i>${timeAgo}</i></a>\n`;
       });
       msg += "\n";
     }
