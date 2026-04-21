@@ -88,7 +88,7 @@ export async function handleWallet(
     // All data sources in parallel
     const [balancesRes, recentTxns, firstTx, gmgnHoldings] = await Promise.all([
       getWalletBalances(address).catch(() => null),
-      getTransactionHistory(address, 1).catch(() => []),
+      getTransactionHistory(address, 5).catch(() => []),
       getWalletFirstTransaction(address, 3).catch(() => null),
       scrapeGmgnWalletHoldings("solana", address).catch(() => []),
     ]);
@@ -120,10 +120,13 @@ export async function handleWallet(
     );
     const stableTotal = stables.reduce((s, b) => s + (b.usdValue ?? 0), 0);
 
-    // Top 5 non-stable tokens by USD value
+    // Top 5 non-stable, non-native tokens by USD value
+    const SOL_MINT = "So11111111111111111111111111111111111111112";
     const nonStable = balances
       .filter(
         (b) =>
+          b.mint !== SOL_MINT &&
+          b.symbol !== "SOL" &&
           !STABLE_MINTS.has(b.mint) &&
           !STABLE_SYMBOLS.has((b.symbol ?? "").toUpperCase()) &&
           (b.usdValue ?? 0) > 0
@@ -142,6 +145,7 @@ export async function handleWallet(
 
     const lastTx = recentTxns[0] ?? null;
     const lastTxTime = lastTx?.timestamp ?? null;
+    const last5Txns = recentTxns.slice(0, 5);
 
     // ── PnL (top 5 recent trades from GMGN) ──────────────────────────────────
 
@@ -186,7 +190,7 @@ export async function handleWallet(
       if ((solBalance.usdValue ?? 0) > 0) msg += ` (${escapeHtml(fmtUsd(solBalance.usdValue ?? 0))})`;
       msg += "\n";
     }
-    msg += `   Tokens ≥$1: <b>${tokensAbove1.length}</b>\n`;
+    msg += `   No of tokens held: <b>${tokensAbove1.length}</b>\n`;
     if (stableTotal > 0) {
       const stableBreakdown = stables
         .filter((b) => (b.usdValue ?? 0) >= 1)
@@ -223,6 +227,23 @@ export async function handleWallet(
           ? ` · ${escapeHtml(formatTimeAgo(h.lastActiveTimestamp))}`
           : "";
         msg += `   ${i + 1}. ${pnlEmoji} <b>${sym}</b> ${pnl}${active}\n`;
+      });
+      msg += "\n";
+    }
+
+    // Last 5 transactions
+    if (last5Txns.length > 0) {
+      msg += `🔁 <b>Recent Transactions</b>\n`;
+      last5Txns.forEach((tx, i) => {
+        const timeAgo = escapeHtml(formatTimeAgo(tx.timestamp));
+        const txType = escapeHtml(
+          tx.type
+            ? tx.type.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())
+            : "Transaction"
+        );
+        const shortSig = tx.signature.slice(0, 8) + "…";
+        const solscanTxUrl = `https://solscan.io/tx/${tx.signature}`;
+        msg += `   ${i + 1}. <a href="${solscanTxUrl}"><code>${shortSig}</code></a> · ${txType} · <i>${timeAgo}</i>\n`;
       });
       msg += "\n";
     }
