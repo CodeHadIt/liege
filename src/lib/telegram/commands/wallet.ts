@@ -361,15 +361,17 @@ async function handleSolanaWallet(
     msg += "\n";
   }
 
+  msg += `📊 <b>Recent PnL</b>\n`;
   if (recentPnl.length > 0) {
-    msg += `📊 <b>Recent PnL</b>\n`;
     recentPnl.forEach((h, i) => {
       const pnlEmoji = h.realizedPnlUsd >= 0 ? "📈" : "📉";
       const active   = h.lastActiveTimestamp ? ` · ${escapeHtml(formatTimeAgo(h.lastActiveTimestamp))}` : "";
       msg += `   ${i + 1}. ${pnlEmoji} <b>${escapeHtml(h.symbol || "???")}</b> ${escapeHtml(fmtPnl(h.realizedPnlUsd))}${active}\n`;
     });
-    msg += "\n";
+  } else {
+    msg += `   —\n`;
   }
+  msg += "\n";
 
   if (meaningfulTxns.length > 0) {
     msg += `🔁 <b>Recent Transactions</b>\n`;
@@ -542,8 +544,8 @@ async function handleEvmWallet(
     msg += "\n";
   }
 
+  msg += `📊 <b>Recent PnL</b>\n`;
   if (pnlEntries.length > 0) {
-    msg += `📊 <b>Recent PnL</b>\n`;
     if (pnlSource === "gmgn") {
       gmgnPnl.forEach((h, i) => {
         const pnlEmoji = h.realizedPnlUsd >= 0 ? "📈" : "📉";
@@ -557,8 +559,10 @@ async function handleEvmWallet(
         msg += `   ${i + 1}. ${pnlEmoji} <b>${escapeHtml(e.symbol)}</b> ${escapeHtml(fmtPnl(e.pnl))}${active}\n`;
       });
     }
-    msg += "\n";
+  } else {
+    msg += `   —\n`;
   }
+  msg += "\n";
 
   if (meaningfulSwaps.length > 0) {
     msg += `🔁 <b>Recent Transactions</b>\n`;
