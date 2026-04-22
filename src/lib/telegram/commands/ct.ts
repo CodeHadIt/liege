@@ -11,6 +11,20 @@ import {
 import type { ChainId } from "@/types/chain";
 import type { CommonTradersResponse } from "@/types/traders";
 
+function fmtMc(n: number): string {
+  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(2)}B`;
+  if (n >= 1_000_000)     return `$${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000)         return `$${(n / 1_000).toFixed(1)}K`;
+  return `$${n.toFixed(0)}`;
+}
+
+function fmtUsd(n: number): string {
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000)     return `$${(n / 1_000).toFixed(1)}K`;
+  if (n >= 1)         return `$${n.toFixed(0)}`;
+  return `$${n.toFixed(2)}`;
+}
+
 const _rawAppUrl =
   process.env.NEXT_PUBLIC_APP_URL ?? "https://liege.up.railway.app";
 const APP_URL = _rawAppUrl.startsWith("http")
@@ -113,6 +127,11 @@ async function runCommonTraders(
     const titleBase = `${chainEmoji(chain)} <b>Common Top Traders</b> · ${chainLabel(chain)}`;
     const preamble = `<i>Tokens analyzed:</i>\n${tokenList}\n\nFound <b>${traders.length}</b> common trader${traders.length === 1 ? "" : "s"}\n\n`;
 
+    // Build a quick lookup: token address → { priceUsd, marketCap }
+    const metaMap = new Map(
+      tokensMeta.map((m) => [m.address.toLowerCase(), m])
+    );
+
     // Build one entry string per trader
     const entries: string[] = traders.map((trader, i) => {
       const pnl = formatPnl(trader.totalPnlUsd);
@@ -130,10 +149,27 @@ async function runCommonTraders(
           entry += ` (🟢${t.buyCount}/🔴${t.sellCount})`;
         }
         entry += "\n";
-        if (t.avgBuyPrice != null && t.avgBuyPrice > 0) {
-          entry += `      💰 Avg buy: $${escapeHtml(t.avgBuyPrice < 0.01 ? t.avgBuyPrice.toExponential(2) : t.avgBuyPrice.toFixed(t.avgBuyPrice < 1 ? 4 : 2))}`;
+
+        const meta = metaMap.get(t.address.toLowerCase());
+        const currentPrice = meta?.priceUsd ?? 0;
+        const currentMc = meta?.marketCap ?? 0;
+
+        // Avg buy / sell MC
+        if (t.avgBuyPrice != null && t.avgBuyPrice > 0 && currentPrice > 0 && currentMc > 0) {
+          const avgBuyMc = (t.avgBuyPrice / currentPrice) * currentMc;
+          entry += `      📊 Avg buy MC: <b>${escapeHtml(fmtMc(avgBuyMc))}</b>`;
           if (t.avgSellPrice != null && t.avgSellPrice > 0) {
-            entry += `  · Avg sell: $${escapeHtml(t.avgSellPrice < 0.01 ? t.avgSellPrice.toExponential(2) : t.avgSellPrice.toFixed(t.avgSellPrice < 1 ? 4 : 2))}`;
+            const avgSellMc = (t.avgSellPrice / currentPrice) * currentMc;
+            entry += `  · Avg sell MC: <b>${escapeHtml(fmtMc(avgSellMc))}</b>`;
+          }
+          entry += "\n";
+        }
+
+        // Total buy / sell amounts
+        if (t.boughtUsd != null && t.boughtUsd > 0) {
+          entry += `      💸 Bought: <b>${escapeHtml(fmtUsd(t.boughtUsd))}</b>`;
+          if (t.soldUsd != null && t.soldUsd > 0) {
+            entry += `  · Sold: <b>${escapeHtml(fmtUsd(t.soldUsd))}</b>`;
           }
           entry += "\n";
         }
