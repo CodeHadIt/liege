@@ -221,7 +221,7 @@ export async function handleSharedHolders(
       entry +=
         `   <b>${symB}</b>: hold ${holdB} · bought ${boughtB} · buy MC ${buyMcB} · PnL ${pnlB}\n`;
 
-      entry += "\n";
+      entry += `<code>- - - - - - - - - - -</code>\n`;
       return entry;
     });
 
