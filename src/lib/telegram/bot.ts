@@ -42,7 +42,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `/tt &lt;address&gt; — top traders with PnL\n` +
         `/common — find common top traders across 2–10 tokens\n` +
         `/sh &lt;addrA&gt; &lt;addrB&gt; — find wallets holding two tokens\n` +
-        `/diamond &lt;address&gt; — holders with avg buy MC ≥ 20× current MC\n` +
+        `/multiple &lt;address&gt; — holders with avg buy MC ≥ 20× current MC\n` +
         `/wallet &lt;address&gt; [chain] — analyze a wallet\n` +
         `/dp &lt;address&gt; — check DexScreener ad payment status\n` +
         `/dex &lt;bond|unbond&gt; &lt;timeframe&gt; [mcap] — browse DEX Paid tokens\n` +
@@ -65,7 +65,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `Find wallets that traded 2–10 tokens in common. Great for finding smart money.\n\n` +
         `<b>/sh</b> <code>&lt;addressA&gt; &lt;addressB&gt;</code>\n` +
         `Find wallets currently holding two tokens at the same time. Chain auto-detected.\n\n` +
-        `<b>/diamond</b> <code>&lt;address&gt;</code>\n` +
+        `<b>/multiple</b> <code>&lt;address&gt;</code>\n` +
         `Find holders whose average buy MC is ≥ 20× the current MC — true diamond hands.\n\n` +
         `<b>/wallet</b> <code>&lt;address&gt; [chain]</code>\n` +
         `Analyze a wallet — age, portfolio, top holdings, recent PnL.\n` +
@@ -198,15 +198,15 @@ export async function getBot(): Promise<Bot<MyContext>> {
     await handleSharedHolders(ctx, parts[0], parts[1]);
   });
 
-  // ── /diamond ──────────────────────────────────────────────────────────────────
+  // ── /multiple ──────────────────────────────────────────────────────────────────
 
-  bot.command("diamond", async (ctx) => {
-    const { handleDiamond } = await import("./commands/diamond");
+  bot.command("multiple", async (ctx) => {
+    const { handleMultiple } = await import("./commands/multiple");
     const { detectEvmChain } = await import("./commands/token");
     const address = ctx.match?.trim();
     if (!address) {
       await ctx.reply(
-        `<b>Usage:</b> <code>/diamond &lt;token_address&gt;</code>\n\n` +
+        `<b>Usage:</b> <code>/multiple &lt;token_address&gt;</code>\n\n` +
         `Find holders whose average buy MC is ≥ 20× the current MC.\n` +
         `Chain is detected automatically.`,
         { parse_mode: "HTML" }
@@ -219,7 +219,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
       return;
     }
     const chain = rawChain === "base" ? await detectEvmChain(address) : rawChain;
-    await handleDiamond(ctx, chain, address);
+    await handleMultiple(ctx, chain, address);
   });
 
   // ── /wallet ───────────────────────────────────────────────────────────────────
@@ -405,7 +405,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
       { command: "tt",     description: "Top traders with realized PnL" },
       { command: "common", description: "Find common traders across 2–10 tokens" },
       { command: "sh",      description: "Find wallets holding two tokens — /sh addrA addrB" },
-      { command: "diamond", description: "Diamond hands — holders with avg buy MC ≥ 20× current" },
+      { command: "multiple", description: "Find holders with avg buy MC ≥ 20× current MC" },
       { command: "wallet",  description: "Analyze a wallet — portfolio, holdings, PnL" },
       { command: "dp",     description: "Check DexScreener ad payment for a token" },
       { command: "dex",    description: "Browse DEX Paid tokens — /dex bond 1h" },

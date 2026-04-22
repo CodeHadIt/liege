@@ -60,7 +60,7 @@ function fmtMc(n: number): string {
 
 // ── Main handler ──────────────────────────────────────────────────────────────
 
-export async function handleDiamond(
+export async function handleMultiple(
   ctx: MyContext,
   chain: ChainId,
   tokenAddress: string
