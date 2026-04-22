@@ -130,6 +130,13 @@ async function runCommonTraders(
           entry += ` (🟢${t.buyCount}/🔴${t.sellCount})`;
         }
         entry += "\n";
+        if (t.avgBuyPrice != null && t.avgBuyPrice > 0) {
+          entry += `      💰 Avg buy: $${escapeHtml(t.avgBuyPrice < 0.01 ? t.avgBuyPrice.toExponential(2) : t.avgBuyPrice.toFixed(t.avgBuyPrice < 1 ? 4 : 2))}`;
+          if (t.avgSellPrice != null && t.avgSellPrice > 0) {
+            entry += `  · Avg sell: $${escapeHtml(t.avgSellPrice < 0.01 ? t.avgSellPrice.toExponential(2) : t.avgSellPrice.toFixed(t.avgSellPrice < 1 ? 4 : 2))}`;
+          }
+          entry += "\n";
+        }
       });
 
       entry += "\n";
