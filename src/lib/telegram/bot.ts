@@ -43,6 +43,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `/common — find common top traders across 2–10 tokens\n` +
         `/sh &lt;addrA&gt; &lt;addrB&gt; — find wallets holding two tokens\n` +
         `/multiple &lt;address&gt; — holders with avg buy MC ≥ 20× current MC\n` +
+        `/diamond &lt;address&gt; — top 20 longest-holding wallets\n` +
         `/wallet &lt;address&gt; [chain] — analyze a wallet\n` +
         `/dp &lt;address&gt; — check DexScreener ad payment status\n` +
         `/dex &lt;bond|unbond&gt; &lt;timeframe&gt; [mcap] — browse DEX Paid tokens\n` +
@@ -66,7 +67,9 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `<b>/sh</b> <code>&lt;addressA&gt; &lt;addressB&gt;</code>\n` +
         `Find wallets currently holding two tokens at the same time. Chain auto-detected.\n\n` +
         `<b>/multiple</b> <code>&lt;address&gt;</code>\n` +
-        `Find holders whose average buy MC is ≥ 20× the current MC — true diamond hands.\n\n` +
+        `Find holders whose average buy MC is ≥ 20× the current MC.\n\n` +
+        `<b>/diamond</b> <code>&lt;address&gt;</code>\n` +
+        `Top 20 wallets that have held the token the longest.\n\n` +
         `<b>/wallet</b> <code>&lt;address&gt; [chain]</code>\n` +
         `Analyze a wallet — age, portfolio, top holdings, recent PnL.\n` +
         `Solana addresses are detected automatically. For EVM wallets, add chain: <code>eth</code>, <code>base</code>, or <code>bsc</code>.\n\n` +
@@ -220,6 +223,30 @@ export async function getBot(): Promise<Bot<MyContext>> {
     }
     const chain = rawChain === "base" ? await detectEvmChain(address) : rawChain;
     await handleMultiple(ctx, chain, address);
+  });
+
+  // ── /diamond ──────────────────────────────────────────────────────────────────
+
+  bot.command("diamond", async (ctx) => {
+    const { handleDiamond } = await import("./commands/diamond");
+    const { detectEvmChain } = await import("./commands/token");
+    const address = ctx.match?.trim();
+    if (!address) {
+      await ctx.reply(
+        `<b>Usage:</b> <code>/diamond &lt;token_address&gt;</code>\n\n` +
+        `Returns the top 20 wallets that have held the token the longest.\n` +
+        `Chain is detected automatically.`,
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+    const rawChain = detectChainFromAddress(address);
+    if (!rawChain) {
+      await ctx.reply("❌ Could not detect chain from this address.");
+      return;
+    }
+    const chain = rawChain === "base" ? await detectEvmChain(address) : rawChain;
+    await handleDiamond(ctx, chain, address);
   });
 
   // ── /wallet ───────────────────────────────────────────────────────────────────
@@ -406,7 +433,8 @@ export async function getBot(): Promise<Bot<MyContext>> {
       { command: "common", description: "Find common traders across 2–10 tokens" },
       { command: "sh",      description: "Find wallets holding two tokens — /sh addrA addrB" },
       { command: "multiple", description: "Find holders with avg buy MC ≥ 20× current MC" },
-      { command: "wallet",  description: "Analyze a wallet — portfolio, holdings, PnL" },
+      { command: "diamond",  description: "Top 20 longest-holding wallets for a token" },
+      { command: "wallet",   description: "Analyze a wallet — portfolio, holdings, PnL" },
       { command: "dp",     description: "Check DexScreener ad payment for a token" },
       { command: "dex",    description: "Browse DEX Paid tokens — /dex bond 1h" },
       { command: "help",   description: "Show all commands" },
