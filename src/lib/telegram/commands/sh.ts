@@ -213,6 +213,8 @@ export async function handleSharedHolders(
       entry +=
         `   <b>${symA}</b>: hold ${holdA} · bought ${boughtA} · buy MC ${buyMcA} · PnL ${pnlA}\n`;
 
+      entry += `   <code>- - - - - - - - - - -</code>\n`;
+
       const holdB   = escapeHtml(fmtUsd(tB.balanceUsd));
       const boughtB = escapeHtml(fmtUsd(tB.investedUsd));
       const pnlB    = escapeHtml(fmtPnl(tB.totalPnl));
@@ -221,7 +223,7 @@ export async function handleSharedHolders(
       entry +=
         `   <b>${symB}</b>: hold ${holdB} · bought ${boughtB} · buy MC ${buyMcB} · PnL ${pnlB}\n`;
 
-      entry += `<code>- - - - - - - - - - -</code>\n`;
+      entry += "\n";
       return entry;
     });
 
