@@ -150,8 +150,10 @@ export async function getBot(): Promise<Bot<MyContext>> {
     if (args) {
       const addresses = args.split(/[\s\n]+/).map((a) => a.trim()).filter(Boolean);
       if (addresses.length >= 2 && addresses.length <= 10) {
-        const chain = detectChainFromAddress(addresses[0]);
-        if (chain) {
+        const rawChain = detectChainFromAddress(addresses[0]);
+        if (rawChain) {
+          const { detectEvmChain } = await import("./commands/token");
+          const chain = rawChain === "base" ? await detectEvmChain(addresses[0]) : rawChain;
           const { handleCtDirect } = await import("./commands/ct");
           await handleCtDirect(ctx, chain, addresses);
           return;
