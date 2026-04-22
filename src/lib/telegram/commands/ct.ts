@@ -157,10 +157,10 @@ async function runCommonTraders(
         // Avg buy / sell MC
         if (t.avgBuyPrice != null && t.avgBuyPrice > 0 && currentPrice > 0 && currentMc > 0) {
           const avgBuyMc = (t.avgBuyPrice / currentPrice) * currentMc;
-          entry += `      📊 Avg buy MC: <b>${escapeHtml(fmtMc(avgBuyMc))}</b>`;
+          entry += `      📊 Buy MC: <b>${escapeHtml(fmtMc(avgBuyMc))}</b>`;
           if (t.avgSellPrice != null && t.avgSellPrice > 0) {
             const avgSellMc = (t.avgSellPrice / currentPrice) * currentMc;
-            entry += `  · Avg sell MC: <b>${escapeHtml(fmtMc(avgSellMc))}</b>`;
+            entry += `  · Sell MC: <b>${escapeHtml(fmtMc(avgSellMc))}</b>`;
           }
           entry += "\n";
         }
