@@ -47,7 +47,7 @@ export async function handleTopTraders(
 
     const titleBase = `${chainEmoji(chain)} <b>Top Traders</b> · ${chainLabel(chain)}\n<code>${escapeHtml(address)}</code>`;
 
-    const entries: string[] = traders.map((t, i) => {
+    const entries: string[] = traders.slice(0, 20).map((t, i) => {
       const pnl = formatPnl(t.realizedProfitUsd);
       const pnlClass = t.realizedProfitUsd >= 0 ? "📈" : "📉";
       const url = gmgnWalletUrl(chain, t.walletAddress);
