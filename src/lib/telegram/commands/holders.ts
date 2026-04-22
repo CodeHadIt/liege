@@ -1,6 +1,8 @@
 import type { MyContext } from "../bot";
 import { getChainProvider } from "@/lib/chains/registry";
+import { CHAIN_CONFIGS } from "@/config/chains";
 import { scrapeGmgnTopHolders } from "@/lib/api/gmgn-scraper";
+import { getTokenPairs } from "@/lib/api/dexscreener";
 import {
   escapeHtml,
   truncateAddress,
@@ -49,6 +51,7 @@ interface RichHolder {
   percentage: number;
   balanceUsd: number | null;
   openTimestamp: number | null;
+  isLp: boolean;
 }
 
 export async function handleHolders(
@@ -61,10 +64,27 @@ export async function handleHolders(
   try {
     const provider = getChainProvider(chain);
 
-    // Fetch pair data for token name + price (Solana needs price for USD calc)
-    const pairData = await provider.getPairData(address).catch(() => null);
+    // Fetch pair data + LP addresses in parallel
+    const dsChainId = CHAIN_CONFIGS[chain].dexScreenerChainId;
+    const [pairData, allPairs] = await Promise.all([
+      provider.getPairData(address).catch(() => null),
+      getTokenPairs(dsChainId, address).catch(() => []),
+    ]);
+
     const tokenSymbol = pairData?.primaryPair?.baseToken?.symbol ?? null;
     const priceUsd = pairData?.priceUsd ?? null;
+
+    // Build a normalised set of all known LP pair addresses
+    const lpAddresses = new Set<string>(
+      allPairs.map((p) =>
+        chain === "solana" ? p.pairAddress : p.pairAddress.toLowerCase()
+      )
+    );
+
+    function isLpAddress(addr: string): boolean {
+      const normalised = chain === "solana" ? addr : addr.toLowerCase();
+      return lpAddresses.has(normalised);
+    }
 
     let holders: RichHolder[] = [];
 
@@ -75,6 +95,7 @@ export async function handleHolders(
         percentage: h.percentage,
         balanceUsd: priceUsd && h.balance > 0 ? h.balance * priceUsd : null,
         openTimestamp: null,
+        isLp: isLpAddress(h.address),
       }));
     } else {
       // EVM — use GMGN for true holder rankings with USD values
@@ -100,6 +121,7 @@ export async function handleHolders(
             percentage,
             balanceUsd: t.balanceUsd > 0 ? t.balanceUsd : null,
             openTimestamp: t.openTimestamp,
+            isLp: isLpAddress(t.walletAddress),
           };
         });
       }
@@ -121,12 +143,13 @@ export async function handleHolders(
     const tokenLabel = tokenSymbol ? ` <b>${escapeHtml(tokenSymbol)}</b> ·` : "";
     const titleBase = `${chainColor}${tokenLabel} Top Holders · ${chainLabel(chain)}\n<code>${escapeHtml(address)}</code>`;
 
-    const top10pct = holders.slice(0, 10).reduce((s, h) => s + h.percentage, 0);
+    const nonLpHolders = holders.filter((h) => !h.isLp);
+    const top10pct = nonLpHolders.slice(0, 10).reduce((s, h) => s + h.percentage, 0);
     let preamble = `📊 Top 10 hold <b>${top10pct.toFixed(1)}%</b> of supply\n`;
 
     const tiers: WealthTier[] = ["whale", "dolphin", "fish", "shrimp"];
     const tierStats = tiers.map((tier) => {
-      const group = holders.filter((h) => wealthTier(h.balanceUsd) === tier);
+      const group = nonLpHolders.filter((h) => wealthTier(h.balanceUsd) === tier);
       const pct = group.reduce((s, h) => s + h.percentage, 0);
       return { tier, count: group.length, pct };
     }).filter((t) => t.count > 0);
@@ -134,17 +157,22 @@ export async function handleHolders(
     if (tierStats.length > 0) {
       preamble += tierStats.map((t) => `${TIER_EMOJI[t.tier]} ${t.count} (${t.pct.toFixed(1)}%)`).join("  ") + "\n";
     }
+
+    const lpCount = holders.filter((h) => h.isLp).length;
+    if (lpCount > 0) {
+      preamble += `🏊 ${lpCount} LP address${lpCount > 1 ? "es" : ""} excluded from stats\n`;
+    }
     preamble += "\n";
 
     // Build one entry per holder
     const entries: string[] = holders.map((h, i) => {
-      const tier = wealthTier(h.balanceUsd);
-      const emoji = TIER_EMOJI[tier];
+      const emoji = h.isLp ? "🏊" : TIER_EMOJI[wealthTier(h.balanceUsd)];
+      const lpLabel = h.isLp ? " <i>(LP)</i>" : "";
       const pct = h.percentage > 0 ? ` — ${h.percentage.toFixed(2)}%` : "";
       const holdDur = h.openTimestamp ? `  · <i>${formatAge(h.openTimestamp)}</i>` : "";
       const gmgnUrl = `https://gmgn.ai/${gmgnChain}/address/${h.address}`;
       const addrLabel = escapeHtml(truncateAddress(h.address));
-      return `${i + 1}. <a href="${gmgnUrl}">${addrLabel}</a>${pct}  ${emoji}${holdDur}\n`;
+      return `${i + 1}. <a href="${gmgnUrl}">${addrLabel}</a>${pct}  ${emoji}${lpLabel}${holdDur}\n`;
     });
 
     const pages = splitPages(entries, (page, total) => {
