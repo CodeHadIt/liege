@@ -20,17 +20,26 @@ export async function GET(request: Request) {
     return NextResponse.json({ data: cached, cached: true });
   }
 
+  // Normalize DexScreener chain IDs to our internal IDs
+  const DS_CHAIN_MAP: Record<string, ChainId> = {
+    ethereum: "eth",
+    solana:   "solana",
+    base:     "base",
+    bsc:      "bsc",
+  };
+
   try {
     const pairs = await dexscreener.searchPairs(query);
     let results: TokenSearchResult[] = pairs
       .filter((pair) => {
-        if (!chain) return true;
-        return pair.chainId === chain;
+        const normalised = DS_CHAIN_MAP[pair.chainId] ?? pair.chainId;
+        if (!chain) return normalised in DS_CHAIN_MAP || ["solana","base","bsc","eth"].includes(normalised);
+        return normalised === chain;
       })
       .slice(0, 20)
       .map((pair) => ({
         address: pair.baseToken.address,
-        chain: pair.chainId as ChainId,
+        chain: (DS_CHAIN_MAP[pair.chainId] ?? pair.chainId) as ChainId,
         name: pair.baseToken.name,
         symbol: pair.baseToken.symbol,
         logoUrl: pair.info?.imageUrl ?? null,

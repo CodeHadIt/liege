@@ -38,11 +38,13 @@ export function TokenSearch() {
       const results: TokenSearchResult[] = json.data || [];
 
       if (detectedChain === "evm") {
-        // EVM address pasted — use search result to determine actual chain (base vs bsc)
+        // EVM address pasted — use search result to determine actual chain
         const match = results.find(
           (r) => r.address.toLowerCase() === q.toLowerCase()
         );
-        const chain = match?.chain ?? "base";
+        // Fall back to the first result's chain if no exact address match,
+        // then to "base" as last resort
+        const chain = match?.chain ?? results[0]?.chain ?? "base";
         router.push(`/token/${chain}/${q}`);
         setQuery("");
         setIsOpen(false);
