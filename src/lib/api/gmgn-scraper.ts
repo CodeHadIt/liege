@@ -450,17 +450,39 @@ export async function scrapeGmgnHoldersPaginated(
 export interface GmgnWalletHolding {
   tokenAddress: string;
   symbol: string;
+  name: string;
+  logoUrl: string | null;
+  balance: number;
+  balanceUsd: number;
   realizedPnlUsd: number;
+  realizedPnl30dUsd: number;
   unrealizedPnlUsd: number;
   totalPnlUsd: number;
-  investedUsd: number;
-  currentValueUsd: number;
+  totalPnlPct: number;           // decimal multiplier, e.g. 1.457 = +145.7%
+  investedUsd: number;           // total cost basis (history_bought_cost)
+  avgCostUsd: number;            // avg price paid per token
+  avgSoldUsd: number;            // avg sell price per token
+  currentPriceUsd: number;
+  historyBoughtAmount: number;
+  historySoldAmount: number;
+  historySoldIncomeUsd: number;
+  buyCount30d: number;
+  sellCount30d: number;
+  startHoldingAt: number | null;
   lastActiveTimestamp: number | null;
+  isHoneypot: boolean | null;
+  liquidity: number;
+}
+
+function p(v: unknown): number {
+  return parseFloat(String(v ?? 0)) || 0;
 }
 
 /**
- * Scrape GMGN wallet holdings page to get per-token PnL data.
- * Returns holdings sorted by |realizedPnlUsd| desc (most significant recent trades).
+ * Scrape GMGN wallet holdings via /api/v1/wallet_holdings/{chain}/{address}.
+ * The data does NOT auto-fire on page load — we capture auth params from the
+ * mrwapi/v1/timestamp request (which fires immediately) then call the API
+ * directly within the page context so session cookies are included.
  */
 export async function scrapeGmgnWalletHoldings(
   chain: string,
@@ -480,90 +502,107 @@ export async function scrapeGmgnWalletHoldings(
     userAgent:
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
       "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    viewport: { width: 1280, height: 900 },
   });
   await context.addInitScript(() => {
     Object.defineProperty(navigator, "webdriver", { get: () => false });
   });
 
   const page = await context.newPage();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let autoBody: any = null;
-  let autoUrl = "";
+  let authUrl = "";
 
   try {
-    // Capture auto-fired wallet holdings request (includes auth params)
-    const sessionReady = page
-      .waitForResponse(
-        async (res) => {
-          const url = res.url();
-          if (!url.includes("/wallet_holdings/") && !url.includes("wallet/holdings")) return false;
-          autoUrl = url;
-          try { autoBody = await res.json(); } catch { /* ignore */ }
-          return true;
-        },
-        { timeout: 20_000 }
-      )
-      .catch(() => null);
+    // Capture the first URL that carries GMGN auth params (mrwapi/v1/timestamp
+    // fires within ~1s of page load — much faster than waiting for holdings).
+    page.on("response", (res) => {
+      if (!authUrl && res.url().includes("gmgn.ai") && res.url().includes("device_id=")) {
+        authUrl = res.url();
+      }
+    });
 
     await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
 
-    const readyAt = Date.now();
-    await sessionReady;
-    const elapsed = Date.now() - readyAt;
-    if (elapsed < 6_000) await new Promise((r) => setTimeout(r, 6_000 - elapsed));
-
-    // If we didn't capture the auto URL, try fetching with a constructed URL
-    // using the realized_profit sort to get the most impactful trades first
-    if (!autoUrl) {
-      console.log(`[gmgn-scraper] wallet:${walletAddress.slice(0, 8)} no auto URL, trying constructed`);
-    } else {
-      // Re-fetch with realized_profit sort using captured auth params
-      const u = new URL(autoUrl);
-      u.searchParams.set("orderby", "last_active_timestamp");
-      u.searchParams.set("direction", "desc");
-      u.searchParams.set("limit", "20");
-      const fetchUrl = u.toString();
-
-      const result = await page.evaluate(async (url: string) => {
-        try {
-          const r = await fetch(url, { credentials: "include" });
-          const body = await r.json();
-          return { ok: r.ok, body };
-        } catch { return { ok: false, body: null }; }
-      }, fetchUrl).catch(() => ({ ok: false, body: null }));
-
-      if (result.ok && result.body) autoBody = result.body;
+    // Wait until auth params are captured (max 8s)
+    const deadline = Date.now() + 8_000;
+    while (!authUrl && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 200));
     }
+
+    if (!authUrl) {
+      console.log(`[gmgn-scraper] wallet:${walletAddress.slice(0, 8)} no auth URL captured`);
+      return [];
+    }
+
+    // Extract auth params order-independently
+    const param = (name: string) => new URL(authUrl).searchParams.get(name) ?? "";
+    const device_id = param("device_id");
+    const client_id = param("client_id");
+    const fp_did    = param("fp_did");
+    const app_ver   = param("app_ver") || client_id;
+
+    const apiUrl =
+      `https://gmgn.ai/api/v1/wallet_holdings/${gmgnChain}/${walletAddress}` +
+      `?device_id=${device_id}&fp_did=${fp_did}&client_id=${client_id}` +
+      `&from_app=gmgn&app_ver=${app_ver}&tz_name=UTC&tz_offset=0&app_lang=en-US&os=web` +
+      `&limit=50&orderby=last_active_timestamp&direction=desc&showsmall=true&sellout=false`;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await page.evaluate(async (url: string): Promise<{ ok: boolean; body: any }> => {
+      try {
+        const r = await fetch(url, { credentials: "include" });
+        return { ok: r.ok, body: await r.json() };
+      } catch { return { ok: false, body: null }; }
+    }, apiUrl);
+
+    if (!result.ok || !result.body) {
+      console.log(`[gmgn-scraper] wallet:${walletAddress.slice(0, 8)} API call failed`);
+      return [];
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const list: any[] = result.body?.data?.holdings ?? result.body?.data?.list ?? [];
+    if (!Array.isArray(list) || list.length === 0) return [];
+
+    const holdings: GmgnWalletHolding[] = list
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((item: any) => ({
+        tokenAddress:          String(item.token?.address ?? item.address ?? ""),
+        symbol:                String(item.token?.symbol ?? item.symbol ?? "???"),
+        name:                  String(item.token?.name ?? item.name ?? ""),
+        logoUrl:               item.token?.logo || item.logo || null,
+        balance:               p(item.balance),
+        balanceUsd:            p(item.usd_value),
+        realizedPnlUsd:        p(item.realized_profit),
+        realizedPnl30dUsd:     p(item.realized_profit_30d),
+        unrealizedPnlUsd:      p(item.unrealized_profit),
+        totalPnlUsd:           p(item.total_profit),
+        totalPnlPct:           p(item.total_profit_pnl),
+        investedUsd:           p(item.cost ?? item.history_bought_cost),
+        avgCostUsd:            p(item.avg_cost),
+        avgSoldUsd:            p(item.avg_sold),
+        currentPriceUsd:       p(item.price),
+        historyBoughtAmount:   p(item.history_bought_amount),
+        historySoldAmount:     p(item.history_sold_amount),
+        historySoldIncomeUsd:  p(item.history_sold_income),
+        buyCount30d:           typeof item.buy_30d === "number" ? item.buy_30d : parseInt(String(item.buy_30d ?? 0)) || 0,
+        sellCount30d:          typeof item.sell_30d === "number" ? item.sell_30d : parseInt(String(item.sell_30d ?? 0)) || 0,
+        startHoldingAt:        typeof item.start_holding_at === "number" && item.start_holding_at > 0 ? item.start_holding_at : null,
+        lastActiveTimestamp:   typeof item.last_active_timestamp === "number" ? item.last_active_timestamp : null,
+        isHoneypot:            item.token?.is_honeypot ?? null,
+        liquidity:             p(item.liquidity),
+      }))
+      .filter((h) => h.tokenAddress.length > 0);
+
+    console.log(`[gmgn-scraper] wallet:${walletAddress.slice(0, 8)} — ${holdings.length} holdings`);
+
+    if (holdings.length > 0) {
+      serverCache.set(cacheKey, holdings, CACHE_TTL.GMGN_TRADERS);
+    }
+    return holdings;
   } catch (err) {
     console.log(`[gmgn-scraper] wallet error: ${err}`);
+    return [];
   } finally {
     await context.close();
   }
-
-  if (!autoBody) return [];
-
-  // Parse wallet holdings list
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const list: any[] = autoBody?.data?.holdings ?? autoBody?.data?.list ?? [];
-  if (!Array.isArray(list) || list.length === 0) return [];
-
-  const holdings: GmgnWalletHolding[] = list
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .map((item: any) => ({
-      tokenAddress:       String(item.token?.address ?? item.address ?? ""),
-      symbol:             String(item.token?.symbol ?? item.symbol ?? "???"),
-      realizedPnlUsd:     parseFloat(String(item.realized_profit ?? 0)) || 0,
-      unrealizedPnlUsd:   parseFloat(String(item.unrealized_profit ?? 0)) || 0,
-      totalPnlUsd:        parseFloat(String(item.realized_profit ?? 0)) + parseFloat(String(item.unrealized_profit ?? 0)) || 0,
-      investedUsd:        parseFloat(String(item.cost ?? item.history_bought_cost ?? 0)) || 0,
-      currentValueUsd:    parseFloat(String(item.usd_value ?? 0)) || 0,
-      lastActiveTimestamp: typeof item.last_active_timestamp === "number" ? item.last_active_timestamp : null,
-    }))
-    .filter((h) => h.tokenAddress.length > 0);
-
-  if (holdings.length > 0) {
-    serverCache.set(cacheKey, holdings, CACHE_TTL.GMGN_TRADERS);
-  }
-
-  return holdings;
 }
