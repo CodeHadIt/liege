@@ -166,7 +166,7 @@ async function fetchEvmSwaps(
 ): Promise<MoralisSwap[]> {
   const allSwaps: MoralisSwap[] = [];
   let cursor: string | undefined;
-  for (let page = 0; page < 5; page++) {
+  for (let page = 0; page < 2; page++) {
     const qs = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
     const data = await fetchMoralisEvm<MoralisSwapsResponse>(
       `/wallets/${walletAddress}/swaps?chain=${moralisChain}&limit=100${qs}`
@@ -455,8 +455,8 @@ async function buildEvmQuickView(
     return { date, pnl: cumPnl };
   });
 
-  // ─── Enrich buy activity entries with MC at buy ────────────────────────────
-  await enrichActivityWithMarketCap(recentActivity, chainId);
+  // ─── Enrich buy activity entries with MC at buy (non-blocking) ───────────
+  void enrichActivityWithMarketCap(recentActivity, chainId);
 
   return {
     address: walletAddress,
@@ -658,7 +658,7 @@ export async function POST(request: Request) {
 
       // Fetch parsed swap history via v0 API (filters SWAP client-side, up to 30 pages to cover 30d)
       const swapTxns = await helius.getParsedSwapsAll(walletAddress, {
-        maxPages: 30,
+        maxPages: 5,
         limit: 100,
       });
 
