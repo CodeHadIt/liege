@@ -271,12 +271,23 @@ export function TopHolders({ chain, address, priceUsd, liquidityUsd }: TopHolder
                               i < 10 ? PIE_COLORS[i] : "#2A2A3A",
                           }}
                         />
-                        <button
-                          onClick={() => openWalletDialog(holder.address, chain)}
-                          className="text-[11px] font-mono text-[#E8E8ED] hover:text-[#00F0FF] transition-colors truncate"
-                        >
-                          {holder.label || shortenAddress(holder.address, 4)}
-                        </button>
+                        {holder.tier === "lp" ? (
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-[11px] font-mono text-[#6B6B80] truncate cursor-default">
+                              {holder.label || shortenAddress(holder.address, 4)}
+                            </span>
+                            <span className="shrink-0 px-1.5 py-0.5 rounded text-[8px] font-mono font-semibold tracking-wide uppercase bg-[#0080FF]/15 text-[#0080FF] border border-[#0080FF]/25">
+                              LP
+                            </span>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => openWalletDialog(holder.address, chain)}
+                            className="text-[11px] font-mono text-[#E8E8ED] hover:text-[#00F0FF] transition-colors truncate"
+                          >
+                            {holder.label || shortenAddress(holder.address, 4)}
+                          </button>
+                        )}
                         <a
                           href={getExplorerAddressUrl(chain, holder.address)}
                           target="_blank"
