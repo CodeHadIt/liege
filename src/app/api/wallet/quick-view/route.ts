@@ -29,6 +29,9 @@ const EVM_NATIVE_SYMBOLS: Record<string, string> = {
   eth:  "ETH",
 };
 
+// Chains where Moralis profitability endpoint is supported (BSC returns 400)
+const PROFITABILITY_CHAINS = new Set(["0x1", "0x2105"]);
+
 async function fetchMoralisEvm<T>(path: string): Promise<T | null> {
   const apiKey = process.env.MORALIS_API_KEY;
   if (!apiKey) return null;
@@ -164,13 +167,22 @@ async function buildEvmQuickView(
   const addr = walletAddress.toLowerCase();
   const chainConfig = CHAIN_CONFIGS[chainId];
   const nativeSymbol = EVM_NATIVE_SYMBOLS[chainId] ?? chainConfig.nativeCurrency.symbol;
+  const supportsProf = PROFITABILITY_CHAINS.has(moralisChain);
 
-  // Run GMGN scrape and Moralis token fetch in parallel
-  const [gmgnHoldings, tokensData] = await Promise.all([
+  // Run all fetches in parallel
+  const [gmgnHoldings, tokensData, swapsData, profData] = await Promise.all([
     scrapeGmgnWalletHoldings(chainId, walletAddress),
     fetchMoralisEvm<MoralisTokensResponse>(
       `/wallets/${addr}/tokens?chain=${moralisChain}&exclude_spam=true&include_native=true`
     ),
+    fetchMoralisEvm<MoralisSwapsResponse>(
+      `/wallets/${addr}/swaps?chain=${moralisChain}&limit=30&order=DESC`
+    ),
+    supportsProf
+      ? fetchMoralisEvm<{ result: MoralisProfitabilityEntry[] }>(
+          `/wallets/${addr}/profitability?chain=${moralisChain}`
+        )
+      : Promise.resolve(null),
   ]);
 
   // ─── Native balance from Moralis /tokens ──────────────────────────────────
@@ -192,7 +204,7 @@ async function buildEvmQuickView(
     stablecoinTotal += usdVal;
   }
 
-  // ─── Positions from GMGN holdings ─────────────────────────────────────────
+  // ─── Active positions from GMGN holdings ──────────────────────────────────
   const activePositions: WalletPosition[] = gmgnHoldings
     .filter((h) => h.balanceUsd >= 0.01)
     .map((h) => ({
@@ -214,42 +226,114 @@ async function buildEvmQuickView(
     .sort((a, b) => b.balanceUsd - a.balanceUsd)
     .slice(0, 20);
 
-  // ─── PnL stats from GMGN ──────────────────────────────────────────────────
+  // ─── Recent activity from Moralis swaps ───────────────────────────────────
+  const recentActivity: WalletQuickViewData["recentActivity"] = (swapsData?.result ?? []).map((swap) => {
+    if (swap.transactionType === "buy") {
+      return {
+        txHash:       swap.transactionHash,
+        timestamp:    Math.floor(new Date(swap.blockTimestamp).getTime() / 1000),
+        side:         "buy" as const,
+        tokenSymbol:  swap.bought.symbol,
+        tokenAddress: swap.bought.address,
+        amount:       parseFloat(swap.bought.amount) || 0,
+        amountUsd:    Math.abs(swap.sold.usdAmount),
+        logoUrl:      swap.bought.logo ?? null,
+        marketCap:    null,
+      };
+    } else {
+      return {
+        txHash:       swap.transactionHash,
+        timestamp:    Math.floor(new Date(swap.blockTimestamp).getTime() / 1000),
+        side:         "sell" as const,
+        tokenSymbol:  swap.sold.symbol,
+        tokenAddress: swap.sold.address,
+        amount:       Math.abs(parseFloat(swap.sold.amount)) || 0,
+        amountUsd:    Math.abs(swap.bought.usdAmount),
+        logoUrl:      swap.sold.logo ?? null,
+        marketCap:    null,
+      };
+    }
+  });
+
+  // ─── PnL stats: Moralis profitability (ETH/Base) or GMGN fallback (BSC) ───
   let pnl30d = 0;
   const recentPnls: PnlHistoryEntry[] = [];
   const topBuys: PnlHistoryEntry[] = [];
 
-  for (const h of gmgnHoldings) {
-    pnl30d += h.realizedPnl30dUsd;
+  if (profData?.result?.length) {
+    // ETH / Base — comprehensive all-time per-token PnL from Moralis
+    for (const e of profData.result) {
+      const realizedPnl  = parseFloat(e.realized_profit_usd ?? "0") || 0;
+      const totalBoughtUsd = parseFloat(e.total_usd_invested ?? "0") || 0;
+      const totalSoldUsd   = parseFloat(e.total_sold_usd ?? "0") || 0;
+      const lastTradeTs    = e.last_trade
+        ? Math.floor(new Date(e.last_trade).getTime() / 1000)
+        : 0;
 
-    if (h.realizedPnlUsd !== 0) {
-      recentPnls.push({
-        tokenAddress:  h.tokenAddress,
-        symbol:        h.symbol,
-        chain:         chainId,
-        realizedPnl:   h.realizedPnlUsd,
-        totalBoughtUsd: h.investedUsd,
-        totalSoldUsd:   h.historySoldIncomeUsd,
-        timestamp:     h.lastActiveTimestamp ?? 0,
-        side:          "sell",
-        amount:        h.historySoldAmount,
-        logoUrl:       h.logoUrl,
-      });
+      if (realizedPnl !== 0) {
+        recentPnls.push({
+          tokenAddress:   e.token_address,
+          symbol:         e.token_symbol,
+          chain:          chainId,
+          realizedPnl,
+          totalBoughtUsd,
+          totalSoldUsd,
+          timestamp:      lastTradeTs,
+          side:           "sell",
+          amount:         parseFloat(e.total_tokens_sold) || 0,
+          logoUrl:        e.logo ?? null,
+        });
+        pnl30d += realizedPnl; // profitability endpoint returns 30d by default when no days param
+      }
+      if (totalBoughtUsd > 0) {
+        topBuys.push({
+          tokenAddress:   e.token_address,
+          symbol:         e.token_symbol,
+          chain:          chainId,
+          realizedPnl:    totalBoughtUsd,
+          totalBoughtUsd,
+          totalSoldUsd,
+          timestamp:      lastTradeTs,
+          side:           "buy",
+          amount:         parseFloat(e.total_tokens_bought) || 0,
+          logoUrl:        e.logo ?? null,
+        });
+      }
     }
+  } else {
+    // BSC (or any chain where Moralis profitability is unavailable) —
+    // fall back to GMGN holdings data (covers recent/current positions only)
+    for (const h of gmgnHoldings) {
+      pnl30d += h.realizedPnl30dUsd;
 
-    if (h.investedUsd > 0) {
-      topBuys.push({
-        tokenAddress:  h.tokenAddress,
-        symbol:        h.symbol,
-        chain:         chainId,
-        realizedPnl:   h.investedUsd,
-        totalBoughtUsd: h.investedUsd,
-        totalSoldUsd:   h.historySoldIncomeUsd,
-        timestamp:     h.startHoldingAt ?? 0,
-        side:          "buy",
-        amount:        h.historyBoughtAmount,
-        logoUrl:       h.logoUrl,
-      });
+      if (h.realizedPnlUsd !== 0) {
+        recentPnls.push({
+          tokenAddress:   h.tokenAddress,
+          symbol:         h.symbol,
+          chain:          chainId,
+          realizedPnl:    h.realizedPnlUsd,
+          totalBoughtUsd: h.investedUsd,
+          totalSoldUsd:   h.historySoldIncomeUsd,
+          timestamp:      h.lastActiveTimestamp ?? 0,
+          side:           "sell",
+          amount:         h.historySoldAmount,
+          logoUrl:        h.logoUrl,
+        });
+      }
+      if (h.investedUsd > 0) {
+        topBuys.push({
+          tokenAddress:   h.tokenAddress,
+          symbol:         h.symbol,
+          chain:          chainId,
+          realizedPnl:    h.investedUsd,
+          totalBoughtUsd: h.investedUsd,
+          totalSoldUsd:   h.historySoldIncomeUsd,
+          timestamp:      h.startHoldingAt ?? 0,
+          side:           "buy",
+          amount:         h.historyBoughtAmount,
+          logoUrl:        h.logoUrl,
+        });
+      }
     }
   }
 
@@ -260,8 +344,7 @@ async function buildEvmQuickView(
     ? { symbol: recentPnls[0].symbol, pnl: recentPnls[0].realizedPnl }
     : null;
 
-  // ─── 30-day cumulative PnL history from per-token realized PnL ───────────
-  // Place each token's realized PnL on its last_active_timestamp day
+  // ─── 30-day cumulative PnL history from GMGN per-token data ──────────────
   const nowMs = Date.now();
   const thirtyDaysAgoMs = nowMs - 30 * 24 * 60 * 60 * 1000;
   const pnlByDay = new Map<string, number>();
@@ -299,7 +382,7 @@ async function buildEvmQuickView(
     activePositions,
     recentPnls: recentPnls.slice(0, 20),
     topBuys: topBuys.slice(0, 10),
-    recentActivity: [],
+    recentActivity,
   };
 }
 
