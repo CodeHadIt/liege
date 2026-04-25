@@ -566,7 +566,7 @@ export async function scrapeGmgnWalletHoldings(
     const holdings: GmgnWalletHolding[] = list
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .map((item: any) => ({
-        tokenAddress:          String(item.token?.address ?? item.address ?? ""),
+        tokenAddress:          String(item.token?.token_address || item.token?.address || item.address || ""),
         symbol:                String(item.token?.symbol ?? item.symbol ?? "???"),
         name:                  String(item.token?.name ?? item.name ?? ""),
         logoUrl:               item.token?.logo || item.logo || null,
