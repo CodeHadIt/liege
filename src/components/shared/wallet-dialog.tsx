@@ -513,7 +513,7 @@ function PnlTab({
               <span className="text-[11px] font-mono font-semibold text-[#E8E8ED] truncate block">
                 {entry.symbol}
               </span>
-              <span className="text-[9px] font-mono text-[#6B6B80]">
+              <span className="text-[9px] font-mono text-[#6B6B80]" suppressHydrationWarning>
                 {formatTimeAgo(entry.timestamp)}
               </span>
             </div>
@@ -568,7 +568,7 @@ function TopBuysTab({
             <span className="text-[11px] font-mono font-semibold text-[#E8E8ED]">
               {entry.symbol}
             </span>
-            <span className="text-[9px] font-mono text-[#6B6B80]">
+            <span className="text-[9px] font-mono text-[#6B6B80]" suppressHydrationWarning>
               {formatTimeAgo(entry.timestamp)}
             </span>
           </div>
@@ -644,7 +644,7 @@ function ActivityTab({
           <span className="text-[10px] font-mono text-[#6B6B80] text-right self-center">
             {entry.marketCap ? formatUsdCompact(entry.marketCap) : "—"}
           </span>
-          <span className="text-[9px] font-mono text-[#6B6B80] text-right self-center">
+          <span className="text-[9px] font-mono text-[#6B6B80] text-right self-center" suppressHydrationWarning>
             {formatTimeAgo(entry.timestamp)}
           </span>
         </a>
