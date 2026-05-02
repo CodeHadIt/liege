@@ -71,6 +71,32 @@ export function useClipboardAddress(): UseClipboardAddressReturn {
             type: "token",
             label: match.symbol || match.name || trimmed.slice(0, 8),
           });
+        } else if (detectedType === "solana") {
+          // DexScreener has no data for old/low-liquidity Solana tokens.
+          // Try the token API (uses Helius DAS as final fallback) to check if
+          // this is actually a token mint rather than a wallet address.
+          try {
+            const tokenRes = await fetch(`/api/token/solana/${encodeURIComponent(trimmed)}`);
+            if (tokenRes.ok) {
+              const tokenJson = await tokenRes.json();
+              const tokenData = tokenJson.data;
+              if (tokenData?.symbol && tokenData.symbol !== "???" && tokenData?.name && tokenData.name !== "Unknown") {
+                setDetected({
+                  address: trimmed,
+                  chain: "solana",
+                  type: "token",
+                  label: tokenData.symbol,
+                });
+                return;
+              }
+            }
+          } catch { /* fall through to wallet */ }
+          setDetected({
+            address: trimmed,
+            chain: "solana",
+            type: "wallet",
+            label: `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`,
+          });
         } else {
           setDetected({
             address: trimmed,
