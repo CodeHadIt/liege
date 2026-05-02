@@ -57,6 +57,8 @@ async function fetchBirdeye<T>(
     });
     if (!res.ok) return null;
     const json = await res.json();
+    // Birdeye returns {success: false, data: null} for unknown tokens — treat as not found
+    if (json.success === false) return null;
     return json.data ?? json;
   } catch {
     return null;

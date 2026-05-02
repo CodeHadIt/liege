@@ -4,6 +4,7 @@ import {
   getTransactionHistory,
   getWalletFirstTransaction,
   getMintInfo,
+  getAssetBatch,
   type HeliusTransaction,
 } from "@/lib/api/helius";
 import { scrapeGmgnWalletHoldings } from "@/lib/api/gmgn-scraper";
@@ -287,6 +288,19 @@ async function handleSolanaWallet(
   const mintToPrice = new Map<string, number>(
     balances.filter((b) => b.pricePerToken).map((b) => [b.mint, b.pricePerToken!])
   );
+
+  // Resolve symbols for mints that appear in transactions but aren't in current portfolio
+  // (e.g. old/sold tokens) via Helius DAS batch lookup
+  const unknownMints = [...new Set(
+    allTxns.flatMap((tx) => (tx.tokenTransfers ?? []).map((t) => t.mint))
+      .filter((m) => !mintToSymbol.has(m) && m !== SOL_MINT && !STABLE_MINTS.has(m))
+  )];
+  if (unknownMints.length > 0) {
+    const resolved = await getAssetBatch(unknownMints).catch(() => new Map());
+    for (const [mint, info] of resolved) {
+      if (info.symbol && info.symbol !== "???") mintToSymbol.set(mint, info.symbol);
+    }
+  }
 
   // Filter txns ≥ $1
   const meaningfulTxns = allTxns
