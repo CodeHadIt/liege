@@ -141,6 +141,25 @@ export class SolanaChainProvider implements ChainProvider {
       };
     }
 
+    // Final fallback: Helius DAS getAsset — covers old/low-liquidity tokens that
+    // Birdeye and Solscan miss (pre-pump.fun era, tokens with no active pairs)
+    const das = await helius.getAssetMetadata(tokenAddress);
+    if (das) {
+      return {
+        address: tokenAddress,
+        name: das.name,
+        symbol: das.symbol,
+        decimals: das.decimals,
+        logoUrl: das.logoUrl,
+        totalSupply: null,
+        holderCount: null,
+        website: null,
+        twitter: null,
+        telegram: null,
+        description: null,
+      };
+    }
+
     return null;
   }
 

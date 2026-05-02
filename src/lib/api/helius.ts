@@ -490,6 +490,22 @@ export async function getAssetBatch(
  * Returns null if unavailable or Helius API key not set.
  */
 export async function getAssetImage(mintAddress: string): Promise<string | null> {
+  const asset = await getAssetMetadata(mintAddress);
+  return asset?.logoUrl ?? null;
+}
+
+export interface AssetMetadata {
+  symbol: string;
+  name: string;
+  decimals: number;
+  logoUrl: string | null;
+}
+
+/**
+ * Resolve a single mint to its on-chain symbol/name/logo via Helius DAS getAsset.
+ * Works for all SPL tokens including pre-pump.fun / older tokens that Birdeye misses.
+ */
+export async function getAssetMetadata(mintAddress: string): Promise<AssetMetadata | null> {
   const key = getApiKey();
   if (!key) return null;
   try {
@@ -506,9 +522,22 @@ export async function getAssetImage(mintAddress: string): Promise<string | null>
     });
     if (!res.ok) return null;
     const json = await res.json();
-    const content = json.result?.content;
-    // Prefer content.links.image; fall back to first file URI
-    return content?.links?.image ?? content?.files?.[0]?.uri ?? null;
+    const result = json.result;
+    if (!result) return null;
+    const content = result.content;
+    const meta = content?.metadata;
+    // Only return if we have at least a symbol — otherwise it's not a recognised token
+    if (!meta?.symbol) return null;
+    const logoUrl =
+      content?.links?.image ??
+      content?.files?.[0]?.uri ??
+      null;
+    return {
+      symbol:   meta.symbol,
+      name:     meta.name || meta.symbol,
+      decimals: result.token_info?.decimals ?? 9,
+      logoUrl,
+    };
   } catch {
     return null;
   }
