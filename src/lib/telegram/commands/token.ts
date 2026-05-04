@@ -39,6 +39,28 @@ const GMGN_CHAIN: Record<ChainId, string> = {
 
 // ── Chain detection ───────────────────────────────────────────────────────────
 
+// Friendly names for unsupported DexScreener chain IDs
+const UNSUPPORTED_CHAIN_NAMES: Record<string, string> = {
+  avalanche:  "Avalanche",
+  avax:       "Avalanche",
+  monad:      "Monad",
+  ton:        "TON",
+  polygon:    "Polygon",
+  arbitrum:   "Arbitrum",
+  optimism:   "Optimism",
+  fantom:     "Fantom",
+  cronos:     "Cronos",
+  zksync:     "zkSync",
+  linea:      "Linea",
+  scroll:     "Scroll",
+  mantle:     "Mantle",
+  celo:       "Celo",
+  aptos:      "Aptos",
+  sui:        "Sui",
+  near:       "NEAR",
+  tron:       "TRON",
+};
+
 export async function detectEvmChain(address: string): Promise<ChainId> {
   try {
     const results = await searchPairs(address).catch(() => []);
@@ -73,6 +95,29 @@ export async function detectEvmChain(address: string): Promise<ChainId> {
   } catch { /* ignore */ }
 
   return "base";
+}
+
+/**
+ * Returns a human-readable chain name if the EVM address belongs to an
+ * unsupported chain (e.g. Avalanche, Monad, TON). Returns null if the chain
+ * is supported or cannot be determined.
+ */
+export async function getUnsupportedChainName(address: string): Promise<string | null> {
+  try {
+    const results = await searchPairs(address).catch(() => []);
+    if (results.length === 0) return null;
+
+    const sorted = results.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
+    const topChain = sorted[0]?.chainId?.toLowerCase() ?? "";
+
+    // If the highest-liquidity result is on a supported chain, nothing to report
+    const SUPPORTED = new Set(["base", "bsc", "ethereum", "solana"]);
+    if (!topChain || SUPPORTED.has(topChain)) return null;
+
+    return UNSUPPORTED_CHAIN_NAMES[topChain] ?? topChain;
+  } catch {
+    return null;
+  }
 }
 
 // ── ATH (GeckoTerminal) ───────────────────────────────────────────────────────
@@ -118,12 +163,29 @@ async function fetchTopHolders(
         .slice(0, 10)
         .map((h) => ({ address: h.address, percentage: h.percentage }));
     }
-    const gmgnHolders = await scrapeGmgnTopHolders(chain, address);
+    // EVM: fetch GMGN holders + DexScreener pairs (for supply-based % fallback) in parallel
+    const [gmgnHolders, dsPairs] = await Promise.all([
+      scrapeGmgnTopHolders(chain, address).catch(() => []),
+      getTokenPairs(chain, address).catch(() => []),
+    ]);
+    if (gmgnHolders.length === 0) return [];
+
+    // Compute total supply from FDV / price (same as web app holders route)
+    const primaryPair = dsPairs.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
+    const priceUsd = parseFloat(primaryPair?.priceUsd ?? "0") || 0;
+    const fdv = primaryPair?.fdv ?? 0;
+    const totalSupply = priceUsd > 0 && fdv > 0 ? fdv / priceUsd : 0;
+    const totalHeld = gmgnHolders.reduce((s, h) => s + h.balance, 0);
+
     return gmgnHolders.slice(0, 10).map((h) => {
-      const pct =
-        h.supplyPercent > 0
-          ? h.supplyPercent <= 1 ? h.supplyPercent * 100 : h.supplyPercent
-          : 0;
+      let pct = 0;
+      if (h.supplyPercent > 0) {
+        pct = h.supplyPercent <= 1 ? h.supplyPercent * 100 : h.supplyPercent;
+      } else if (totalSupply > 0) {
+        pct = (h.balance / totalSupply) * 100;
+      } else if (totalHeld > 0) {
+        pct = (h.balance / totalHeld) * 100;
+      }
       return { address: h.walletAddress, percentage: pct };
     });
   };
@@ -277,7 +339,12 @@ function buildMessage(opts: {
   const changeStr = changes.length ? `  ${it(`(${escapeHtml(changes.join("  "))})`)}` : "";
   statsRows.push(`💰 Price: ${b(formatPrice(data.priceUsd))}${changeStr}`);
   statsRows.push(`📈 MC: ${b(`$${escapeHtml(formatCompact(data.marketCap))}`)}`);
-  statsRows.push(`💧 Liq: ${b(`$${escapeHtml(formatCompact(data.liquidity?.totalUsd ?? null))}`)}`);
+  // Liquidity: prefer data.liquidity.totalUsd, fall back to summing individual pools
+  const liquidityUsd = data.liquidity?.totalUsd
+    ?? (data.allPairs.length > 0
+        ? data.allPairs.reduce((s, p) => s + (p.liquidity?.usd ?? 0), 0) || null
+        : null);
+  statsRows.push(`💧 Liq: ${b(`$${escapeHtml(formatCompact(liquidityUsd))}`)}`);
   statsRows.push(`📦 Vol: ${b(`$${escapeHtml(formatCompact(data.volume24h))}`)}`);
 
   if (ath && data.priceUsd && data.priceUsd > 0 && data.marketCap) {
@@ -321,12 +388,23 @@ function buildMessage(opts: {
   const secRows: string[] = [];
 
   if (topHolders.length > 0) {
+    // Filter out LP vault holders — they're program-owned accounts that represent
+    // the token side of a liquidity pool, not real wallet holders.
+    // A holder whose % ≈ (liquidityUsd/2) / marketCap * 100 is almost certainly an LP vault.
+    const lpPct = (liquidityUsd && data.marketCap && data.marketCap > 0)
+      ? (liquidityUsd / 2) / data.marketCap * 100
+      : null;
+    const isLPHolder = (pct: number) =>
+      lpPct !== null && lpPct > 0 && Math.abs(pct - lpPct) / lpPct < 0.25;
+
+    const nonLpHolders = topHolders.filter((h) => !isLPHolder(h.percentage));
+
     // TH: plain percentages (no wallet links — keeps caption under 1024 chars)
-    const pcts = topHolders.slice(0, 5).filter((h) => h.percentage > 0)
+    const pcts = nonLpHolders.slice(0, 5).filter((h) => h.percentage > 0)
       .map((h) => `${h.percentage.toFixed(1)}%`).join("  ");
     if (pcts) secRows.push(`👥 TH: ${pcts}`);
 
-    const top10Pct  = topHolders.slice(0, 10).reduce((s, h) => s + h.percentage, 0);
+    const top10Pct  = nonLpHolders.slice(0, 10).reduce((s, h) => s + h.percentage, 0);
     const concEmoji = top10Pct <= 20 ? "🟢" : top10Pct <= 30 ? "🟡" : "🔴";
     secRows.push(`📊 T10: ${b(`${top10Pct.toFixed(1)}%`)}  ${concEmoji}`);
   }

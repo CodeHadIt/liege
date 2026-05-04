@@ -413,7 +413,13 @@ export async function getBot(): Promise<Bot<MyContext>> {
 
     // Bare EVM address (no chain) — token analysis with auto-detected chain
     if (EVM_ADDR.test(text)) {
-      const { handleToken, detectEvmChain } = await import("./commands/token");
+      const { handleToken, detectEvmChain, getUnsupportedChainName } = await import("./commands/token");
+      // Check for unsupported chains before full detection to give a clear error
+      const unsupported = await getUnsupportedChainName(text);
+      if (unsupported) {
+        await ctx.reply(`⛔ ${unsupported} chain is currently not supported.`);
+        return;
+      }
       const chain = await detectEvmChain(text);
       await handleToken(ctx, chain, text);
       return;

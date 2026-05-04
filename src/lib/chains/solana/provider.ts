@@ -52,13 +52,16 @@ export class SolanaChainProvider implements ChainProvider {
       );
       const primary = sorted[0];
       const pairs = sorted.map(parseDexScreenerPair);
+      // Sum liquidity across all pools — single-pool primary can be null/0 even
+      // when the token has real liquidity spread across multiple Raydium/Orca pools
+      const totalLiquidity = sorted.reduce((s, p) => s + (p.liquidity?.usd ?? 0), 0) || null;
       return {
         pairs,
         primaryPair: pairs[0],
         priceUsd: parseFloat(primary.priceUsd) || null,
         priceNative: parseFloat(primary.priceNative) || null,
         volume24h: primary.volume?.h24 ?? null,
-        liquidity: primary.liquidity?.usd ?? null,
+        liquidity: totalLiquidity,
         marketCap: primary.marketCap ?? null,
         fdv: primary.fdv ?? null,
         priceChange: {

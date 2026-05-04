@@ -127,7 +127,7 @@ export async function aggregateTokenData(
     priceChange: pair?.priceChange ?? { h1: null, h6: null, h24: null },
     txns24h: pair?.txns24h ?? null,
 
-    liquidity: pair?.liquidity
+    liquidity: (pair != null && pair.liquidity != null)
       ? {
           totalUsd: pair.liquidity,
           pools: pair.pairs.map((p) => ({
