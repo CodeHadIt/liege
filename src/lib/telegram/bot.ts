@@ -411,7 +411,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
       }
     }
 
-    // Bare EVM address (no chain) — token analysis with auto-detected chain
+    // Bare EVM address (no chain) — check if it's a known token first
     if (EVM_ADDR.test(text)) {
       const { handleToken, detectEvmChain, getUnsupportedChainName } = await import("./commands/token");
       // Check for unsupported chains before full detection to give a clear error
@@ -420,8 +420,28 @@ export async function getBot(): Promise<Bot<MyContext>> {
         await ctx.reply(`⛔ ${unsupported} chain is currently not supported.`);
         return;
       }
-      const chain = await detectEvmChain(text);
-      await handleToken(ctx, chain, text);
+      // Try to find a DexScreener pair to determine if this is a token
+      const { searchPairs } = await import("@/lib/api/dexscreener");
+      const pairs = await searchPairs(text).catch(() => []);
+      const tokenMatch = pairs.find(
+        (p) => p.baseToken.address.toLowerCase() === text.toLowerCase()
+      );
+      if (tokenMatch) {
+        // It's a token — run token analysis with detected chain
+        const chain = await detectEvmChain(text);
+        await handleToken(ctx, chain, text);
+      } else {
+        // No token found — likely a wallet address; prompt for chain
+        await ctx.reply(
+          `🔍 EVM address detected. Is this a wallet or a token?\n\n` +
+          `If it's a <b>wallet</b>, specify the chain:\n` +
+          `<code>${text} eth</code>\n` +
+          `<code>${text} base</code>\n` +
+          `<code>${text} bsc</code>\n\n` +
+          `Or use <code>/wallet ${text} eth</code>`,
+          { parse_mode: "HTML" }
+        );
+      }
       return;
     }
   });

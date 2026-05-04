@@ -3,11 +3,14 @@ import {
   getWalletBalances,
   getTransactionHistory,
   getWalletFirstTransaction,
+  getParsedSwapsAll,
   getMintInfo,
   getAssetBatch,
   type HeliusTransaction,
+  type ParsedTransaction,
 } from "@/lib/api/helius";
 import { scrapeGmgnWalletHoldings } from "@/lib/api/gmgn-scraper";
+import { searchPairs } from "@/lib/api/dexscreener";
 import {
   escapeHtml,
   formatCompact,
@@ -252,6 +255,111 @@ interface MoralisNetWorthResponse {
   }[];
 }
 
+// ── Solana cost-basis PnL ─────────────────────────────────────────────────────
+
+const SOL_MINTS_SET = new Set([
+  "So11111111111111111111111111111111111111111",
+  "So11111111111111111111111111111111111111112",
+]);
+
+/**
+ * Compute realized PnL per token from SWAP transactions using FIFO cost basis.
+ * Returns a list sorted by most recent sell, capped at `limit` entries.
+ */
+function computeSwapPnl(
+  swapTxns: ParsedTransaction[],
+  walletAddress: string,
+  solPriceUsd: number,
+  mintToSymbol: Map<string, string>
+): Array<{ symbol: string; mint: string; realizedPnlUsd: number; timestamp: number }> {
+  // Process in chronological order (oldest first) so buys come before sells
+  const txns = [...swapTxns].reverse();
+
+  // cost ledger: mint → { totalBoughtAmount, totalCostUsd }
+  const costLedger = new Map<string, { totalBoughtAmount: number; totalCostUsd: number }>();
+  // realized PnL per mint: latest sell timestamp + cumulative PnL
+  const pnlMap = new Map<string, { pnlUsd: number; timestamp: number }>();
+
+  for (const tx of txns) {
+    if (!tx.timestamp) continue;
+
+    // Net token flows for this wallet
+    const netChanges = new Map<string, number>();
+    for (const tt of tx.tokenTransfers) {
+      let delta = 0;
+      if (tt.toUserAccount === walletAddress)   delta += tt.tokenAmount;
+      if (tt.fromUserAccount === walletAddress) delta -= tt.tokenAmount;
+      if (delta !== 0) netChanges.set(tt.mint, (netChanges.get(tt.mint) ?? 0) + delta);
+    }
+
+    // Identify cost (SOL or stables spent) and proceeds (SOL or stables received)
+    let costUsd = 0;
+    let receivedUsd = 0;
+    let boughtMint: string | null = null;
+    let boughtAmount = 0;
+    let soldMint: string | null = null;
+    let soldAmount = 0;
+
+    for (const [mint, amount] of netChanges) {
+      if (SOL_MINTS_SET.has(mint)) {
+        if (amount < 0) costUsd     += Math.abs(amount) * solPriceUsd;
+        if (amount > 0) receivedUsd += amount * solPriceUsd;
+        continue;
+      }
+      if (STABLE_MINTS.has(mint)) {
+        if (amount < 0) costUsd     += Math.abs(amount);
+        if (amount > 0) receivedUsd += Math.abs(amount);
+        continue;
+      }
+      if (amount > 0) { boughtMint = mint; boughtAmount = amount; }
+      else            { soldMint   = mint; soldAmount   = Math.abs(amount); }
+    }
+
+    // Record buy → update cost basis
+    if (boughtMint && boughtAmount > 0 && costUsd > 0) {
+      const prev = costLedger.get(boughtMint) ?? { totalBoughtAmount: 0, totalCostUsd: 0 };
+      costLedger.set(boughtMint, {
+        totalBoughtAmount: prev.totalBoughtAmount + boughtAmount,
+        totalCostUsd:      prev.totalCostUsd + costUsd,
+      });
+    }
+
+    // Record sell → compute realized PnL
+    if (soldMint && soldAmount > 0 && receivedUsd > 0) {
+      const ledger = costLedger.get(soldMint);
+      let costBasis = 0;
+      if (ledger && ledger.totalBoughtAmount > 0) {
+        const avgCost = ledger.totalCostUsd / ledger.totalBoughtAmount;
+        costBasis = avgCost * soldAmount;
+        // Reduce ledger proportionally
+        const remaining = ledger.totalBoughtAmount - soldAmount;
+        if (remaining > 0) {
+          costLedger.set(soldMint, {
+            totalBoughtAmount: remaining,
+            totalCostUsd: ledger.totalCostUsd - costBasis,
+          });
+        } else {
+          costLedger.delete(soldMint);
+        }
+      }
+      const realized = receivedUsd - costBasis;
+      const prev = pnlMap.get(soldMint) ?? { pnlUsd: 0, timestamp: 0 };
+      pnlMap.set(soldMint, {
+        pnlUsd: prev.pnlUsd + realized,
+        timestamp: Math.max(prev.timestamp, tx.timestamp),
+      });
+    }
+  }
+
+  const results: Array<{ symbol: string; mint: string; realizedPnlUsd: number; timestamp: number }> = [];
+  for (const [mint, { pnlUsd, timestamp }] of pnlMap) {
+    if (Math.abs(pnlUsd) < 0.01) continue;
+    results.push({ mint, symbol: mintToSymbol.get(mint) ?? mint.slice(0, 6) + "…", realizedPnlUsd: pnlUsd, timestamp });
+  }
+  results.sort((a, b) => b.timestamp - a.timestamp);
+  return results;
+}
+
 // ── Solana handler ────────────────────────────────────────────────────────────
 
 async function handleSolanaWallet(
@@ -259,11 +367,11 @@ async function handleSolanaWallet(
   address: string,
   loadingMsgId: number
 ): Promise<void> {
-  const [balancesRes, allTxns, firstTx, gmgnHoldings] = await Promise.all([
+  const [balancesRes, allTxns, firstTx, swapTxns] = await Promise.all([
     getWalletBalances(address).catch(() => null),
     getTransactionHistory(address, 20).catch(() => []),  // fetch 20, filter to 5 ≥ $1
     getWalletFirstTransaction(address, 3).catch(() => null),
-    scrapeGmgnWalletHoldings("solana", address).catch(() => []),
+    getParsedSwapsAll(address, { maxPages: 3, limit: 100 }).catch(() => [] as ParsedTransaction[]),
   ]);
 
   if (!balancesRes) {
@@ -291,12 +399,12 @@ async function handleSolanaWallet(
 
   // Resolve symbols for mints that appear in transactions but aren't in current portfolio
   // (e.g. old/sold tokens) via Helius DAS batch lookup
-  const unknownMints = [...new Set(
-    allTxns.flatMap((tx) => (tx.tokenTransfers ?? []).map((t) => t.mint))
-      .filter((m) => !mintToSymbol.has(m) && m !== SOL_MINT && !STABLE_MINTS.has(m))
-  )];
-  if (unknownMints.length > 0) {
-    const resolved = await getAssetBatch(unknownMints).catch(() => new Map());
+  const allMints = [...new Set([
+    ...allTxns.flatMap((tx) => (tx.tokenTransfers ?? []).map((t) => t.mint)),
+    ...swapTxns.flatMap((tx) => (tx.tokenTransfers ?? []).map((t) => t.mint)),
+  ].filter((m) => !mintToSymbol.has(m) && m !== SOL_MINT && !STABLE_MINTS.has(m) && !SOL_MINTS_SET.has(m)))];
+  if (allMints.length > 0) {
+    const resolved = await getAssetBatch(allMints).catch(() => new Map());
     for (const [mint, info] of resolved) {
       if (info.symbol && info.symbol !== "???") mintToSymbol.set(mint, info.symbol);
     }
@@ -319,10 +427,8 @@ async function handleSolanaWallet(
     .sort((a, b) => (b.usdValue ?? 0) - (a.usdValue ?? 0))
     .slice(0, 10);
 
-  const recentPnl = gmgnHoldings
-    .filter((h) => h.investedUsd > 0 || Math.abs(h.realizedPnlUsd) > 0)
-    .sort((a, b) => (b.lastActiveTimestamp ?? 0) - (a.lastActiveTimestamp ?? 0))
-    .slice(0, 5);
+  // Cost-basis PnL from swap history (more accurate than GMGN for exited positions)
+  const recentPnl = computeSwapPnl(swapTxns, address, solPrice, mintToSymbol).slice(0, 5);
 
   // Build message
   const gmgnUrl    = `https://gmgn.ai/sol/address/${address}`;
@@ -379,8 +485,8 @@ async function handleSolanaWallet(
   if (recentPnl.length > 0) {
     recentPnl.forEach((h, i) => {
       const pnlEmoji = h.realizedPnlUsd >= 0 ? "📈" : "📉";
-      const active   = h.lastActiveTimestamp ? ` · ${escapeHtml(formatTimeAgo(h.lastActiveTimestamp))}` : "";
-      msg += `   ${i + 1}. ${pnlEmoji} <b>${escapeHtml(h.symbol || "???")}</b> ${escapeHtml(fmtPnl(h.realizedPnlUsd))}${active}\n`;
+      const active   = h.timestamp ? ` · ${escapeHtml(formatTimeAgo(h.timestamp))}` : "";
+      msg += `   ${i + 1}. ${pnlEmoji} <b>${escapeHtml(h.symbol)}</b> ${escapeHtml(fmtPnl(h.realizedPnlUsd))}${active}\n`;
     });
   } else {
     msg += `   —\n`;
@@ -419,7 +525,7 @@ async function handleEvmWallet(
   const supportsProf  = PROFITABILITY_CHAINS.has(moralisChain);
   const addr          = address.toLowerCase();
 
-  const [tokensData, swapsData, profData, netWorthData, gmgnHoldings] = await Promise.all([
+  const [tokensData, swapsData, profData, netWorthData, gmgnHoldings, firstTxData] = await Promise.all([
     fetchMoralis<MoralisTokensResponse>(`/wallets/${addr}/tokens?chain=${moralisChain}&exclude_spam=true`),
     fetchMoralis<{ result: MoralisSwap[]; cursor: string | null }>(`/wallets/${addr}/swaps?chain=${moralisChain}&limit=50`),
     supportsProf
@@ -427,7 +533,12 @@ async function handleEvmWallet(
       : Promise.resolve(null),
     fetchMoralis<MoralisNetWorthResponse>(`/wallets/${addr}/net-worth?chains[]=${moralisChain}&exclude_spam=true`),
     scrapeGmgnWalletHoldings(chain, address).catch(() => []),
+    fetchMoralis<{ result: Array<{ block_timestamp: string }> }>(`/wallets/${addr}/history?chain=${moralisChain}&limit=1&order=ASC`),
   ]);
+
+  const firstTxTs = firstTxData?.result?.[0]?.block_timestamp
+    ? Math.floor(new Date(firstTxData.result[0].block_timestamp).getTime() / 1000)
+    : null;
 
   // ── Net worth / native balance ─────────────────────────────────────────────
   const netWorthChain = netWorthData?.chains?.[0];
@@ -520,6 +631,13 @@ async function handleEvmWallet(
 
   let msg = `${emoji} <b>Wallet Analysis</b> · ${escapeHtml(label)}\n`;
   msg += `<a href="${explorerAddrUrl}"><code>${escapeHtml(address)}</code></a>\n\n`;
+
+  if (firstTxTs) {
+    msg += `🕰 <b>Wallet Age:</b> ${escapeHtml(formatTimeAgo(firstTxTs))}\n`;
+    msg += `   <i>First tx: ${escapeHtml(fmtDate(firstTxTs))}</i>\n`;
+  } else {
+    msg += `🕰 <b>Wallet Age:</b> —\n`;
+  }
 
   if (lastSwapTs) {
     msg += `⏱ <b>Last Active:</b> ${escapeHtml(formatTimeAgo(lastSwapTs))}\n`;

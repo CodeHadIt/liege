@@ -563,9 +563,8 @@ export async function getSignaturesForAddress(
   const params: Record<string, unknown> = { limit: options?.limit ?? 100 };
   if (options?.before) params.before = options.before;
 
-  interface SigResult { value: SignatureInfo[] }
-  const result = await rpcCall<SigResult>("getSignaturesForAddress", [address, params]);
-  return result?.value ?? [];
+  const result = await rpcCall<SignatureInfo[]>("getSignaturesForAddress", [address, params]);
+  return result ?? [];
 }
 
 /**
