@@ -357,6 +357,18 @@ export async function getBot(): Promise<Bot<MyContext>> {
       return;
     }
 
+    // wchain:{chain}:{address} — wallet analysis after chain selection
+    if (data.startsWith("wchain:")) {
+      await ctx.answerCallbackQuery();
+      const rest    = data.slice("wchain:".length);
+      const colon   = rest.indexOf(":");
+      const chain   = rest.slice(0, colon) as "eth" | "base" | "bsc";
+      const address = rest.slice(colon + 1);
+      const { handleWallet } = await import("./commands/wallet");
+      await handleWallet(ctx, chain, address);
+      return;
+    }
+
     // ct:chain:{chain}
     if (data.startsWith("ct:chain:")) {
       const { handleCtChainSelected } = await import("./commands/ct");
@@ -411,35 +423,49 @@ export async function getBot(): Promise<Bot<MyContext>> {
       }
     }
 
-    // Bare EVM address (no chain) — check if it's a known token first
+    // Bare EVM address (no chain) — single DexScreener lookup to decide: token vs wallet
     if (EVM_ADDR.test(text)) {
-      const { handleToken, detectEvmChain, getUnsupportedChainName } = await import("./commands/token");
-      // Check for unsupported chains before full detection to give a clear error
-      const unsupported = await getUnsupportedChainName(text);
-      if (unsupported) {
-        await ctx.reply(`⛔ ${unsupported} chain is currently not supported.`);
-        return;
-      }
-      // Try to find a DexScreener pair to determine if this is a token
+      const { handleToken, detectEvmChain } = await import("./commands/token");
       const { searchPairs } = await import("@/lib/api/dexscreener");
+
+      const SUPPORTED_CHAINS = new Set(["base", "bsc", "ethereum"]);
+      const CHAIN_DISPLAY: Record<string, string> = {
+        avalanche: "Avalanche", avax: "Avalanche",
+        monad: "Monad", ton: "TON", polygon: "Polygon",
+        arbitrum: "Arbitrum", optimism: "Optimism", fantom: "Fantom",
+      };
+
       const pairs = await searchPairs(text).catch(() => []);
-      const tokenMatch = pairs.find(
+      // Sort by liquidity descending — best match first
+      const sorted = pairs.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
+      const tokenMatch = sorted.find(
         (p) => p.baseToken.address.toLowerCase() === text.toLowerCase()
       );
+
       if (tokenMatch) {
-        // It's a token — run token analysis with detected chain
+        if (!SUPPORTED_CHAINS.has(tokenMatch.chainId)) {
+          // Known token on an unsupported chain
+          const chainName = CHAIN_DISPLAY[tokenMatch.chainId] ?? tokenMatch.chainId;
+          await ctx.reply(`⛔ ${chainName} chain is currently not supported.`);
+          return;
+        }
+        // Supported token
         const chain = await detectEvmChain(text);
         await handleToken(ctx, chain, text);
       } else {
-        // No token found — likely a wallet address; prompt for chain
+        // No token pairs found — show chain selection for wallet analysis
+        const addr = text;
         await ctx.reply(
-          `🔍 EVM address detected. Is this a wallet or a token?\n\n` +
-          `If it's a <b>wallet</b>, specify the chain:\n` +
-          `<code>${text} eth</code>\n` +
-          `<code>${text} base</code>\n` +
-          `<code>${text} bsc</code>\n\n` +
-          `Or use <code>/wallet ${text} eth</code>`,
-          { parse_mode: "HTML" }
+          `🔗 Which chain is this wallet on?`,
+          {
+            reply_markup: {
+              inline_keyboard: [[
+                { text: "Ethereum",  callback_data: `wchain:eth:${addr}`  },
+                { text: "Base",      callback_data: `wchain:base:${addr}` },
+                { text: "BNB Chain", callback_data: `wchain:bsc:${addr}`  },
+              ]],
+            },
+          }
         );
       }
       return;
