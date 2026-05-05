@@ -438,25 +438,31 @@ export async function getBot(): Promise<Bot<MyContext>> {
       const pairs = await searchPairs(text).catch(() => []);
       // Sort by liquidity descending — best match first
       const sorted = pairs.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
+
+      // Check the top result's chain first (regardless of exact address match).
+      // DexScreener results for a specific address almost always have it at the top,
+      // so this catches unsupported chains even when address casing/format differs.
+      const topChain = sorted[0]?.chainId;
+      if (topChain && !SUPPORTED_CHAINS.has(topChain)) {
+        const chainName = CHAIN_DISPLAY[topChain] ?? topChain;
+        await ctx.reply(`⛔ ${chainName} chain is currently not supported currently.`);
+        return;
+      }
+
+      // Exact address match on a supported chain → token analysis
       const tokenMatch = sorted.find(
-        (p) => p.baseToken.address.toLowerCase() === text.toLowerCase()
+        (p) => SUPPORTED_CHAINS.has(p.chainId) &&
+               p.baseToken.address.toLowerCase() === text.toLowerCase()
       );
 
       if (tokenMatch) {
-        if (!SUPPORTED_CHAINS.has(tokenMatch.chainId)) {
-          // Known token on an unsupported chain
-          const chainName = CHAIN_DISPLAY[tokenMatch.chainId] ?? tokenMatch.chainId;
-          await ctx.reply(`⛔ ${chainName} chain is currently not supported.`);
-          return;
-        }
-        // Supported token
         const chain = await detectEvmChain(text);
         await handleToken(ctx, chain, text);
       } else {
         // No token pairs found — show chain selection for wallet analysis
         const addr = text;
         await ctx.reply(
-          `On What Chain would you like to analyze this wallet?`,
+          `On what chain would you like to analyze this wallet?`,
           {
             reply_markup: {
               inline_keyboard: [[
