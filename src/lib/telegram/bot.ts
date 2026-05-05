@@ -456,7 +456,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
         // No token pairs found — show chain selection for wallet analysis
         const addr = text;
         await ctx.reply(
-          `🔗 Which chain is this wallet on?`,
+          `On What Chain would you like to analyze this wallet?`,
           {
             reply_markup: {
               inline_keyboard: [[
