@@ -10,7 +10,8 @@ import {
   type ParsedTransaction,
 } from "@/lib/api/helius";
 import { scrapeGmgnWalletHoldings } from "@/lib/api/gmgn-scraper";
-import { searchPairs } from "@/lib/api/dexscreener";
+import { searchPairs, getTokenPairs } from "@/lib/api/dexscreener";
+import * as toncenter from "@/lib/api/toncenter";
 import {
   escapeHtml,
   formatCompact,
@@ -59,8 +60,10 @@ const PROFITABILITY_CHAINS = new Set(["0x1", "0x2105"]);
 
 const SOLANA_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const EVM_RE    = /^0x[a-fA-F0-9]{40}$/;
+const TON_RE    = /^(?:EQ|UQ|Ef|Uf|kQ|kf|0Q|0f)[A-Za-z0-9_-]{46}$/;
 
-export function getAddressType(address: string): "solana" | "evm" | null {
+export function getAddressType(address: string): "solana" | "evm" | "ton" | null {
+  if (TON_RE.test(address))    return "ton";
   if (SOLANA_RE.test(address)) return "solana";
   if (EVM_RE.test(address))    return "evm";
   return null;
@@ -723,6 +726,147 @@ async function handleEvmWallet(
   });
 }
 
+// ── TON handler ───────────────────────────────────────────────────────────────
+
+async function handleTonWallet(
+  ctx: MyContext,
+  address: string,
+  loadingMsgId: number
+): Promise<void> {
+  const tonViewerUrl = `https://tonviewer.com/${address}`;
+
+  const [account, jettons, transfers, firstTxArr] = await Promise.all([
+    toncenter.getAccount(address),
+    toncenter.getWalletJettons(address, 30),
+    toncenter.getJettonTransfers(address, 30),
+    toncenter.getTransactions(address, 1, "asc"),
+  ]);
+
+  const nativeBal = account ? toncenter.nanotonToTon(account.balance) : 0;
+  const firstTxTs = firstTxArr[0]?.now ?? null;
+
+  // Fetch prices for top jetton holdings
+  const priceMap = new Map<string, number>();
+  await Promise.allSettled(
+    jettons.slice(0, 10).map(async (j) => {
+      const pairs = await getTokenPairs("ton", j.jetton).catch(() => []);
+      if (pairs.length > 0) {
+        const best = pairs.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
+        const price = parseFloat(best.priceUsd) || 0;
+        if (price > 0) priceMap.set(j.jetton, price);
+      }
+    })
+  );
+
+  // Fetch TON price
+  let tonPrice = 0;
+  try {
+    const tonPairs = await searchPairs("USDT TON").catch(() => []);
+    const tonPair = tonPairs.find(
+      (p) => p.chainId === "ton" && p.quoteToken.symbol === "USDT" &&
+             (p.baseToken.symbol === "TON" || p.baseToken.symbol === "TONCOIN")
+    ) ?? tonPairs.find((p) => p.chainId === "ton" && (p.liquidity?.usd ?? 0) > 10000);
+    if (tonPair) tonPrice = 1 / (parseFloat(tonPair.priceNative) || 1);
+  } catch { /* ignore */ }
+
+  const nativeBalUsd = nativeBal * tonPrice;
+
+  // Stablecoins vs positions
+  const TON_STABLES = new Set(["USDT", "USDC", "DAI", "BUSD", "PYUSD"]);
+  const stables: { symbol: string; usd: number }[]  = [];
+  let stableTotal = 0;
+  const positions: { symbol: string; address: string; usd: number }[] = [];
+
+  for (const j of jettons) {
+    if (!j.symbol) continue;
+    const balance = toncenter.fromNano(j.balance, j.decimals);
+    if (balance <= 0) continue;
+    const price  = priceMap.get(j.jetton) ?? 0;
+    const balUsd = balance * price;
+
+    if (TON_STABLES.has(j.symbol.toUpperCase())) {
+      const usd = price > 0 ? balUsd : balance; // treat as 1:1 if no price
+      stables.push({ symbol: j.symbol, usd });
+      stableTotal += usd;
+    } else if (balUsd >= 1) {
+      positions.push({ symbol: j.symbol, address: j.jetton, usd: balUsd });
+    }
+  }
+  positions.sort((a, b) => b.usd - a.usd);
+
+  // Recent transfers
+  const recentTxs = transfers.slice(0, 5);
+
+  // Build message
+  let msg = `💎 <b>Wallet Analysis</b> · TON\n`;
+  msg += `<a href="${tonViewerUrl}"><code>${escapeHtml(address)}</code></a>\n\n`;
+
+  if (firstTxTs) {
+    msg += `🕰 <b>Wallet Age:</b> ${escapeHtml(formatTimeAgo(firstTxTs))}\n`;
+    msg += `   <i>First tx: ${escapeHtml(fmtDate(firstTxTs))}</i>\n`;
+  } else {
+    msg += `🕰 <b>Wallet Age:</b> —\n`;
+  }
+
+  // Last active from transfers
+  const lastTxTs = transfers[0]?.transaction_now ?? null;
+  if (lastTxTs) {
+    msg += `⏱ <b>Last Active:</b> ${escapeHtml(formatTimeAgo(lastTxTs))}\n`;
+    msg += `   <i>${escapeHtml(fmtDate(lastTxTs))}</i>\n`;
+  } else {
+    msg += `⏱ <b>Last Active:</b> —\n`;
+  }
+
+  msg += "\n💼 <b>Portfolio</b>\n";
+  if (nativeBal > 0) {
+    msg += `   TON: <b>${escapeHtml(nativeBal.toFixed(4))} TON</b>`;
+    if (nativeBalUsd > 0) msg += ` (${escapeHtml(fmtUsd(nativeBalUsd))})`;
+    msg += "\n";
+  }
+  msg += `   No of tokens held: <b>${positions.length}</b>\n`;
+  if (stableTotal > 0) {
+    const breakdown = stables
+      .filter((s) => s.usd >= 1)
+      .map((s) => `${escapeHtml(s.symbol)} ${escapeHtml(fmtUsd(s.usd))}`)
+      .join(", ");
+    msg += `   Stables: <b>${escapeHtml(fmtUsd(stableTotal))}</b>`;
+    if (breakdown) msg += ` <i>(${breakdown})</i>`;
+    msg += "\n";
+  } else {
+    msg += `   Stables: —\n`;
+  }
+
+  if (positions.length > 0) {
+    msg += "\n🏆 <b>Top Holdings</b>\n";
+    positions.slice(0, 10).forEach((p, i) => {
+      msg += `   ${i + 1}. <b>${escapeHtml(p.symbol)}</b> — ${escapeHtml(fmtUsd(p.usd))}\n`;
+    });
+  }
+
+  msg += "\n📊 <b>Recent PnL</b>\n   — <i>(not available for TON)</i>\n";
+
+  if (recentTxs.length > 0) {
+    msg += "\n🔁 <b>Recent Transfers</b>\n";
+    recentTxs.forEach((t, i) => {
+      const ts      = t.transaction_now;
+      const timeAgo = escapeHtml(formatTimeAgo(ts));
+      const amount   = toncenter.fromNano(t.amount, t.decimals);
+      const sym      = escapeHtml(t.symbol ?? "TON");
+      const isSend   = t.source_wallet !== address;
+      const side     = isSend ? "🔴 Sent" : "🟢 Received";
+      const txUrl    = `https://tonviewer.com/transaction/${t.transaction_hash}`;
+      msg += `   ${i + 1}. ${side} <b>${escapeHtml(amount.toFixed(4))} ${sym}</b> · <a href="${txUrl}"><i>${timeAgo}</i></a>\n`;
+    });
+  }
+
+  msg += `\n<a href="${tonViewerUrl}">TonViewer</a>`;
+
+  await ctx.api.editMessageText(ctx.chat!.id, loadingMsgId, msg, {
+    parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
+  });
+}
+
 // ── Main entry point ──────────────────────────────────────────────────────────
 
 export async function handleWallet(
@@ -731,7 +875,8 @@ export async function handleWallet(
   address: string
 ): Promise<void> {
   const isSolana = chain === "solana";
-  const emoji    = isSolana ? "◎" : chainEmoji(chain);
+  const isTon    = chain === "ton";
+  const emoji    = isSolana ? "◎" : isTon ? "💎" : chainEmoji(chain);
 
   const loading = await ctx.reply(
     `${emoji} <b>Analyzing wallet…</b>\n<code>${escapeHtml(address)}</code>\n\n<i>Fetching portfolio &amp; history…</i>`,
@@ -741,6 +886,8 @@ export async function handleWallet(
   try {
     if (isSolana) {
       await handleSolanaWallet(ctx, address, loading.message_id);
+    } else if (isTon) {
+      await handleTonWallet(ctx, address, loading.message_id);
     } else {
       await handleEvmWallet(ctx, chain, address, loading.message_id);
     }

@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { getChainProvider, isChainSupported } from "@/lib/chains/registry";
 import { CHAIN_CONFIGS } from "@/config/chains";
 import * as helius from "@/lib/api/helius";
+import * as toncenter from "@/lib/api/toncenter";
 import { serverCache, CACHE_TTL } from "@/lib/cache";
 import { scrapeGmgnWalletHoldings } from "@/lib/api/gmgn-scraper";
-import { getTokenPairs } from "@/lib/api/dexscreener";
+import { getTokenPairs, searchPairs } from "@/lib/api/dexscreener";
 import type { ChainId } from "@/types/chain";
 import type {
   WalletQuickViewData,
@@ -386,6 +387,139 @@ async function buildEvmQuickView(
   };
 }
 
+// ─── TON stablecoins (jetton master addresses) ────────────────────────────────
+
+const TON_STABLE_SYMBOLS = new Set(["USDT", "USDC", "DAI", "BUSD", "PYUSD"]);
+
+/** Fetch native TON price in USD via DexScreener search */
+async function getTonPrice(): Promise<number> {
+  try {
+    // Search for USDT pairs on TON to find the TON/USDT price
+    const pairs = await searchPairs("USDT TON");
+    const tonPair = pairs.find(
+      (p) => p.chainId === "ton" && p.quoteToken.symbol === "USDT" &&
+             (p.baseToken.symbol === "TON" || p.baseToken.symbol === "TONCOIN")
+    ) ?? pairs.find((p) => p.chainId === "ton" && p.liquidity && p.liquidity.usd > 10000);
+    if (tonPair) return 1 / (parseFloat(tonPair.priceNative) || 1);
+  } catch { /* ignore */ }
+  return 0;
+}
+
+async function buildTonQuickView(
+  walletAddress: string
+): Promise<WalletQuickViewData | null> {
+  const [account, jettons, transfers, firstTxArr] = await Promise.all([
+    toncenter.getAccount(walletAddress),
+    toncenter.getWalletJettons(walletAddress, 30),
+    toncenter.getJettonTransfers(walletAddress, 30),
+    toncenter.getTransactions(walletAddress, 1, "asc"),
+  ]);
+
+  const nativeBalance = account ? toncenter.nanotonToTon(account.balance) : 0;
+
+  // Fetch prices for the top 10 jetton holdings in parallel
+  const priceMap  = new Map<string, number>();
+  const logoMap   = new Map<string, string | null>();
+  const nameMap   = new Map<string, string>();
+
+  await Promise.allSettled(
+    jettons.slice(0, 10).map(async (j) => {
+      const pairs = await getTokenPairs("ton", j.jetton).catch(() => []);
+      if (pairs.length > 0) {
+        const best = pairs.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
+        const price = parseFloat(best.priceUsd) || 0;
+        if (price > 0) priceMap.set(j.jetton, price);
+        if (best.info?.imageUrl) logoMap.set(j.jetton, best.info.imageUrl);
+        if (best.baseToken.name) nameMap.set(j.jetton, best.baseToken.name);
+      }
+    })
+  );
+
+  // Stablecoins vs active positions
+  const stablecoins: StablecoinBalance[] = [];
+  let stablecoinTotal = 0;
+  const activePositions: WalletPosition[] = [];
+
+  for (const j of jettons) {
+    if (!j.symbol) continue;
+    const balance  = toncenter.fromNano(j.balance, j.decimals);
+    const price    = priceMap.get(j.jetton) ?? 0;
+    const balUsd   = balance * price;
+
+    if (TON_STABLE_SYMBOLS.has(j.symbol.toUpperCase())) {
+      // Treat as 1:1 if no price found
+      const usd = price > 0 ? balUsd : balance;
+      stablecoins.push({ symbol: j.symbol, balance, balanceUsd: usd });
+      stablecoinTotal += usd;
+      continue;
+    }
+    if (balance <= 0 || balUsd < 0.01) continue;
+    activePositions.push({
+      tokenAddress: j.jetton,
+      symbol:       j.symbol,
+      name:         j.name ?? nameMap.get(j.jetton) ?? j.symbol,
+      logoUrl:      logoMap.get(j.jetton) ?? null,
+      chain:        "ton",
+      balance,
+      balanceUsd:   balUsd,
+      pnl:          0,
+      pnlPercent:   0,
+      entryPrice:   null,
+      currentPrice: price > 0 ? price : null,
+      totalBoughtUsd: 0,
+      totalSoldUsd:   0,
+      unrealizedPnl:  0,
+    });
+  }
+  activePositions.sort((a, b) => b.balanceUsd - a.balanceUsd);
+
+  // Recent activity from jetton transfers
+  const recentActivity: WalletQuickViewData["recentActivity"] = transfers
+    .slice(0, 20)
+    .map((t) => {
+      const decimals = 9; // default; transfer object has raw amount
+      const rawAmount = BigInt(t.amount ?? "0");
+      const amount   = Number(rawAmount) / 10 ** decimals;
+      const price    = priceMap.get(t.jetton_master) ?? 0;
+      const isSend   = t.source_wallet !== walletAddress &&
+                       t.destination_wallet === walletAddress ? false : true;
+      return {
+        txHash:       t.transaction_hash,
+        timestamp:    t.transaction_now,
+        side:         (isSend ? "sell" : "buy") as "buy" | "sell",
+        tokenSymbol:  t.symbol ?? "???",
+        tokenAddress: t.jetton_master,
+        amount,
+        amountUsd:    amount * price,
+        logoUrl:      logoMap.get(t.jetton_master) ?? null,
+        marketCap:    null,
+      };
+    });
+
+  return {
+    address:         walletAddress,
+    chain:           "ton",
+    nativeBalance,
+    nativeBalanceUsd: 0, // TON price fetched client-side or left as 0
+    nativeSymbol:    "TON",
+    stablecoinTotal,
+    stablecoins,
+    pnl30d:          0,
+    pnl7d:           0,
+    bestTrade30d:    null,
+    bestTrade7d:     null,
+    freshBuys7d:     [],
+    freshBuys30d:    [],
+    pnlHistory:      [],
+    activePositions: activePositions.slice(0, 20),
+    recentPnls:      [],
+    topBuys:         [],
+    recentActivity,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const SOLANA_STABLES: Record<string, string> = {
   EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: "USDC",
   Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB: "USDT",
@@ -435,6 +569,16 @@ export async function POST(request: Request) {
     const cacheKey = `wallet-quick:${chainId}:${walletAddress}`;
     const cached = serverCache.get<WalletQuickViewData>(cacheKey);
     if (cached) return NextResponse.json(cached);
+
+    // TON chain
+    if (chainId === "ton") {
+      const tonData = await buildTonQuickView(walletAddress);
+      if (tonData) {
+        serverCache.set(cacheKey, tonData, CACHE_TTL.WALLET_QUICK);
+        return NextResponse.json(tonData);
+      }
+      return NextResponse.json({ error: "Failed to fetch TON wallet data" }, { status: 502 });
+    }
 
     // EVM chains: use Moralis
     if (chainId !== "solana") {

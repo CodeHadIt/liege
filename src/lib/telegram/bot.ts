@@ -260,6 +260,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
       await ctx.reply(
         `<b>Usage:</b>\n` +
         `• Solana: <code>/wallet &lt;address&gt;</code>\n` +
+        `• TON:    <code>/wallet &lt;address&gt;</code>\n` +
         `• EVM:    <code>/wallet &lt;address&gt; &lt;eth|base|bsc&gt;</code>`,
         { parse_mode: "HTML" }
       );
@@ -276,6 +277,11 @@ export async function getBot(): Promise<Bot<MyContext>> {
 
     if (addrType === "solana") {
       await handleWallet(ctx, "solana", address);
+      return;
+    }
+
+    if (addrType === "ton") {
+      await handleWallet(ctx, "ton", address);
       return;
     }
 
@@ -400,10 +406,17 @@ export async function getBot(): Promise<Bot<MyContext>> {
     // Ignore slash commands — let their own handlers deal with them
     if (text.startsWith("/")) return;
 
-    // Bare TON address — always a jetton token (wallets not yet supported in /wallet)
+    // Bare TON address — check if it's a jetton (token) or a wallet
     if (TON_ADDR.test(text)) {
-      const { handleToken } = await import("./commands/token");
-      await handleToken(ctx, "ton", text);
+      const { getJettonMaster } = await import("@/lib/api/toncenter");
+      const master = await getJettonMaster(text).catch(() => null);
+      if (master) {
+        const { handleToken } = await import("./commands/token");
+        await handleToken(ctx, "ton", text);
+      } else {
+        const { handleWallet } = await import("./commands/wallet");
+        await handleWallet(ctx, "ton", text);
+      }
       return;
     }
 
