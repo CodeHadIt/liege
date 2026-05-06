@@ -26,14 +26,16 @@ export async function GET(request: Request) {
     solana:   "solana",
     base:     "base",
     bsc:      "bsc",
+    ton:      "ton",
   };
+  const SUPPORTED_DS_CHAINS = new Set(Object.keys(DS_CHAIN_MAP));
 
   try {
     const pairs = await dexscreener.searchPairs(query);
     let results: TokenSearchResult[] = pairs
       .filter((pair) => {
         const normalised = DS_CHAIN_MAP[pair.chainId] ?? pair.chainId;
-        if (!chain) return normalised in DS_CHAIN_MAP || ["solana","base","bsc","eth"].includes(normalised);
+        if (!chain) return SUPPORTED_DS_CHAINS.has(pair.chainId);
         return normalised === chain;
       })
       .slice(0, 20)

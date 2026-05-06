@@ -2,6 +2,7 @@ import type { ChainId, ChainConfig } from "@/types/chain";
 import type { ChainProvider } from "./types";
 import { SolanaChainProvider } from "./solana/provider";
 import { EvmChainProvider } from "./evm/provider";
+import { TonChainProvider } from "./ton/provider";
 import { CHAIN_CONFIGS } from "@/config/chains";
 
 const providers: Record<string, ChainProvider> = {
@@ -21,6 +22,7 @@ const providers: Record<string, ChainProvider> = {
     apiKey: process.env.ETHERSCAN_API_KEY || "",
     rateLimiterKey: "etherscan",
   }),
+  ton: new TonChainProvider(),
 };
 
 export function getChainProvider(chainId: ChainId): ChainProvider {
@@ -42,6 +44,11 @@ export function getAllSupportedChains(): ChainConfig[] {
 }
 
 export function detectChainFromAddress(address: string): ChainId | null {
+  // TON user-friendly addresses: EQ/UQ/Ef/Uf/kQ/kf prefix + 46 base64url chars
+  // Check before Solana — they overlap in the base58 character set
+  if (CHAIN_CONFIGS.ton.addressPattern.test(address)) {
+    return "ton";
+  }
   // Solana addresses: base58, 32-44 chars
   if (CHAIN_CONFIGS.solana.addressPattern.test(address)) {
     return "solana";

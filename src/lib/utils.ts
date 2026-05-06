@@ -54,19 +54,26 @@ export function isValidEvmAddress(address: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test(address);
 }
 
+export function isValidTonAddress(address: string): boolean {
+  return /^(?:EQ|UQ|Ef|Uf|kQ|kf|0Q|0f)[A-Za-z0-9_-]{46}$/.test(address);
+}
+
 export function detectChainFromAddress(
   address: string
-): "solana" | "evm" | null {
+): "solana" | "evm" | "ton" | null {
+  if (isValidTonAddress(address))    return "ton";
   if (isValidSolanaAddress(address)) return "solana";
-  if (isValidEvmAddress(address)) return "evm";
+  if (isValidEvmAddress(address))    return "evm";
   return null;
 }
 
 const CHAIN_LABELS: Record<string, string> = {
   solana: "SOL",
-  base: "BASE",
-  bsc: "BSC",
-  evm: "EVM",
+  base:   "BASE",
+  bsc:    "BSC",
+  eth:    "ETH",
+  ton:    "TON",
+  evm:    "EVM",
 };
 
 export function chainLabel(chain: string): string {

@@ -79,6 +79,7 @@ export function chainEmoji(chain: string): string {
     case "base":   return "🔵";
     case "bsc":    return "🟡";
     case "eth":    return "🔷";
+    case "ton":    return "💎";
     default: return "⛓";
   }
 }
@@ -89,6 +90,7 @@ export function chainLabel(chain: string): string {
     case "base":   return "Base";
     case "bsc":    return "BSC";
     case "eth":    return "Ethereum";
+    case "ton":    return "TON";
     default: return chain;
   }
 }

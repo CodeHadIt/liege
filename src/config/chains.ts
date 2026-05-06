@@ -61,9 +61,24 @@ export const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     addressPattern: /^0x[a-fA-F0-9]{40}$/,
     isEvm: true,
   },
+  ton: {
+    id: "ton",
+    name: "TON",
+    shortName: "TON",
+    logo: "/chains/ton.svg",
+    nativeCurrency: { name: "Toncoin", symbol: "TON", decimals: 9 },
+    rpcUrl: "https://toncenter.com/api/v3",
+    explorerUrl: "https://tonviewer.com",
+    explorerApiUrl: "https://toncenter.com/api/v3",
+    dexScreenerChainId: "ton",
+    geckoTerminalNetwork: "ton",
+    // TON user-friendly addresses: EQ/UQ prefix + 46 base64url chars = 48 chars total
+    addressPattern: /^(?:EQ|UQ|Ef|Uf|kQ|kf|0Q|0f)[A-Za-z0-9_-]{46}$/,
+    isEvm: false,
+  },
 };
 
-export const SUPPORTED_CHAINS: ChainId[] = ["solana", "base", "bsc", "eth"];
+export const SUPPORTED_CHAINS: ChainId[] = ["solana", "base", "bsc", "eth", "ton"];
 
 export function getChainConfig(chainId: ChainId): ChainConfig {
   return CHAIN_CONFIGS[chainId];
@@ -72,17 +87,20 @@ export function getChainConfig(chainId: ChainId): ChainConfig {
 export function getExplorerTokenUrl(chainId: ChainId, address: string): string {
   const config = CHAIN_CONFIGS[chainId];
   if (chainId === "solana") return `${config.explorerUrl}/token/${address}`;
+  if (chainId === "ton")    return `${config.explorerUrl}/${address}`;
   return `${config.explorerUrl}/token/${address}`;
 }
 
 export function getExplorerAddressUrl(chainId: ChainId, address: string): string {
   const config = CHAIN_CONFIGS[chainId];
   if (chainId === "solana") return `${config.explorerUrl}/account/${address}`;
+  if (chainId === "ton")    return `${config.explorerUrl}/${address}`;
   return `${config.explorerUrl}/address/${address}`;
 }
 
 export function getExplorerTxUrl(chainId: ChainId, hash: string): string {
   const config = CHAIN_CONFIGS[chainId];
   if (chainId === "solana") return `${config.explorerUrl}/tx/${hash}`;
+  if (chainId === "ton")    return `${config.explorerUrl}/transaction/${hash}`;
   return `${config.explorerUrl}/tx/${hash}`;
 }

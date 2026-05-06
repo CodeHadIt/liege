@@ -385,6 +385,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
 
   const SOLANA_ADDR = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
   const EVM_ADDR    = /^0x[a-fA-F0-9]{40}$/;
+  const TON_ADDR    = /^(?:EQ|UQ|Ef|Uf|kQ|kf|0Q|0f)[A-Za-z0-9_-]{46}$/;
 
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();
@@ -398,6 +399,13 @@ export async function getBot(): Promise<Bot<MyContext>> {
 
     // Ignore slash commands — let their own handlers deal with them
     if (text.startsWith("/")) return;
+
+    // Bare TON address — always a jetton token (wallets not yet supported in /wallet)
+    if (TON_ADDR.test(text)) {
+      const { handleToken } = await import("./commands/token");
+      await handleToken(ctx, "ton", text);
+      return;
+    }
 
     // Auto-analyze bare Solana address — detect wallet vs token mint
     if (SOLANA_ADDR.test(text)) {
@@ -431,7 +439,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
       const SUPPORTED_CHAINS = new Set(["base", "bsc", "ethereum"]);
       const CHAIN_DISPLAY: Record<string, string> = {
         avalanche: "Avalanche", avax: "Avalanche",
-        monad: "Monad", ton: "TON", polygon: "Polygon",
+        monad: "Monad", polygon: "Polygon",
         arbitrum: "Arbitrum", optimism: "Optimism", fantom: "Fantom",
       };
 

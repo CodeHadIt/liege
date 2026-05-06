@@ -61,8 +61,12 @@ export function useClipboardAddress(): UseClipboardAddressReturn {
         );
 
         // For tokens: use the chain from DexScreener result (correctly identifies base vs bsc)
-        // For wallets: fall back to solana or base (can't distinguish base/bsc by address alone)
-        const resolvedChain: ChainId = match?.chain ?? (detectedType === "solana" ? "solana" : "base");
+        // For wallets: fall back to detected chain (solana, ton, or base for EVM)
+        const resolvedChain: ChainId = match?.chain ?? (
+          detectedType === "solana" ? "solana" :
+          detectedType === "ton"    ? "ton"    :
+          "base"
+        );
 
         if (match) {
           setDetected({
@@ -70,6 +74,25 @@ export function useClipboardAddress(): UseClipboardAddressReturn {
             chain: resolvedChain,
             type: "token",
             label: match.symbol || match.name || trimmed.slice(0, 8),
+          });
+        } else if (detectedType === "ton") {
+          // TON address with no DexScreener match — try the token API
+          try {
+            const tokenRes = await fetch(`/api/token/ton/${encodeURIComponent(trimmed)}`);
+            if (tokenRes.ok) {
+              const tokenJson = await tokenRes.json();
+              const tokenData = tokenJson.data;
+              if (tokenData?.symbol && tokenData.symbol !== "???" && tokenData?.name && tokenData.name !== "Unknown") {
+                setDetected({ address: trimmed, chain: "ton", type: "token", label: tokenData.symbol });
+                return;
+              }
+            }
+          } catch { /* fall through to wallet */ }
+          setDetected({
+            address: trimmed,
+            chain: "ton",
+            type: "wallet",
+            label: `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`,
           });
         } else if (detectedType === "solana") {
           // DexScreener has no data for old/low-liquidity Solana tokens.
@@ -106,7 +129,10 @@ export function useClipboardAddress(): UseClipboardAddressReturn {
           });
         }
       } catch {
-        const fallbackChain: ChainId = detectedType === "solana" ? "solana" : "base";
+        const fallbackChain: ChainId =
+          detectedType === "solana" ? "solana" :
+          detectedType === "ton"    ? "ton"    :
+          "base";
         setDetected({
           address: trimmed,
           chain: fallbackChain,

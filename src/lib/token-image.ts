@@ -84,9 +84,10 @@ async function fetchDexScreenerImage(
 ): Promise<string | null> {
   const chainMap: Record<ChainId, string> = {
     solana: "solana",
-    base: "base",
-    bsc: "bsc",
-    eth: "ethereum",
+    base:   "base",
+    bsc:    "bsc",
+    eth:    "ethereum",
+    ton:    "ton",
   };
   const dsChain = chainMap[chain];
   if (!dsChain) return null;

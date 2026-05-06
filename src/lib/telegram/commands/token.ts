@@ -28,6 +28,7 @@ const CHAIN_LOGO: Record<ChainId, string> = {
   base:   "🔵",
   bsc:    "🟡",
   eth:    "🔷",
+  ton:    "💎",
 };
 
 const GMGN_CHAIN: Record<ChainId, string> = {
@@ -35,6 +36,7 @@ const GMGN_CHAIN: Record<ChainId, string> = {
   base:   "base",
   bsc:    "bsc",
   eth:    "eth",
+  ton:    "ton",
 };
 
 // ── Chain detection ───────────────────────────────────────────────────────────
@@ -44,7 +46,6 @@ const UNSUPPORTED_CHAIN_NAMES: Record<string, string> = {
   avalanche:  "Avalanche",
   avax:       "Avalanche",
   monad:      "Monad",
-  ton:        "TON",
   polygon:    "Polygon",
   arbitrum:   "Arbitrum",
   optimism:   "Optimism",
@@ -275,9 +276,9 @@ async function fetchDexPaid(chain: ChainId, address: string): Promise<DexPaidRes
 // ── Trading links ─────────────────────────────────────────────────────────────
 
 function tradingLinks(chain: ChainId, address: string, dexUrl?: string | null) {
-  const gmgnChain:     Record<ChainId, string> = { solana: "sol",    base: "base", bsc: "bsc", eth: "eth"    };
-  const axiomChain:    Record<ChainId, string> = { solana: "sol",    base: "base", bsc: "bsc", eth: "eth"    };
-  const terminalChain: Record<ChainId, string> = { solana: "solana", base: "base", bsc: "bsc", eth: "ethereum" };
+  const gmgnChain:     Record<ChainId, string> = { solana: "sol",    base: "base", bsc: "bsc", eth: "eth",     ton: "ton"  };
+  const axiomChain:    Record<ChainId, string> = { solana: "sol",    base: "base", bsc: "bsc", eth: "eth",     ton: ""     };
+  const terminalChain: Record<ChainId, string> = { solana: "solana", base: "base", bsc: "bsc", eth: "ethereum", ton: "ton" };
 
   return {
     axi: `https://axiom.trade/t/${address}/@genes?chain=${axiomChain[chain]}`,
