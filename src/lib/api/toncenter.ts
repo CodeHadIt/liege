@@ -159,16 +159,17 @@ export async function getJettonHolders(
   limit = 20
 ): Promise<JettonWallet[]> {
   const data = await tcGet<JettonWalletsResponse>(
-    `/api/v3/jetton/wallets?jetton_address=${encodeURIComponent(jettonAddress)}&exclude_zero_balance=true&limit=${limit}&sort=desc`
+    `/api/v3/jetton/wallets?jetton_address=${encodeURIComponent(jettonAddress)}&exclude_zero_balance=true&limit=${limit}&sort_order=desc`
   );
-  if (!data) return [];
+  if (!data?.jetton_wallets?.length) return [];
 
+  const book = data.address_book ?? {};
   return data.jetton_wallets.map((w) => ({
     address:       w.address,
     owner:         w.owner,
     balance:       w.balance,
     jetton:        w.jetton,
-    ownerFriendly: data.address_book[w.owner]?.user_friendly ?? w.owner,
+    ownerFriendly: book[w.owner]?.user_friendly ?? book[w.address]?.user_friendly ?? w.owner,
   }));
 }
 
@@ -240,12 +241,39 @@ interface JettonTransfersResponse {
   address_book: Record<string, { user_friendly: string }>;
 }
 
+/** Jetton master address for USDT on TON (Tether) */
+export const USDT_JETTON_MASTER = "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs";
+
 export async function getJettonTransfers(
   ownerAddress: string,
   limit = 20
 ): Promise<JettonTransfer[]> {
   const data = await tcGet<JettonTransfersResponse>(
-    `/api/v3/jetton/transfers?owner_address=${encodeURIComponent(ownerAddress)}&limit=${limit}&sort=desc`
+    `/api/v3/jetton/transfers?owner_address=${encodeURIComponent(ownerAddress)}&limit=${limit}&sort_order=desc`
+  );
+  if (!data) return [];
+
+  return data.jetton_transfers.map((t) => {
+    const metaKey   = Object.keys(data.metadata).find((k) =>
+      k.toLowerCase() === t.jetton_master.toLowerCase()
+    ) ?? t.jetton_master;
+    const tokenInfo = data.metadata[metaKey]?.token_info?.[0] ?? null;
+    return {
+      ...t,
+      symbol:   tokenInfo?.symbol ?? null,
+      decimals: tokenInfo?.decimals ?? 9,
+    };
+  });
+}
+
+/** Fetch jetton transfers for a specific wallet filtered by jetton master */
+export async function getJettonTransfersByToken(
+  ownerAddress: string,
+  jettonMaster: string,
+  limit = 50
+): Promise<JettonTransfer[]> {
+  const data = await tcGet<JettonTransfersResponse>(
+    `/api/v3/jetton/transfers?owner_address=${encodeURIComponent(ownerAddress)}&jetton_master=${encodeURIComponent(jettonMaster)}&limit=${limit}&sort_order=desc`
   );
   if (!data) return [];
 

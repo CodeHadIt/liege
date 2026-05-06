@@ -48,21 +48,72 @@ export class TonChainProvider implements ChainProvider {
   // ── Pair data (price, MC, liquidity) ───────────────────────────────────────
 
   async getPairData(tokenAddress: string): Promise<PairData | null> {
-    // Primary: DexScreener — already indexes TON DEXes (DeDust, STON.fi)
-    const dsPairs = await dexscreener.getTokenPairs("ton", tokenAddress);
+    // Query DexScreener + GeckoTerminal in parallel so we never miss STON.fi
+    // pools that DexScreener hasn't indexed yet
+    const [dsPairs, gtPools] = await Promise.all([
+      dexscreener.getTokenPairs("ton", tokenAddress),
+      geckoterminal.getTokenPools("ton", tokenAddress).catch((): geckoterminal.GeckoPool[] => []),
+    ]);
+
+    // ── GeckoTerminal pool helpers ─────────────────────────────────────────────
+    // GT pools sorted by volume — re-sort by liquidity for the "best" comparison
+    const gtByLiq      = [...gtPools].sort(
+      (a, b) => (parseFloat(b.attributes.reserve_in_usd) || 0) - (parseFloat(a.attributes.reserve_in_usd) || 0)
+    );
+    const gtBestPool   = gtByLiq[0] ?? null;
+    const gtBestLiq    = gtBestPool ? parseFloat(gtBestPool.attributes.reserve_in_usd) || 0 : 0;
+
     if (dsPairs.length > 0) {
       const sorted  = dsPairs.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
       const primary = sorted[0];
       const pairs   = sorted.map(parseDexScreenerPair);
-      const totalLiquidity = sorted.reduce((s, p) => s + (p.liquidity?.usd ?? 0), 0) || null;
+      const dsTopLiq   = sorted[0].liquidity?.usd ?? 0;
+      const dsTotalLiq = sorted.reduce((s, p) => s + (p.liquidity?.usd ?? 0), 0);
+
+      // If GeckoTerminal's best pool has significantly more liquidity than DS's
+      // best pool, it means DS is missing that DEX (e.g. STON.fi not yet indexed).
+      // In that case use GT as the liquidity figure for the display header but
+      // still keep DS pair data for price/volume accuracy.
+      const bestLiquidity = Math.max(dsTotalLiq, gtBestLiq) || null;
+
+      // Merge GT pools into the pairs display when GT has pools DS doesn't have
+      const extraPools: PairInfo[] = [];
+      if (gtBestLiq > dsTopLiq) {
+        // GT has the biggest pool — add GT pools not already covered by DS
+        for (const gp of gtByLiq.slice(0, 5)) {
+          const liq    = parseFloat(gp.attributes.reserve_in_usd) || 0;
+          if (liq <= 0) continue;
+          const dexId  = gp.relationships?.dex?.data?.id ?? gp.attributes.name;
+          const dexName = dexId.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+          // Avoid duplicating a pool that DS already listed
+          const alreadyCovered = pairs.some(
+            (p) => Math.abs(p.liquidity.usd - liq) / liq < 0.05
+          );
+          if (!alreadyCovered) {
+            extraPools.push({
+              pairAddress: gp.attributes.address,
+              dexId,
+              dexName,
+              baseToken:   { address: tokenAddress, symbol: primary.baseToken.symbol },
+              quoteToken:  { address: "", symbol: "TON" },
+              priceUsd:    parseFloat(gp.attributes.base_token_price_usd) || 0,
+              liquidity:   { usd: liq, base: 0, quote: 0 },
+              volume24h:   parseFloat(gp.attributes.volume_usd.h24) || 0,
+              url:         `https://www.geckoterminal.com/ton/pools/${gp.attributes.address}`,
+            });
+          }
+        }
+      }
+
+      const allPairs = [...pairs, ...extraPools];
 
       return {
-        pairs,
+        pairs:       allPairs,
         primaryPair: pairs[0],
         priceUsd:    parseFloat(primary.priceUsd) || null,
         priceNative: parseFloat(primary.priceNative) || null,
         volume24h:   primary.volume?.h24 ?? null,
-        liquidity:   totalLiquidity,
+        liquidity:   bestLiquidity,
         marketCap:   primary.marketCap ?? null,
         fdv:         primary.fdv ?? null,
         priceChange: {
@@ -78,18 +129,33 @@ export class TonChainProvider implements ChainProvider {
       };
     }
 
-    // Fallback: GeckoTerminal
-    const gtPools = await geckoterminal.getTokenPools("ton", tokenAddress);
-    if (gtPools.length > 0) {
-      const pool = gtPools[0];
-      const attr = pool.attributes;
+    // DexScreener returned nothing — use GeckoTerminal
+    if (gtBestPool) {
+      const attr = gtBestPool.attributes;
+      const gtAllPools: PairInfo[] = gtByLiq.slice(0, 10).map((gp) => {
+        const liq    = parseFloat(gp.attributes.reserve_in_usd) || 0;
+        const dexId  = gp.relationships?.dex?.data?.id ?? gp.attributes.name;
+        const dexName = dexId.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+        return {
+          pairAddress: gp.attributes.address,
+          dexId,
+          dexName,
+          baseToken:   { address: tokenAddress, symbol: "" },
+          quoteToken:  { address: "", symbol: "TON" },
+          priceUsd:    parseFloat(gp.attributes.base_token_price_usd) || 0,
+          liquidity:   { usd: liq, base: 0, quote: 0 },
+          volume24h:   parseFloat(gp.attributes.volume_usd.h24) || 0,
+          url:         `https://www.geckoterminal.com/ton/pools/${gp.attributes.address}`,
+        };
+      });
+      const totalGtLiq = gtByLiq.reduce((s, p) => s + (parseFloat(p.attributes.reserve_in_usd) || 0), 0);
       return {
-        pairs:       [],
-        primaryPair: null,
+        pairs:       gtAllPools,
+        primaryPair: gtAllPools[0] ?? null,
         priceUsd:    parseFloat(attr.base_token_price_usd) || null,
         priceNative: parseFloat(attr.base_token_price_native_currency) || null,
         volume24h:   parseFloat(attr.volume_usd.h24) || null,
-        liquidity:   parseFloat(attr.reserve_in_usd) || null,
+        liquidity:   totalGtLiq || null,
         marketCap:   attr.market_cap_usd ? parseFloat(attr.market_cap_usd) : null,
         fdv:         parseFloat(attr.fdv_usd) || null,
         priceChange: {

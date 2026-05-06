@@ -32,7 +32,11 @@ export async function GET(
     const chainId = chain as ChainId;
     let holders: HolderEntry[] = [];
 
-    if (chainId !== "solana") {
+    if (chainId === "ton") {
+      // TON: GMGN doesn't support TON — use TonCenter directly
+      const provider = getChainProvider(chainId);
+      holders = await provider.getTopHolders(address, 50);
+    } else if (chainId !== "solana") {
       // EVM: use GMGN sorted by balance (true top holders, not top traders)
       const provider = getChainProvider(chainId);
       const [gmgnHolders, pairData] = await Promise.all([
