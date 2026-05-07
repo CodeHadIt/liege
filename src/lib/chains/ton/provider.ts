@@ -18,6 +18,7 @@ import type { ChainProvider, PairData, TokenMetadata, WalletBalance } from "../t
 import * as dexscreener from "@/lib/api/dexscreener";
 import * as geckoterminal from "@/lib/api/geckoterminal";
 import * as toncenter from "@/lib/api/toncenter";
+import * as tonapi from "@/lib/api/tonapi";
 import type { PairInfo } from "@/types/token";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -206,20 +207,38 @@ export class TonChainProvider implements ChainProvider {
   // ── Top holders ────────────────────────────────────────────────────────────
 
   async getTopHolders(tokenAddress: string, limit = 20): Promise<HolderEntry[]> {
-    const [master, wallets] = await Promise.all([
+    // TonAPI returns holders sorted by balance descending — correct for "top holders".
+    // TonCenter only sorts by last_transaction_lt, so we use TonAPI here.
+    const [master, holders, pairData] = await Promise.all([
       toncenter.getJettonMaster(tokenAddress),
-      toncenter.getJettonHolders(tokenAddress, limit),
+      tonapi.getTonApiHolders(tokenAddress, limit),
+      this.getPairData(tokenAddress).catch(() => null),
     ]);
 
-    const decimals   = master?.tokenInfo?.decimals ?? 9;
-    const totalRaw   = BigInt(master?.total_supply ?? "0");
-    const totalFloat = toncenter.fromNano(totalRaw.toString(), decimals);
+    if (holders.length === 0) return [];
 
-    return wallets.map((w) => {
-      const balance    = toncenter.fromNano(w.balance, decimals);
-      const percentage = totalFloat > 0 ? (balance / totalFloat) * 100 : 0;
+    const decimals = master?.tokenInfo?.decimals ?? 9;
+
+    // Compute totalFloat from on-chain total_supply
+    const totalRaw   = BigInt(master?.total_supply ?? "0");
+    let   totalFloat = toncenter.fromNano(totalRaw.toString(), decimals);
+
+    // Fallback 1: derive from FDV / price when TonCenter doesn't report supply
+    if (totalFloat === 0 && pairData?.fdv && pairData.priceUsd && pairData.priceUsd > 0) {
+      totalFloat = pairData.fdv / pairData.priceUsd;
+    }
+
+    const balances = holders.map((h) => toncenter.fromNano(h.balance, decimals));
+
+    // Fallback 2: use sum of returned holders as relative denominator
+    const sumOfShown = balances.reduce((s, b) => s + b, 0);
+    const denominator = totalFloat > 0 ? totalFloat : sumOfShown;
+
+    return holders.map((h, i) => {
+      const balance    = balances[i];
+      const percentage = denominator > 0 ? (balance / denominator) * 100 : 0;
       return {
-        address:    w.ownerFriendly,
+        address:    h.ownerFriendly,
         balance,
         percentage,
         isContract: null,

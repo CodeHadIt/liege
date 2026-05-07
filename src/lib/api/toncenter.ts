@@ -69,6 +69,8 @@ export interface JettonWallet {
   jetton:    string;
   /** User-friendly address from address_book */
   ownerFriendly: string;
+  /** Decimals extracted from response metadata (more reliable than a second master lookup) */
+  decimals?: number;
 }
 
 export interface TonAccount {
@@ -158,18 +160,46 @@ export async function getJettonHolders(
   jettonAddress: string,
   limit = 20
 ): Promise<JettonWallet[]> {
+  // TonCenter sorts jetton/wallets by last_transaction_lt, NOT by balance.
+  // To get true top holders we must fetch a large batch and sort client-side.
+  const fetchLimit = Math.min(Math.max(limit * 6, 300), 1000);
+
   const data = await tcGet<JettonWalletsResponse>(
-    `/api/v3/jetton/wallets?jetton_address=${encodeURIComponent(jettonAddress)}&exclude_zero_balance=true&limit=${limit}&sort_order=desc`
+    `/api/v3/jetton/wallets?jetton_address=${encodeURIComponent(jettonAddress)}&exclude_zero_balance=true&limit=${fetchLimit}`
   );
   if (!data?.jetton_wallets?.length) return [];
 
   const book = data.address_book ?? {};
-  return data.jetton_wallets.map((w) => ({
+
+  // Extract decimals from the metadata in this same response — more reliable than
+  // a separate getJettonMaster call, especially for tokens where decimals are null.
+  const meta     = data.metadata ?? {};
+  const metaKey  = Object.keys(meta).find(
+    (k) => k.toLowerCase() === jettonAddress.toLowerCase() ||
+           (book[k]?.user_friendly ?? "").toLowerCase() === jettonAddress.toLowerCase()
+  ) ?? Object.keys(meta)[0];
+  const jettonDecimals: number | undefined = metaKey
+    ? (meta[metaKey]?.token_info?.[0]?.decimals ?? undefined)
+    : undefined;
+
+  // Sort by balance descending (numeric string comparison via BigInt)
+  const sorted = [...data.jetton_wallets].sort((a, b) => {
+    try {
+      const ba = BigInt(String(a.balance));
+      const bb = BigInt(String(b.balance));
+      return bb > ba ? 1 : bb < ba ? -1 : 0;
+    } catch {
+      return 0;
+    }
+  });
+
+  return sorted.slice(0, limit).map((w) => ({
     address:       w.address,
     owner:         w.owner,
-    balance:       w.balance,
+    balance:       String(w.balance),
     jetton:        w.jetton,
     ownerFriendly: book[w.owner]?.user_friendly ?? book[w.address]?.user_friendly ?? w.owner,
+    decimals:      jettonDecimals,
   }));
 }
 

@@ -112,7 +112,13 @@ export default function TokenPage({
 
         {/* Sidebar panels — 1 col */}
         <div className="space-y-6">
-          <TopHolders chain={token.chain} address={token.address} priceUsd={token.priceUsd} liquidityUsd={token.liquidity?.totalUsd ?? null} />
+          <TopHolders
+            chain={token.chain}
+            address={token.address}
+            priceUsd={token.priceUsd}
+            liquidityUsd={token.liquidity?.totalUsd ?? null}
+            lpAddresses={token.liquidity?.pools?.map((p) => p.pairAddress)}
+          />
           {token.ddScore && (
             <DDScoreCard score={token.ddScore} />
           )}

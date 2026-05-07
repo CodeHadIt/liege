@@ -14,6 +14,7 @@ interface TopHoldersProps {
   address: string;
   priceUsd?: number | null;
   liquidityUsd?: number | null;
+  lpAddresses?: string[];
 }
 
 const PIE_COLORS = [
@@ -60,31 +61,55 @@ function formatUsd(value: number): string {
   return `$${value.toFixed(0)}`;
 }
 
-function isLikelyLP(
-  balance: number,
-  priceUsd: number | null | undefined,
-  liquidityUsd: number | null | undefined
-): boolean {
-  if (!priceUsd || !liquidityUsd || liquidityUsd <= 0) return false;
-  // Liquidity pools typically hold roughly half the total liquidity in the base token
-  const holderValueUsd = balance * priceUsd;
-  const lpTokenSide = liquidityUsd / 2;
-  // Match if holder value is within 20% of the expected LP token-side value
-  return (
-    lpTokenSide > 0 &&
-    Math.abs(holderValueUsd - lpTokenSide) / lpTokenSide < 0.2
-  );
-}
-
-export function TopHolders({ chain, address, priceUsd, liquidityUsd }: TopHoldersProps) {
+export function TopHolders({ chain, address, priceUsd, liquidityUsd, lpAddresses }: TopHoldersProps) {
   const { data: holders, isLoading } = useTokenHolders(chain, address);
   const { openWalletDialog } = useWalletDialog();
 
   const allHolders = holders || [];
 
-  // Classify each holder
+  // Normalise a TON user-friendly address (EQ.../UQ...) to its canonical
+  // "workchain:hex" form so that EQ and UQ variants of the same account compare equal.
+  // Falls back to lowercased string for non-TON addresses.
+  function normAddr(addr: string): string {
+    if (addr.length < 48) return addr.toLowerCase();
+    try {
+      const b64  = addr.replace(/-/g, "+").replace(/_/g, "/");
+      const bin  = atob(b64);
+      if (bin.length < 34) return addr.toLowerCase();
+      const wc   = bin.charCodeAt(1);
+      let   hex  = "";
+      for (let i = 2; i < 34; i++) hex += bin.charCodeAt(i).toString(16).padStart(2, "0");
+      return `${wc}:${hex}`;
+    } catch {
+      return addr.toLowerCase();
+    }
+  }
+
+  // Normalised set of known LP addresses for O(1) lookup
+  const lpSet = new Set((lpAddresses ?? []).map(normAddr));
+
+  // Determine which holders are LPs:
+  // 1. Exact address match against known pool addresses
+  // 2. If no exact matches found, fall back to heuristic — but only tag the
+  //    SINGLE holder whose value is closest to liquidityUsd/2 (within 20%).
+  //    This prevents multiple holders from being incorrectly tagged.
+  const exactMatches = new Set(allHolders.map((h) => normAddr(h.address)).filter((k) => lpSet.has(k)));
+  let heuristicLpAddr: string | null = null;
+  if (exactMatches.size === 0 && priceUsd && liquidityUsd && liquidityUsd > 0) {
+    const lpTokenSide = liquidityUsd / 2;
+    let bestDiff = Infinity;
+    for (const h of allHolders) {
+      const diff = Math.abs(h.balance * priceUsd - lpTokenSide) / lpTokenSide;
+      if (diff < 0.2 && diff < bestDiff) {
+        bestDiff = diff;
+        heuristicLpAddr = normAddr(h.address);
+      }
+    }
+  }
+
   const classified = allHolders.map((h) => {
-    const isLP = isLikelyLP(h.balance, priceUsd, liquidityUsd);
+    const key  = normAddr(h.address);
+    const isLP = exactMatches.has(key) || key === heuristicLpAddr;
     const valueUsd = priceUsd ? h.balance * priceUsd : 0;
     const tier: HolderTier = isLP ? "lp" : getHolderTier(valueUsd);
     return { ...h, tier, valueUsd };
