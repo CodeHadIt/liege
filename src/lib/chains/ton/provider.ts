@@ -19,6 +19,7 @@ import * as dexscreener from "@/lib/api/dexscreener";
 import * as geckoterminal from "@/lib/api/geckoterminal";
 import * as toncenter from "@/lib/api/toncenter";
 import * as tonapi from "@/lib/api/tonapi";
+import * as dyor from "@/lib/api/dyor";
 import type { PairInfo } from "@/types/token";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -308,12 +309,15 @@ export class TonChainProvider implements ChainProvider {
     tokenAddress: string,
     timeframe: Timeframe
   ): Promise<OHLCVBar[]> {
-    // Use GeckoTerminal for OHLCV — it supports TON network
-    const gtPools = await geckoterminal.getTokenPools("ton", tokenAddress);
+    // Primary: DYOR.io — direct jetton address lookup, no pool discovery needed
+    const dyorBars = await dyor.getJettonChart(tokenAddress, timeframe).catch(() => []);
+    if (dyorBars.length > 0) return dyorBars;
+
+    // Fallback: GeckoTerminal OHLCV (requires pool lookup first)
+    const gtPools = await geckoterminal.getTokenPools("ton", tokenAddress).catch(() => []);
     if (gtPools.length === 0) return [];
 
     const poolAddr = gtPools[0].attributes.address;
-
     const TF_MAP: Record<Timeframe, { tf: string; aggregate: number }> = {
       "1m":  { tf: "minute", aggregate: 1  },
       "5m":  { tf: "minute", aggregate: 5  },
@@ -322,9 +326,7 @@ export class TonChainProvider implements ChainProvider {
       "4h":  { tf: "hour",   aggregate: 4  },
       "1d":  { tf: "day",    aggregate: 1  },
     };
-
     const { tf, aggregate } = TF_MAP[timeframe] ?? { tf: "hour", aggregate: 1 };
-
     return geckoterminal.getOHLCV("ton", poolAddr, tf, aggregate);
   }
 
