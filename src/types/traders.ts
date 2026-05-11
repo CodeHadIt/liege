@@ -107,6 +107,11 @@ export interface TopTrader {
   lastTradeTimestamp: number | null;
   tier: TraderTier;
   tradeCount: number;
+  // GeckoTerminal fields (TON)
+  buyVolumeUsd?: number;
+  sellVolumeUsd?: number;
+  buyCount?: number;
+  sellCount?: number;
 }
 
 export interface TopTradersResponse {

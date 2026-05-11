@@ -2,9 +2,8 @@ import { NextResponse } from "next/server";
 import { getChainProvider, isChainSupported } from "@/lib/chains/registry";
 import { CHAIN_CONFIGS } from "@/config/chains";
 import * as helius from "@/lib/api/helius";
-import * as toncenter from "@/lib/api/toncenter";
-import { searchPairs } from "@/lib/api/dexscreener";
-import { scrapeGmgnTopTraders } from "@/lib/api/gmgn-scraper";
+import { getTokenPools } from "@/lib/api/geckoterminal";
+import { scrapeGmgnTopTraders, scrapeGeckoTerminalTopTraders } from "@/lib/api/gmgn-scraper";
 import { serverCache, CACHE_TTL } from "@/lib/cache";
 import type { ChainId } from "@/types/chain";
 import type {
@@ -62,87 +61,41 @@ export async function GET(
 
     let traders: TopTrader[] = [];
 
-    // ── TON: TonCenter holders + per-wallet enrichment ────────────────────────
+    // ── TON: GeckoTerminal top traders ───────────────────────────────────────
     if (chainId === "ton") {
-      // Fetch TON price once
-      let tonPrice = 0;
-      try {
-        const tonPairs = await searchPairs("USDT TON").catch(() => []);
-        const tonPair  = tonPairs.find(
-          (p) => p.chainId === "ton" && p.quoteToken.symbol === "USDT" &&
-                 (p.baseToken.symbol === "TON" || p.baseToken.symbol === "TONCOIN")
-        ) ?? tonPairs.find((p) => p.chainId === "ton" && (p.liquidity?.usd ?? 0) > 10_000);
-        if (tonPair) tonPrice = 1 / (parseFloat(tonPair.priceNative) || 1);
-      } catch { /* skip */ }
+      const pools = await getTokenPools("ton", address).catch(() => []);
+      if (pools.length > 0) {
+        const poolAddress = [...pools].sort(
+          (a, b) =>
+            (parseFloat(b.attributes.reserve_in_usd) || 0) -
+            (parseFloat(a.attributes.reserve_in_usd) || 0)
+        )[0].attributes.address;
 
-      const holders = await provider.getTopHolders(address, 50);
-
-      // Enrich in batches of 5 to avoid flooding TonCenter
-      const enriched: TopTrader[] = [];
-      const BATCH = 5;
-      for (let i = 0; i < holders.length; i += BATCH) {
-        const batch = holders.slice(i, i + BATCH);
-        const results = await Promise.allSettled(
-          batch.map(async (h) => {
-            const walletAddr = h.address;
-
-            const [account, jettons, transfers] = await Promise.all([
-              toncenter.getAccount(walletAddr).catch(() => null),
-              toncenter.getWalletJettons(walletAddr, 50).catch(() => []),
-              toncenter.getJettonTransfersByToken(walletAddr, address, 50).catch(() => []),
-            ]);
-
-            const nativeBal    = account ? toncenter.nanotonToTon(account.balance) : 0;
-            const nativeBalUsd = nativeBal * tonPrice;
-
-            // USDT balance
-            const usdtJetton = jettons.find(
-              (j) => j.jetton.toLowerCase() === toncenter.USDT_JETTON_MASTER.toLowerCase()
-            );
-            const usdtBal = usdtJetton
-              ? toncenter.fromNano(usdtJetton.balance, usdtJetton.decimals)
-              : 0;
-            const stablecoins: StablecoinBalance[] = usdtBal > 0
-              ? [{ symbol: "USDT", balance: usdtBal, balanceUsd: usdtBal }]
-              : [];
-
-            // Trade history from transfers
-            const buys  = transfers.filter((t) => t.destination_wallet === walletAddr || t.destination === walletAddr);
-            const sells = transfers.filter((t) => t.source_wallet === walletAddr || t.source === walletAddr);
-            const lastTs = transfers[0]?.transaction_now ?? null;
-            const tradeCount = transfers.length;
-
-            const remainingTokensUsd = priceUsd ? h.balance * priceUsd : 0;
-
-            return {
-              walletAddress:      walletAddr,
-              nativeBalance:      nativeBal,
-              nativeBalanceUsd:   nativeBalUsd,
-              stablecoinTotal:    usdtBal,
-              stablecoins,
-              avgBuyAmount:       buys.length > 0
-                ? buys.reduce((s, t) => s + toncenter.fromNano(t.amount, t.decimals), 0) / buys.length
-                : 0,
-              avgBuyAmountUsd:    0, // No reliable price-at-time data
-              avgBuyMarketCap:    null,
-              avgSellMarketCap:   null,
-              avgSellPrice:       null,
-              realizedPnl:        0,
-              realizedPnlUsd:     0,
-              remainingTokens:    h.balance,
-              remainingTokensUsd,
-              lastTradeTimestamp: lastTs,
-              tier:               getTier(remainingTokensUsd) as TraderTier,
-              tradeCount,
-            } satisfies TopTrader;
-          })
-        );
-        for (const r of results) {
-          if (r.status === "fulfilled") enriched.push(r.value);
-        }
+        const geckoTraders = await scrapeGeckoTerminalTopTraders("ton", poolAddress).catch(() => []);
+        traders = geckoTraders.map((t) => ({
+          walletAddress:      t.walletAddress,
+          nativeBalance:      0,
+          nativeBalanceUsd:   0,
+          stablecoinTotal:    0,
+          stablecoins:        [] as StablecoinBalance[],
+          avgBuyAmount:       0,
+          avgBuyAmountUsd:    t.buyVolumeUsd,
+          avgBuyMarketCap:    null,
+          avgSellMarketCap:   null,
+          avgSellPrice:       null,
+          realizedPnl:        0,
+          realizedPnlUsd:     t.pnlUsd,
+          remainingTokens:    0,
+          remainingTokensUsd: 0,
+          lastTradeTimestamp: null,
+          tier:               getTier(t.pnlUsd) as TraderTier,
+          tradeCount:         t.buyCount + t.sellCount,
+          buyVolumeUsd:       t.buyVolumeUsd,
+          sellVolumeUsd:      t.sellVolumeUsd,
+          buyCount:           t.buyCount,
+          sellCount:          t.sellCount,
+        } satisfies TopTrader));
       }
-
-      traders = enriched;
     }
 
     // ── EVM: GMGN scraper → top holders fallback ──────────────────────────────
