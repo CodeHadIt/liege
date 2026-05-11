@@ -164,6 +164,15 @@ async function fetchTopHolders(
         .slice(0, 10)
         .map((h) => ({ address: h.address, percentage: h.percentage }));
     }
+    // TON: TonAPI returns holders sorted by balance with correct percentages
+    if (chain === "ton") {
+      const provider = getChainProvider("ton");
+      const holders = await provider.getTopHolders(address, 10);
+      return holders
+        .filter((h) => h.percentage > 0)
+        .slice(0, 10)
+        .map((h) => ({ address: h.address, percentage: h.percentage }));
+    }
     // EVM: fetch GMGN holders + DexScreener pairs (for supply-based % fallback) in parallel
     const [gmgnHolders, dsPairs] = await Promise.all([
       scrapeGmgnTopHolders(chain, address).catch(() => []),
@@ -436,11 +445,21 @@ function buildMessage(opts: {
     ? `https://dexscreener.com/${chain}/${data.primaryPair.pairAddress}`
     : null
   );
-  msg += `\n<a href="${t.axi}">AXI</a>  `;
-  msg += `<a href="${t.tro}">TRO</a>  `;
-  msg += `<a href="${t.tem}">TEM</a>  `;
-  msg += `<a href="${t.dex}">DEX</a>  `;
-  msg += `<a href="${t.gmg}">GMG</a>\n`;
+  if (chain === "ton") {
+    const geckoUrl  = `https://www.geckoterminal.com/ton/tokens/${address}`;
+    const stonFiUrl = `https://app.ston.fi/swap?outputCurrencyAddress=${address}`;
+    const tonvUrl   = `https://tonviewer.com/${address}`;
+    msg += `\n<a href="${t.dex}">DEX</a>  `;
+    msg += `<a href="${geckoUrl}">GECKO</a>  `;
+    msg += `<a href="${stonFiUrl}">STON</a>  `;
+    msg += `<a href="${tonvUrl}">TONV</a>\n`;
+  } else {
+    msg += `\n<a href="${t.axi}">AXI</a>  `;
+    msg += `<a href="${t.tro}">TRO</a>  `;
+    msg += `<a href="${t.tem}">TEM</a>  `;
+    msg += `<a href="${t.dex}">DEX</a>  `;
+    msg += `<a href="${t.gmg}">GMG</a>\n`;
+  }
 
   return msg;
 }

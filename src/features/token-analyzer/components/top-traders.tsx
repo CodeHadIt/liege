@@ -64,14 +64,13 @@ function TonTraderRow({
   index: number;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const { openWalletDialog } = useWalletDialog();
   const tierInfo = TIER_MAP[trader.tier];
   const pnlPositive = trader.realizedPnlUsd >= 0;
   const buyVol  = trader.buyVolumeUsd  ?? 0;
   const sellVol = trader.sellVolumeUsd ?? 0;
   const buys    = trader.buyCount  ?? 0;
   const sells   = trader.sellCount ?? 0;
-
-  const explorerUrl = `https://tonviewer.com/${trader.walletAddress}`;
 
   return (
     <div>
@@ -83,15 +82,15 @@ function TonTraderRow({
 
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="text-[10px]" title={tierInfo.label}>{tierInfo.emoji}</span>
-          <a
-            href={explorerUrl}
-            target="_blank"
-            rel="noreferrer"
-            onClick={(e) => e.stopPropagation()}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              openWalletDialog(trader.walletAddress, "ton");
+            }}
             className="text-[10px] font-mono text-[#E8E8ED] hover:text-[#00F0FF] transition-colors truncate"
           >
             {shortenAddress(trader.walletAddress, 4)}
-          </a>
+          </button>
           <ArrowSquareOut className="h-2.5 w-2.5 text-[#6B6B80] opacity-0 group-hover:opacity-50 transition-opacity shrink-0" />
         </div>
 

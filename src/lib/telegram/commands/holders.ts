@@ -97,6 +97,16 @@ export async function handleHolders(
         openTimestamp: null,
         isLp: isLpAddress(h.address),
       }));
+    } else if (chain === "ton") {
+      // TON: TonAPI returns holders sorted by balance with correct on-chain percentages
+      const rawHolders = await provider.getTopHolders(address, 20);
+      holders = rawHolders.map((h) => ({
+        address: h.address,
+        percentage: h.percentage,
+        balanceUsd: priceUsd && h.balance > 0 ? h.balance * priceUsd : null,
+        openTimestamp: null,
+        isLp: isLpAddress(h.address),
+      }));
     } else {
       // EVM — use GMGN for true holder rankings with USD values
       const gmgnHolders = await scrapeGmgnTopHolders(chain, address).catch(() => []);
@@ -170,9 +180,11 @@ export async function handleHolders(
       const lpLabel = h.isLp ? " <i>(LP)</i>" : "";
       const pct = h.percentage > 0 ? ` — ${h.percentage.toFixed(2)}%` : "";
       const holdDur = h.openTimestamp ? `  · <i>${formatAge(h.openTimestamp)}</i>` : "";
-      const gmgnUrl = `https://gmgn.ai/${gmgnChain}/address/${h.address}`;
+      const walletUrl = chain === "ton"
+        ? `https://tonviewer.com/${h.address}`
+        : `https://gmgn.ai/${gmgnChain}/address/${h.address}`;
       const addrLabel = escapeHtml(truncateAddress(h.address));
-      return `${i + 1}. <a href="${gmgnUrl}">${addrLabel}</a>${pct}  ${emoji}${lpLabel}${holdDur}\n`;
+      return `${i + 1}. <a href="${walletUrl}">${addrLabel}</a>${pct}  ${emoji}${lpLabel}${holdDur}\n`;
     });
 
     const pages = splitPages(entries, (page, total) => {

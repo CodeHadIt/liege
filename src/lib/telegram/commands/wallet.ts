@@ -745,7 +745,7 @@ async function handleTonWallet(
   const nativeBal = account ? toncenter.nanotonToTon(account.balance) : 0;
   const firstTxTs = firstTxArr[0]?.now ?? null;
 
-  // Fetch prices for top jetton holdings
+  // Fetch prices for top jetton holdings — DexScreener primary, GeckoTerminal fallback
   const priceMap = new Map<string, number>();
   await Promise.allSettled(
     jettons.slice(0, 10).map(async (j) => {
@@ -753,6 +753,16 @@ async function handleTonWallet(
       if (pairs.length > 0) {
         const best = pairs.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
         const price = parseFloat(best.priceUsd) || 0;
+        if (price > 0) { priceMap.set(j.jetton, price); return; }
+      }
+      // GeckoTerminal fallback
+      const { getTokenPools } = await import("@/lib/api/geckoterminal");
+      const pools = await getTokenPools("ton", j.jetton).catch(() => []);
+      if (pools.length > 0) {
+        const bestGt = pools.sort(
+          (a, b) => (parseFloat(b.attributes.reserve_in_usd) || 0) - (parseFloat(a.attributes.reserve_in_usd) || 0)
+        )[0];
+        const price = parseFloat(bestGt.attributes.base_token_price_usd) || 0;
         if (price > 0) priceMap.set(j.jetton, price);
       }
     })
@@ -794,6 +804,10 @@ async function handleTonWallet(
   }
   positions.sort((a, b) => b.usd - a.usd);
 
+  const totalUsd = nativeBalUsd
+    + stableTotal
+    + positions.reduce((s, p) => s + p.usd, 0);
+
   // Recent transfers
   const recentTxs = transfers.slice(0, 5);
 
@@ -818,6 +832,7 @@ async function handleTonWallet(
   }
 
   msg += "\n💼 <b>Portfolio</b>\n";
+  if (totalUsd > 0) msg += `   Total: <b>${escapeHtml(fmtUsd(totalUsd))}</b>\n`;
   if (nativeBal > 0) {
     msg += `   TON: <b>${escapeHtml(nativeBal.toFixed(4))} TON</b>`;
     if (nativeBalUsd > 0) msg += ` (${escapeHtml(fmtUsd(nativeBalUsd))})`;
@@ -843,19 +858,19 @@ async function handleTonWallet(
     });
   }
 
-  msg += "\n📊 <b>Recent PnL</b>\n   — <i>(not available for TON)</i>\n";
-
   if (recentTxs.length > 0) {
     msg += "\n🔁 <b>Recent Transfers</b>\n";
     recentTxs.forEach((t, i) => {
       const ts      = t.transaction_now;
       const timeAgo = escapeHtml(formatTimeAgo(ts));
       const amount   = toncenter.fromNano(t.amount, t.decimals);
-      const sym      = escapeHtml(t.symbol ?? "TON");
-      const isSend   = t.source_wallet !== address;
+      const sym      = escapeHtml(t.symbol ?? "???");
+      const isSend   = t.source === address || t.source_wallet === address;
       const side     = isSend ? "🔴 Sent" : "🟢 Received";
       const txUrl    = `https://tonviewer.com/transaction/${t.transaction_hash}`;
-      msg += `   ${i + 1}. ${side} <b>${escapeHtml(amount.toFixed(4))} ${sym}</b> · <a href="${txUrl}"><i>${timeAgo}</i></a>\n`;
+      const usd      = priceMap.get(t.jetton_master) ?? 0;
+      const usdStr   = usd > 0 ? ` <i>(${escapeHtml(fmtUsd(amount * usd))})</i>` : "";
+      msg += `   ${i + 1}. ${side} <b>${escapeHtml(amount.toFixed(4))} ${sym}</b>${usdStr} · <a href="${txUrl}"><i>${timeAgo}</i></a>\n`;
     });
   }
 
