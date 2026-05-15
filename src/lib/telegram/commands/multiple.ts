@@ -20,7 +20,7 @@ const GMGN_CHAIN: Record<string, string> = {
   eth:    "eth",
 };
 
-const DIAMOND_MULTIPLIER = 20; // avgBuyMC must be ≥ 20× currentMC
+const DIAMOND_MULTIPLIER = 10; // currentMC must be ≥ 10× avgBuyMC
 
 // ── Wealth tier ───────────────────────────────────────────────────────────────
 
@@ -101,13 +101,13 @@ export async function handleMultiple(
     }
 
     // ── Filter diamond hands ──────────────────────────────────────────────────
-    // Diamond hand: avgCostUsd >= DIAMOND_MULTIPLIER × currentPrice
-    // (equivalent to avgBuyMC >= DIAMOND_MULTIPLIER × currentMC)
+    // Diamond hand: current price is ≥ DIAMOND_MULTIPLIER × their avg buy price
+    // (equivalent to currentMC ≥ DIAMOND_MULTIPLIER × avgBuyMC)
     const diamondHands = holders.filter(
       (h) =>
         h.avgCostUsd > 0 &&
         h.balance > 0 &&                              // still holding
-        h.avgCostUsd >= DIAMOND_MULTIPLIER * currentPrice
+        currentPrice >= DIAMOND_MULTIPLIER * h.avgCostUsd
     );
 
     if (diamondHands.length === 0) {
@@ -115,7 +115,7 @@ export async function handleMultiple(
         ctx.chat!.id,
         loading.message_id,
         `💎 <b>Diamond Hands — ${escapeHtml(tokenSymbol)}</b>\n\n` +
-        `No holders found with an average buy MC ≥ ${DIAMOND_MULTIPLIER}× the current MC (${escapeHtml(fmtMc(currentMc))}).\n\n` +
+        `No holders found with a current MC ≥ ${DIAMOND_MULTIPLIER}× their average buy MC. Current MC: ${escapeHtml(fmtMc(currentMc))}.\n\n` +
         `<i>Scanned ${holders.length} holders.</i>`,
         { parse_mode: "HTML" }
       );
@@ -133,7 +133,7 @@ export async function handleMultiple(
       const gmgnUrl      = `https://gmgn.ai/${gmgnSlug}/address/${h.walletAddress}`;
       const addrLabel    = escapeHtml(truncateAddress(h.walletAddress));
       const tier         = TIER_EMOJI[wealthTier(h.balanceUsd)];
-      const multiple     = (h.avgCostUsd / currentPrice).toFixed(1);
+      const multiple     = (currentPrice / h.avgCostUsd).toFixed(1);
       const avgBuyMc     = (h.avgCostUsd / currentPrice) * currentMc;
 
       const holdSecs     = h.openTimestamp ? nowSec - h.openTimestamp : null;
@@ -159,7 +159,7 @@ export async function handleMultiple(
     const chainName = chainLabel(chain);
     const titleBase = `💎 <b>Diamond Hands</b> · ${escapeHtml(tokenSymbol)} · ${emoji} ${escapeHtml(chainName)}`;
     const preamble  =
-      `Current MC: <b>${escapeHtml(fmtMc(currentMc))}</b> · Filter: ≥${DIAMOND_MULTIPLIER}× avg buy MC\n` +
+      `Current MC: <b>${escapeHtml(fmtMc(currentMc))}</b> · Filter: current MC ≥ ${DIAMOND_MULTIPLIER}× avg buy MC\n` +
       `Found <b>${diamondHands.length}</b> diamond hand${diamondHands.length === 1 ? "" : "s"} (scanned ${holders.length})\n\n`;
 
     const pages = splitPages(entries, (page, total) => {
