@@ -9,6 +9,8 @@ import type {
 } from "@/types/shared-holders";
 import { scrapeGmgnHoldersPaginated, type GmgnTopTrader } from "@/lib/api/gmgn-scraper";
 import { getAssetBatch, getMintInfo } from "@/lib/api/helius";
+import * as toncenter from "@/lib/api/toncenter";
+import * as tonapi from "@/lib/api/tonapi";
 
 export const maxDuration = 120;
 
@@ -16,18 +18,16 @@ export const maxDuration = 120;
 
 const EVM_RE    = /^0x[a-fA-F0-9]{40}$/;
 const SOLANA_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const TON_RE    = /^(?:EQ|UQ|Ef|Uf|kQ|kf|0Q|0f)[A-Za-z0-9_-]{46}$/;
 
 function validateAddresses(chain: SharedHoldChain, a: string, b: string): string | null {
-  const re = chain === "solana" ? SOLANA_RE : EVM_RE;
+  const re = chain === "solana" ? SOLANA_RE : chain === "ton" ? TON_RE : EVM_RE;
   if (!re.test(a) || !re.test(b)) {
-    return chain === "solana"
-      ? "Provide two valid Solana mint addresses."
-      : "Provide two valid EVM contract addresses (0x…).";
+    if (chain === "solana") return "Provide two valid Solana mint addresses.";
+    if (chain === "ton")    return "Provide two valid TON jetton addresses (EQ/UQ…).";
+    return "Provide two valid EVM contract addresses (0x…).";
   }
-  const norm = chain === "solana"
-    ? (s: string) => s          // Solana: case-sensitive
-    : (s: string) => s.toLowerCase();
-  if (norm(a) === norm(b)) return "Addresses must be different.";
+  if (a === b) return "Addresses must be different.";
   return null;
 }
 
@@ -38,6 +38,7 @@ const DEX_CHAIN: Record<SharedHoldChain, string> = {
   base:   "base",
   bsc:    "bsc",
   solana: "solana",
+  ton:    "ton",
 };
 
 async function fetchDexImage(chain: SharedHoldChain, address: string): Promise<string | null> {
@@ -158,9 +159,9 @@ export async function POST(request: Request) {
     const body = (await request.json()) as SharedHoldersRequest;
     const { chain, addressA, addressB } = body;
 
-    const VALID_CHAINS: SharedHoldChain[] = ["eth", "base", "bsc", "solana"];
+    const VALID_CHAINS: SharedHoldChain[] = ["eth", "base", "bsc", "solana", "ton"];
     if (!chain || !VALID_CHAINS.includes(chain)) {
-      return NextResponse.json({ error: "Invalid chain. Use eth, base, bsc, or solana." }, { status: 400 });
+      return NextResponse.json({ error: "Invalid chain. Use eth, base, bsc, solana, or ton." }, { status: 400 });
     }
 
     const validationError = validateAddresses(chain, addressA ?? "", addressB ?? "");
@@ -169,8 +170,106 @@ export async function POST(request: Request) {
     }
 
     const isSolana = chain === "solana";
-    const addrA = isSolana ? addressA : addressA.toLowerCase();
-    const addrB = isSolana ? addressB : addressB.toLowerCase();
+    const isTon    = chain === "ton";
+    // TON + Solana addresses are case-sensitive; EVM are lowercased
+    const addrA = isSolana || isTon ? addressA : addressA.toLowerCase();
+    const addrB = isSolana || isTon ? addressB : addressB.toLowerCase();
+
+    // ── TON: TonAPI for holders, TonCenter for metadata ───────────────────────
+    if (isTon) {
+      const [holdersRawA, holdersRawB, masterA, masterB, dexImgA, dexImgB] = await Promise.all([
+        tonapi.getTonApiHolders(addrA, 200),
+        tonapi.getTonApiHolders(addrB, 200),
+        toncenter.getJettonMaster(addrA),
+        toncenter.getJettonMaster(addrB),
+        fetchDexImage("ton", addrA),
+        fetchDexImage("ton", addrB),
+      ]);
+
+      const tiA = masterA?.tokenInfo;
+      const tiB = masterB?.tokenInfo;
+      const decimalsA = tiA?.decimals ?? 9;
+      const decimalsB = tiB?.decimals ?? 9;
+      const totalSupplyA = masterA?.total_supply
+        ? toncenter.fromNano(masterA.total_supply, decimalsA) : null;
+      const totalSupplyB = masterB?.total_supply
+        ? toncenter.fromNano(masterB.total_supply, decimalsB) : null;
+
+      // Fetch prices via DexScreener
+      const [pairsA, pairsB] = await Promise.all([
+        fetch(`https://api.dexscreener.com/tokens/v1/ton/${addrA}`, { signal: AbortSignal.timeout(6000) })
+          .then((r) => r.ok ? r.json() : []).catch(() => []) as Promise<Array<{ priceUsd?: string; liquidity?: { usd?: number } }>>,
+        fetch(`https://api.dexscreener.com/tokens/v1/ton/${addrB}`, { signal: AbortSignal.timeout(6000) })
+          .then((r) => r.ok ? r.json() : []).catch(() => []) as Promise<Array<{ priceUsd?: string; liquidity?: { usd?: number } }>>,
+      ]);
+      const priceA = parseFloat(
+        [...pairsA].sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0]?.priceUsd ?? "0"
+      ) || 0;
+      const priceB = parseFloat(
+        [...pairsB].sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0]?.priceUsd ?? "0"
+      ) || 0;
+
+      // Build holder maps keyed by ownerFriendly address
+      const mapA = new Map<string, { balance: number; percentage: number }>();
+      const mapB = new Map<string, { balance: number; percentage: number }>();
+
+      const sumA = holdersRawA.reduce((s, h) => s + parseFloat(h.balance), 0);
+      const sumB = holdersRawB.reduce((s, h) => s + parseFloat(h.balance), 0);
+      const denomA = totalSupplyA ?? toncenter.fromNano(String(Math.floor(sumA)), decimalsA);
+      const denomB = totalSupplyB ?? toncenter.fromNano(String(Math.floor(sumB)), decimalsB);
+
+      for (const h of holdersRawA) {
+        const bal = toncenter.fromNano(h.balance, decimalsA);
+        mapA.set(h.ownerFriendly, { balance: bal, percentage: denomA > 0 ? (bal / denomA) * 100 : 0 });
+      }
+      for (const h of holdersRawB) {
+        const bal = toncenter.fromNano(h.balance, decimalsB);
+        mapB.set(h.ownerFriendly, { balance: bal, percentage: denomB > 0 ? (bal / denomB) * 100 : 0 });
+      }
+
+      const tokenAMeta: SharedHolderTokenMeta = {
+        address: addrA, symbol: tiA?.symbol ?? "???", name: tiA?.name ?? "Unknown",
+        decimals: decimalsA, priceUsd: priceA || null, marketCap: null,
+        totalSupply: totalSupplyA, imageUrl: dexImgA ?? tiA?.image ?? null,
+      };
+      const tokenBMeta: SharedHolderTokenMeta = {
+        address: addrB, symbol: tiB?.symbol ?? "???", name: tiB?.name ?? "Unknown",
+        decimals: decimalsB, priceUsd: priceB || null, marketCap: null,
+        totalSupply: totalSupplyB, imageUrl: dexImgB ?? tiB?.image ?? null,
+      };
+
+      const commonAddresses = [...mapA.keys()].filter((addr) => mapB.has(addr));
+      if (commonAddresses.length === 0) {
+        return NextResponse.json({
+          holders: [], tokenA: tokenAMeta, tokenB: tokenBMeta, chain,
+        } satisfies SharedHoldersResponse);
+      }
+
+      const holders: SharedHolder[] = commonAddresses
+        .map((addr) => {
+          const hA = mapA.get(addr)!;
+          const hB = mapB.get(addr)!;
+          const balUsdA = priceA > 0 ? hA.balance * priceA : 0;
+          const balUsdB = priceB > 0 ? hB.balance * priceB : 0;
+          const tokenAData: SharedHolderTokenData = {
+            balance: String(hA.balance), balanceUsd: balUsdA, percentage: hA.percentage,
+            investedUsd: null, soldUsd: null, avgBuyPrice: null,
+            buyMarketCap: null, realizedPnl: null, totalPnl: 0,
+          };
+          const tokenBData: SharedHolderTokenData = {
+            balance: String(hB.balance), balanceUsd: balUsdB, percentage: hB.percentage,
+            investedUsd: null, soldUsd: null, avgBuyPrice: null,
+            buyMarketCap: null, realizedPnl: null, totalPnl: 0,
+          };
+          // No PnL data for TON — sort by combined holding USD value
+          return { address: addr, tokenA: tokenAData, tokenB: tokenBData, combinedPnl: balUsdA + balUsdB };
+        })
+        .sort((a, b) => b.combinedPnl - a.combinedPnl);
+
+      return NextResponse.json({
+        holders, tokenA: tokenAMeta, tokenB: tokenBMeta, chain,
+      } satisfies SharedHoldersResponse);
+    }
 
     // Scrape GMGN holders for both tokens + fetch metadata + images — all in parallel
     const [rawHoldersA, rawHoldersB, metaResult, dexImgA, dexImgB] = await Promise.all([

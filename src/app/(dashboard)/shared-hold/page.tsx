@@ -53,6 +53,7 @@ function scanUrl(chain: SharedHoldChain, address: string): string {
     base:   "https://basescan.org/address",
     bsc:    "https://bscscan.com/address",
     solana: "https://solscan.io/account",
+    ton:    "https://tonviewer.com",
   };
   return `${bases[chain]}/${address}`;
 }
@@ -70,7 +71,7 @@ function detectAddressType(addr: string): "solana" | "evm" | null {
 }
 
 const DEX_CHAIN: Record<SharedHoldChain, string> = {
-  eth: "ethereum", base: "base", bsc: "bsc", solana: "solana",
+  eth: "ethereum", base: "base", bsc: "bsc", solana: "solana", ton: "ton",
 };
 
 type AddrStatus = "idle" | "checking" | "token" | "not-token";

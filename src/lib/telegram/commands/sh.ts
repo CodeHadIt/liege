@@ -28,11 +28,13 @@ const GMGN_CHAIN: Record<string, string> = {
 
 const SOLANA_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const EVM_RE    = /^0x[a-fA-F0-9]{40}$/;
+const TON_RE    = /^(?:EQ|UQ|Ef|Uf|kQ|kf|0Q|0f)[A-Za-z0-9_-]{46}$/;
 
 // ── Chain detection ───────────────────────────────────────────────────────────
 
-/** Detect "solana" | "evm" | null purely from address format. */
-function detectAddrType(addr: string): "solana" | "evm" | null {
+/** Detect "solana" | "evm" | "ton" | null purely from address format. */
+function detectAddrType(addr: string): "solana" | "evm" | "ton" | null {
+  if (TON_RE.test(addr))    return "ton";
   if (SOLANA_RE.test(addr)) return "solana";
   if (EVM_RE.test(addr))    return "evm";
   return null;
@@ -123,10 +125,12 @@ export async function handleSharedHolders(
     return;
   }
 
-  // Resolve specific EVM chain
+  // Resolve specific chain
   let chain: ChainId | "eth";
   if (typeA === "solana") {
     chain = "solana";
+  } else if (typeA === "ton") {
+    chain = "ton";
   } else {
     chain = await detectEvmChain(addrA);
   }
@@ -188,7 +192,9 @@ export async function handleSharedHolders(
 
     // Build one entry per holder
     const entries: string[] = holders.map((h, i) => {
-      const walletUrl  = gmgnWalletUrl(chain as ChainId, h.address);
+      const walletUrl  = chain === "ton"
+        ? `https://tonviewer.com/${h.address}`
+        : gmgnWalletUrl(chain as ChainId, h.address);
       const addrLabel  = escapeHtml(truncateAddress(h.address));
       const combinedUsd = h.tokenA.balanceUsd + h.tokenB.balanceUsd;
       const tier        = TIER_EMOJI[wealthTier(combinedUsd)];

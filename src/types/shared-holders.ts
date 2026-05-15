@@ -1,4 +1,4 @@
-export type SharedHoldChain = "eth" | "base" | "bsc" | "solana";
+export type SharedHoldChain = "eth" | "base" | "bsc" | "solana" | "ton";
 
 export interface SharedHolderTokenData {
   balance: string;             // human-readable token balance
