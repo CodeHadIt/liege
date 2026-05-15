@@ -642,8 +642,17 @@ function parseGeckoTradersResponse(data: unknown): GeckoTopTrader[] {
         sellCount:     parseInt(String(attrs.total_sell_count ?? attrs.total_sells ?? attrs.txns_sold   ?? 0)) || 0,
       };
     })
-    .filter((t) => t.walletAddress.length > 0 && !t.walletAddress.includes("_"));
+    // TON addresses are base64url and may contain underscores — only filter out
+    // the composite id format "{numeric_token_id}_{wallet_address}"
+    .filter((t) => t.walletAddress.length > 0 && !/^\d+_/.test(t.walletAddress));
 }
+
+const GT_HEADERS = {
+  Accept: "application/json",
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+};
 
 export async function scrapeGeckoTerminalTopTraders(
   network: string,
@@ -653,66 +662,40 @@ export async function scrapeGeckoTerminalTopTraders(
   const cached = serverCache.get<GeckoTopTrader[]>(cacheKey);
   if (cached) return cached;
 
-  const browser = await getBrowser();
-  const context = await browser.newContext({
-    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    viewport: { width: 1280, height: 900 },
-  });
-  await context.addInitScript(() => {
-    Object.defineProperty(navigator, "webdriver", { get: () => false });
-  });
-
-  const page = await context.newPage();
-  let traders: GeckoTopTrader[] = [];
-
   try {
-    const pageUrl = `https://www.geckoterminal.com/${network}/pools/${poolAddress}`;
-    let capturedData: unknown = null;
-
-    page.on("response", async (res) => {
-      const url = res.url();
-      // GeckoTerminal serves top traders via wallet_tokens?token_id=...
-      if (url.includes("wallet_tokens") && url.includes("token_id")) {
-        try {
-          capturedData = await res.json();
-          console.log(`[gecko-scraper] captured wallet_tokens from: ${url.slice(0, 120)}`);
-        } catch { /* ignore */ }
-      }
-    });
-
-    await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
-    await new Promise((r) => setTimeout(r, 4_000));
-
-    // Click the Traders tab if present
-    const tabSelectors = [
-      'button:has-text("Traders")',
-      '[role="tab"]:has-text("Traders")',
-      'a:has-text("Traders")',
-      '[data-tab="traders"]',
-    ];
-    for (const sel of tabSelectors) {
-      try {
-        const el = page.locator(sel).first();
-        if (await el.isVisible({ timeout: 1_500 })) {
-          await el.click();
-          console.log(`[gecko-scraper] clicked Traders tab`);
-          break;
-        }
-      } catch { /* try next */ }
+    // Step 1: resolve the numeric token_id from the internal pool endpoint
+    const poolRes = await fetch(
+      `https://app.geckoterminal.com/api/p1/${network}/pools/${poolAddress}`,
+      { headers: GT_HEADERS, signal: AbortSignal.timeout(10_000) }
+    );
+    if (!poolRes.ok) {
+      console.log(`[gecko-scraper] pool lookup failed: ${poolRes.status}`);
+      return [];
+    }
+    const poolJson = await poolRes.json() as { data?: { attributes?: { base_token_id?: number } } };
+    const tokenId = poolJson?.data?.attributes?.base_token_id;
+    if (!tokenId) {
+      console.log(`[gecko-scraper] no base_token_id in pool response`);
+      return [];
     }
 
-    // Wait for the API response after tab click
-    await new Promise((r) => setTimeout(r, 8_000));
+    // Step 2: fetch top traders directly — no browser required
+    const tradersRes = await fetch(
+      `https://app.geckoterminal.com/api/p1/wallet_tokens?token_id=${tokenId}&include=address_label`,
+      { headers: GT_HEADERS, signal: AbortSignal.timeout(10_000) }
+    );
+    if (!tradersRes.ok) {
+      console.log(`[gecko-scraper] wallet_tokens failed: ${tradersRes.status}`);
+      return [];
+    }
+    const body = await tradersRes.json();
+    const traders = parseGeckoTradersResponse(body);
+    console.log(`[gecko-scraper] ${traders.length} traders for pool ${poolAddress.slice(0, 12)} (REST)`);
 
-    if (capturedData) traders = parseGeckoTradersResponse(capturedData);
-
-    console.log(`[gecko-scraper] ${traders.length} traders for pool ${poolAddress.slice(0, 12)}`);
+    if (traders.length > 0) serverCache.set(cacheKey, traders, CACHE_TTL.GMGN_TRADERS);
+    return traders;
   } catch (err) {
-    console.log(`[gecko-scraper] error: ${err}`);
-  } finally {
-    await context.close();
+    console.log(`[gecko-scraper] REST error: ${err}`);
+    return [];
   }
-
-  if (traders.length > 0) serverCache.set(cacheKey, traders, CACHE_TTL.GMGN_TRADERS);
-  return traders;
 }
