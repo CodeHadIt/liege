@@ -122,12 +122,11 @@ export async function handleMultiple(
       return;
     }
 
-    // Sort by multiple (highest avgBuyMC / currentMC first)
-    diamondHands.sort((a, b) => b.avgCostUsd - a.avgCostUsd);
+    // Sort by multiple descending (lowest avgCostUsd = highest multiple = best return first)
+    diamondHands.sort((a, b) => a.avgCostUsd - b.avgCostUsd);
 
     // ── Build entries ─────────────────────────────────────────────────────────
     const gmgnSlug    = GMGN_CHAIN[chain] ?? chain;
-    const nowSec      = Math.floor(Date.now() / 1000);
 
     const entries: string[] = diamondHands.map((h, i) => {
       const gmgnUrl      = `https://gmgn.ai/${gmgnSlug}/address/${h.walletAddress}`;
@@ -136,10 +135,11 @@ export async function handleMultiple(
       const multiple     = (currentPrice / h.avgCostUsd).toFixed(1);
       const avgBuyMc     = (h.avgCostUsd / currentPrice) * currentMc;
 
-      const holdSecs     = h.openTimestamp ? nowSec - h.openTimestamp : null;
-      const holdTime     = holdSecs
-        ? escapeHtml(formatTimeAgo(h.openTimestamp ?? 0))
-        : "—";
+      const holdTime = h.openTimestamp && h.openTimestamp > 0
+        ? escapeHtml(formatTimeAgo(h.openTimestamp))
+        : h.lastActiveTimestamp && h.lastActiveTimestamp > 0
+          ? `last active ${escapeHtml(formatTimeAgo(h.lastActiveTimestamp))}`
+          : "—";
 
       let entry = `${i + 1}. <a href="${gmgnUrl}">${addrLabel}</a> ${tier}\n`;
       entry += `   💰 Bought: <b>${escapeHtml(fmtUsd(h.historyBoughtCostUsd))}</b>`;
