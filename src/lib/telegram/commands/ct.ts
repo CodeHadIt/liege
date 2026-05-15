@@ -136,7 +136,9 @@ async function runCommonTraders(
     const entries: string[] = traders.map((trader, i) => {
       const pnl = formatPnl(trader.totalPnlUsd);
       const pnlEmoji = trader.totalPnlUsd >= 0 ? "📈" : "📉";
-      const walletUrl = gmgnWalletUrl(chain, trader.walletAddress);
+      const walletUrl = chain === "ton"
+        ? `https://tonviewer.com/${trader.walletAddress}`
+        : gmgnWalletUrl(chain, trader.walletAddress);
 
       let entry = `${i + 1}. <a href="${walletUrl}">${escapeHtml(truncateAddress(trader.walletAddress))}</a>\n`;
       entry += `   ${pnlEmoji} Total PnL: <b>${escapeHtml(pnl)}</b> across ${trader.tokenCount} tokens\n`;

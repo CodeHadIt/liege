@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getChainProvider } from "@/lib/chains/registry";
-import { scrapeGmgnTopTraders } from "@/lib/api/gmgn-scraper";
+import { scrapeGmgnTopTraders, scrapeGeckoTerminalTopTraders } from "@/lib/api/gmgn-scraper";
+import { getTokenPools } from "@/lib/api/geckoterminal";
 import { serverCache, CACHE_TTL } from "@/lib/cache";
 import type { ChainId } from "@/types/chain";
 import type {
@@ -92,7 +93,41 @@ export async function POST(request: Request) {
           unrealizedPnlUsd?: number;
         }>();
 
-        // GMGN scraper for all chains (Solana + EVM).
+        // TON: GeckoTerminal via Playwright (GMGN does not support TON)
+        if (chain === "ton") {
+          const pools = await getTokenPools("ton", address).catch(() => []);
+          if (pools.length === 0) {
+            console.log(`[common-traders] no GeckoTerminal pool for ton:${address}`);
+            return { chain, address, walletPnls: [], symbol, priceUsd, marketCap, fetchError: true };
+          }
+          const poolAddress = [...pools].sort(
+            (a, b) => (parseFloat(b.attributes.reserve_in_usd) || 0) - (parseFloat(a.attributes.reserve_in_usd) || 0)
+          )[0].attributes.address;
+
+          const geckoTraders = await scrapeGeckoTerminalTopTraders("ton", poolAddress).catch(() => []);
+          if (geckoTraders.length === 0) {
+            console.log(`[common-traders] GeckoTerminal returned 0 traders for ton:${address}`);
+            return { chain, address, walletPnls: [], symbol, priceUsd, marketCap, fetchError: true };
+          }
+
+          const walletPnls: WalletPnl[] = geckoTraders.map((t) => ({
+            walletAddress: t.walletAddress,
+            totalBought: 0,
+            totalSold:   0,
+            pnl:         0,
+            pnlUsd:      t.pnlUsd,
+            boughtUsd:   t.buyVolumeUsd,
+            soldUsd:     t.sellVolumeUsd,
+            buyCount:    t.buyCount,
+            sellCount:   t.sellCount,
+          }));
+
+          const resultData = { walletPnls, symbol, priceUsd, marketCap };
+          serverCache.set(cacheKey, resultData, CACHE_TTL.GMGN_TRADERS);
+          return { chain, address, ...resultData, fetchError: false };
+        }
+
+        // GMGN scraper for Solana + EVM.
         // Solana addresses are case-sensitive and passed as-is; EVM are lowercased inside the scraper.
         const gmgnTraders = await scrapeGmgnTopTraders(chain, address).catch(() => []);
         let usedGmgn = false;
