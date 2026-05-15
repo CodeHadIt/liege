@@ -64,38 +64,35 @@ async function handleTonTopTraders(
   }
 
   const titleBase = `💎 <b>Top Traders</b> · TON\n<code>${escapeHtml(tokenAddress)}</code>`;
-  const gtUrl = `https://www.geckoterminal.com/ton/pools/${poolAddress}`;
 
-  const entries: string[] = traders.slice(0, 10).map((t, i) => {
-    const pnlSign = t.pnlUsd >= 0 ? "📈" : "📉";
-    const pnl     = formatPnl(t.pnlUsd);
-    const txns    = t.buyCount + t.sellCount;
+  // Up to 20; splitPages enforces the character limit automatically
+  const entries: string[] = traders.slice(0, 20).map((t, i) => {
+    const pnlSign   = t.pnlUsd >= 0 ? "📈" : "📉";
+    const pnl       = formatPnl(t.pnlUsd);
     const walletUrl = `https://tonviewer.com/${t.walletAddress}`;
-    const buyVol  = t.buyVolumeUsd > 0 ? ` · $${escapeHtml(formatCompact(t.buyVolumeUsd))}` : "";
+    const buyStr    = t.buyVolumeUsd  > 0 ? `$${escapeHtml(formatCompact(t.buyVolumeUsd))}`  : "—";
+    const sellStr   = t.sellVolumeUsd > 0 ? `$${escapeHtml(formatCompact(t.sellVolumeUsd))}` : "—";
 
     let entry = `${i + 1}. <a href="${walletUrl}">${escapeHtml(truncateAddress(t.walletAddress))}</a>\n`;
-    entry += `   🛒 Buys: <b>${t.buyCount}</b>${buyVol}`;
-    if (txns > t.buyCount) entry += `  |  Sells: <b>${t.sellCount}</b>`;
-    entry += `\n   ${pnlSign} PnL: <b>${escapeHtml(pnl)}</b>\n\n`;
+    entry += `   🛒 <b>${buyStr}</b>  ·  💰 <b>${sellStr}</b>\n`;
+    entry += `   ${pnlSign} PnL: <b>${escapeHtml(pnl)}</b>\n\n`;
     return entry;
   });
 
-  const footer = `\n<a href="${gtUrl}">View on GeckoTerminal</a>`;
   const pages = splitPages(entries, (page, total) => {
     const pageLabel = total > 1 ? `  <i>${page}/${total}</i>` : "";
     return `${titleBase}${pageLabel}\n\n`;
   });
 
   for (let p = 0; p < pages.length; p++) {
-    const text = pages[p] + (p === pages.length - 1 ? footer : "");
     if (p === 0) {
-      await ctx.api.editMessageText(ctx.chat!.id, loadingMsgId, text, {
+      await ctx.api.editMessageText(ctx.chat!.id, loadingMsgId, pages[p], {
         parse_mode: "HTML",
         reply_markup: tokenKeyboard("ton", tokenAddress),
         link_preview_options: { is_disabled: true },
       });
     } else {
-      await ctx.reply(text, {
+      await ctx.reply(pages[p], {
         parse_mode: "HTML",
         link_preview_options: { is_disabled: true },
       });
@@ -134,10 +131,14 @@ export async function handleTopTraders(
     const titleBase = `${chainEmoji(chain)} <b>Top Traders</b> · ${chainLabel(chain)}\n<code>${escapeHtml(address)}</code>`;
 
     const entries: string[] = traders.slice(0, 20).map((t, i) => {
-      const pnl = formatPnl(t.realizedProfitUsd);
+      const pnl      = formatPnl(t.realizedProfitUsd);
       const pnlClass = t.realizedProfitUsd >= 0 ? "📈" : "📉";
-      const url = gmgnWalletUrl(chain, t.walletAddress);
+      const url      = gmgnWalletUrl(chain, t.walletAddress);
+      const buyStr   = t.historyBoughtCostUsd  > 0 ? `$${escapeHtml(formatCompact(t.historyBoughtCostUsd))}`  : "—";
+      const sellStr  = t.historySoldIncomeUsd  > 0 ? `$${escapeHtml(formatCompact(t.historySoldIncomeUsd))}` : "—";
+
       let entry = `${i + 1}. <a href="${url}">${escapeHtml(truncateAddress(t.walletAddress))}</a>\n`;
+      entry += `   🛒 <b>${buyStr}</b>  ·  💰 <b>${sellStr}</b>\n`;
       entry += `   ${pnlClass} PnL: <b>${escapeHtml(pnl)}</b>\n`;
       if (t.balanceUsd > 0) {
         entry += `   💼 Holding: $${escapeHtml(formatCompact(t.balanceUsd))}\n`;
