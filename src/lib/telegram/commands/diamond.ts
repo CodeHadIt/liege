@@ -96,51 +96,56 @@ export async function handleDiamond(
       return;
     }
 
-    // ── Filter: still holding, last-active known, inactive ≥ 24h ────────────
-    // GMGN doesn't expose first-buy time (open_timestamp) for most tokens.
-    // lastActiveTimestamp = time of their most recent transaction on this token.
-    // For wallets that bought once and never sold, this equals their buy date —
-    // the exact definition of a diamond hand.
-    const withTimestamp = holders.filter(
-      (h) =>
-        h.lastActiveTimestamp !== null &&
-        h.lastActiveTimestamp > 0 &&
+    // ── Derive first-buy timestamp per holder ────────────────────────────────
+    // GMGN returns openTimestamp (open_timestamp) for some tokens.
+    // When missing, a wallet with buyCount === 1 has lastActiveTimestamp === first buy.
+    const withTimestamp = holders
+      .map((h) => {
+        let firstBuy: number | null = null;
+        if (h.openTimestamp && h.openTimestamp > 0) {
+          firstBuy = h.openTimestamp;
+        } else if (h.buyCount === 1 && h.lastActiveTimestamp && h.lastActiveTimestamp > 0) {
+          firstBuy = h.lastActiveTimestamp;
+        }
+        return { h, firstBuy };
+      })
+      .filter(({ h, firstBuy }) =>
+        firstBuy !== null &&
         h.balance > 0 &&
-        (nowSec - h.lastActiveTimestamp) >= MIN_HOLD_SECS
-    );
+        (nowSec - firstBuy!) >= MIN_HOLD_SECS
+      );
 
     if (withTimestamp.length === 0) {
       await ctx.api.editMessageText(
         ctx.chat!.id,
         loading.message_id,
         `💎 <b>Diamond Hands — ${escapeHtml(tokenSymbol)}</b>\n\n` +
-        `No holders found who have been holding for at least <b>24 hours</b> without selling.\n\n` +
+        `No holders found with a verified first buy of at least <b>24 hours ago</b>.\n\n` +
         `<i>Scanned ${holders.length} holders.</i>`,
         { parse_mode: "HTML" }
       );
       return;
     }
 
-    // Sort: oldest last-active first = held without selling for the longest time
-    withTimestamp.sort((a, b) => (a.lastActiveTimestamp ?? 0) - (b.lastActiveTimestamp ?? 0));
+    // Sort by first buy ascending — earliest buyer at #1
+    withTimestamp.sort((a, b) => (a.firstBuy ?? 0) - (b.firstBuy ?? 0));
 
     const top = withTimestamp.slice(0, TOP_N);
     const gmgnSlug = GMGN_CHAIN[chain] ?? chain;
 
-    const entries: string[] = top.map((h, i) => {
+    const entries: string[] = top.map(({ h, firstBuy }, i) => {
       const gmgnUrl   = `https://gmgn.ai/${gmgnSlug}/address/${h.walletAddress}`;
       const addrLabel = escapeHtml(truncateAddress(h.walletAddress));
-      const lastDate  = escapeHtml(fmtDate(h.lastActiveTimestamp!));
-      const holdDur   = escapeHtml(fmtHoldDuration(h.lastActiveTimestamp!));
+      const buyDate   = escapeHtml(fmtDate(firstBuy!));
+      const holdDur   = escapeHtml(fmtHoldDuration(firstBuy!));
 
       let entry = `${i + 1}. <a href="${gmgnUrl}">${addrLabel}</a>\n`;
-      entry += `   📅 Last active: <b>${lastDate}</b> <i>(${holdDur})</i>\n`;
+      entry += `   📅 First buy: <b>${buyDate}</b> <i>(${holdDur})</i>\n`;
       entry += `   💰 Invested: <b>${escapeHtml(fmtUsd(h.historyBoughtCostUsd))}</b>`;
       if (h.historySoldIncomeUsd > 0) {
         entry += `  |  💸 Sold: <b>${escapeHtml(fmtUsd(h.historySoldIncomeUsd))}</b>`;
       }
       entry += "\n";
-      entry += `   🔄 Txns: <b>${h.buyCount}B / ${h.sellCount}S</b>\n`;
       entry += `   📦 Holding now: <b>${escapeHtml(fmtUsd(h.balanceUsd))}</b>\n`;
       entry += "\n";
       return entry;
@@ -149,7 +154,7 @@ export async function handleDiamond(
     const emoji     = chainEmoji(chain);
     const chainName = chainLabel(chain);
     const titleBase = `💎 <b>Diamond Hands</b> · ${escapeHtml(tokenSymbol)} · ${emoji} ${escapeHtml(chainName)}`;
-    const preamble  = `Top ${top.length} diamond hands · held ≥ 24h without selling (scanned ${holders.length})\n\n`;
+    const preamble  = `Top ${top.length} diamond hands · first buy ≥ 24h ago (scanned ${holders.length})\n\n`;
 
     const pages = splitPages(entries, (page, total) => {
       const pageLabel = total > 1 ? `  <i>${page}/${total}</i>` : "";
