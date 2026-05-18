@@ -19,7 +19,9 @@ const GMGN_CHAIN: Record<string, string> = {
   eth:    "eth",
 };
 
-const TOP_N = 20;
+const TOP_N          = 20;
+const MIN_AGE_SECS   = 86_400; // token must be ≥ 24h old
+const MIN_HOLD_SECS  = 86_400; // holder must have held ≥ 24h
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -68,6 +70,22 @@ export async function handleDiamond(
     ]);
 
     const tokenSymbol = pairData?.primaryPair?.baseToken?.symbol ?? tokenAddress.slice(0, 8);
+    const nowSec      = Math.floor(Date.now() / 1000);
+
+    // ── Token age gate ────────────────────────────────────────────────────────
+    const tokenAge = pairData?.createdAt ? nowSec - pairData.createdAt : null;
+    if (tokenAge !== null && tokenAge < MIN_AGE_SECS) {
+      const hoursOld = (tokenAge / 3600).toFixed(1);
+      await ctx.api.editMessageText(
+        ctx.chat!.id,
+        loading.message_id,
+        `💎 <b>Diamond Hands — ${escapeHtml(tokenSymbol)}</b>\n\n` +
+        `⏳ This token is only <b>${hoursOld}h old</b>.\n\n` +
+        `Diamond hands analysis requires the token to be at least <b>24 hours old</b>.`,
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
 
     if (holders.length === 0) {
       await ctx.api.editMessageText(
@@ -78,16 +96,23 @@ export async function handleDiamond(
       return;
     }
 
-    // Only holders with a known openTimestamp and still holding
+    // ── Filter: still holding, open timestamp known, held ≥ 24h ─────────────
     const withTimestamp = holders.filter(
-      (h) => h.openTimestamp !== null && h.openTimestamp > 0 && h.balance > 0
+      (h) =>
+        h.openTimestamp !== null &&
+        h.openTimestamp > 0 &&
+        h.balance > 0 &&
+        (nowSec - h.openTimestamp) >= MIN_HOLD_SECS
     );
 
     if (withTimestamp.length === 0) {
       await ctx.api.editMessageText(
         ctx.chat!.id,
         loading.message_id,
-        "❌ No hold-time data available for this token's holders."
+        `💎 <b>Diamond Hands — ${escapeHtml(tokenSymbol)}</b>\n\n` +
+        `No holders found who have held for at least <b>24 hours</b>.\n\n` +
+        `<i>Scanned ${holders.length} holders.</i>`,
+        { parse_mode: "HTML" }
       );
       return;
     }
@@ -120,7 +145,7 @@ export async function handleDiamond(
     const emoji     = chainEmoji(chain);
     const chainName = chainLabel(chain);
     const titleBase = `💎 <b>Diamond Hands</b> · ${escapeHtml(tokenSymbol)} · ${emoji} ${escapeHtml(chainName)}`;
-    const preamble  = `Top ${top.length} holders by hold duration (scanned ${holders.length})\n\n`;
+    const preamble  = `Top ${top.length} holders by duration · held ≥ 24h (scanned ${holders.length})\n\n`;
 
     const pages = splitPages(entries, (page, total) => {
       const pageLabel = total > 1 ? `  <i>${page}/${total}</i>` : "";
