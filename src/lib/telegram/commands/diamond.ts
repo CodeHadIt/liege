@@ -96,13 +96,17 @@ export async function handleDiamond(
       return;
     }
 
-    // ── Filter: still holding, open timestamp known, held ≥ 24h ─────────────
+    // ── Filter: still holding, last-active known, inactive ≥ 24h ────────────
+    // GMGN doesn't expose first-buy time (open_timestamp) for most tokens.
+    // lastActiveTimestamp = time of their most recent transaction on this token.
+    // For wallets that bought once and never sold, this equals their buy date —
+    // the exact definition of a diamond hand.
     const withTimestamp = holders.filter(
       (h) =>
-        h.openTimestamp !== null &&
-        h.openTimestamp > 0 &&
+        h.lastActiveTimestamp !== null &&
+        h.lastActiveTimestamp > 0 &&
         h.balance > 0 &&
-        (nowSec - h.openTimestamp) >= MIN_HOLD_SECS
+        (nowSec - h.lastActiveTimestamp) >= MIN_HOLD_SECS
     );
 
     if (withTimestamp.length === 0) {
@@ -110,15 +114,15 @@ export async function handleDiamond(
         ctx.chat!.id,
         loading.message_id,
         `💎 <b>Diamond Hands — ${escapeHtml(tokenSymbol)}</b>\n\n` +
-        `No holders found who have held for at least <b>24 hours</b>.\n\n` +
+        `No holders found who have been holding for at least <b>24 hours</b> without selling.\n\n` +
         `<i>Scanned ${holders.length} holders.</i>`,
         { parse_mode: "HTML" }
       );
       return;
     }
 
-    // Sort oldest first (smallest openTimestamp = held longest)
-    withTimestamp.sort((a, b) => (a.openTimestamp ?? 0) - (b.openTimestamp ?? 0));
+    // Sort: oldest last-active first = held without selling for the longest time
+    withTimestamp.sort((a, b) => (a.lastActiveTimestamp ?? 0) - (b.lastActiveTimestamp ?? 0));
 
     const top = withTimestamp.slice(0, TOP_N);
     const gmgnSlug = GMGN_CHAIN[chain] ?? chain;
@@ -126,11 +130,11 @@ export async function handleDiamond(
     const entries: string[] = top.map((h, i) => {
       const gmgnUrl   = `https://gmgn.ai/${gmgnSlug}/address/${h.walletAddress}`;
       const addrLabel = escapeHtml(truncateAddress(h.walletAddress));
-      const buyDate   = escapeHtml(fmtDate(h.openTimestamp!));
-      const holdDur   = escapeHtml(fmtHoldDuration(h.openTimestamp!));
+      const lastDate  = escapeHtml(fmtDate(h.lastActiveTimestamp!));
+      const holdDur   = escapeHtml(fmtHoldDuration(h.lastActiveTimestamp!));
 
       let entry = `${i + 1}. <a href="${gmgnUrl}">${addrLabel}</a>\n`;
-      entry += `   📅 Holding since: <b>${buyDate}</b> <i>(${holdDur})</i>\n`;
+      entry += `   📅 Last active: <b>${lastDate}</b> <i>(${holdDur})</i>\n`;
       entry += `   💰 Invested: <b>${escapeHtml(fmtUsd(h.historyBoughtCostUsd))}</b>`;
       if (h.historySoldIncomeUsd > 0) {
         entry += `  |  💸 Sold: <b>${escapeHtml(fmtUsd(h.historySoldIncomeUsd))}</b>`;
@@ -145,7 +149,7 @@ export async function handleDiamond(
     const emoji     = chainEmoji(chain);
     const chainName = chainLabel(chain);
     const titleBase = `💎 <b>Diamond Hands</b> · ${escapeHtml(tokenSymbol)} · ${emoji} ${escapeHtml(chainName)}`;
-    const preamble  = `Top ${top.length} holders by duration · held ≥ 24h (scanned ${holders.length})\n\n`;
+    const preamble  = `Top ${top.length} diamond hands · held ≥ 24h without selling (scanned ${holders.length})\n\n`;
 
     const pages = splitPages(entries, (page, total) => {
       const pageLabel = total > 1 ? `  <i>${page}/${total}</i>` : "";
