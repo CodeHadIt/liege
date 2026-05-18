@@ -1,6 +1,7 @@
 import type { MyContext } from "../bot";
 import { getChainProvider } from "@/lib/chains/registry";
 import { scrapeGmgnHoldersPaginated } from "@/lib/api/gmgn-scraper";
+import { getParsedSwapsAll } from "@/lib/api/helius";
 import {
   escapeHtml,
   truncateAddress,
@@ -96,24 +97,59 @@ export async function handleDiamond(
       return;
     }
 
-    // ── Derive first-buy timestamp per holder ────────────────────────────────
-    // GMGN returns openTimestamp (open_timestamp) for some tokens.
-    // When missing, a wallet with buyCount === 1 has lastActiveTimestamp === first buy.
-    const withTimestamp = holders
-      .map((h) => {
-        let firstBuy: number | null = null;
-        if (h.openTimestamp && h.openTimestamp > 0) {
-          firstBuy = h.openTimestamp;
-        } else if (h.buyCount === 1 && h.lastActiveTimestamp && h.lastActiveTimestamp > 0) {
-          firstBuy = h.lastActiveTimestamp;
-        }
-        return { h, firstBuy };
-      })
-      .filter(({ h, firstBuy }) =>
-        firstBuy !== null &&
-        h.balance > 0 &&
-        (nowSec - firstBuy!) >= MIN_HOLD_SECS
+    // ── Phase 1: seed first-buy timestamps from GMGN ─────────────────────────
+    // openTimestamp when GMGN has it; lastActiveTimestamp when buyCount===1
+    // (single-buy wallet: their only transaction = first buy = last active).
+    const firstBuyMap = new Map<string, number>();
+    for (const h of holders) {
+      if (!h.balance || h.balance <= 0) continue;
+      if (h.openTimestamp && h.openTimestamp > 0) {
+        firstBuyMap.set(h.walletAddress, h.openTimestamp);
+      } else if (h.buyCount === 1 && h.lastActiveTimestamp && h.lastActiveTimestamp > 0) {
+        firstBuyMap.set(h.walletAddress, h.lastActiveTimestamp);
+      }
+    }
+
+    // ── Phase 2: Helius enrichment for multi-buy holders (Solana only) ────────
+    // For wallets with buyCount > 1 and no GMGN openTimestamp, scan their
+    // swap history to find the ACTUAL first buy of this token.
+    if (chain === "solana") {
+      // Diamond hands are inactive — their 100 most recent txns cover the relevant
+      // period. Limit to 10 wallets × 1 page = 10 Helius calls, all within the
+      // rate-limiter burst bucket so there's no throttling wait.
+      const needsEnrichment = holders
+        .filter(h => h.balance > 0 && h.buyCount > 1 && !firstBuyMap.has(h.walletAddress))
+        .sort((a, b) => (a.lastActiveTimestamp ?? 0) - (b.lastActiveTimestamp ?? 0))
+        .slice(0, 10);
+
+      await Promise.allSettled(
+        needsEnrichment.map(async (h) => {
+          // pump.fun buys are classified as SWAP by Helius; toUserAccount is a
+          // token account address, not the wallet — filter by mint only.
+          const txns = await getParsedSwapsAll(h.walletAddress, { maxPages: 1, limit: 100 }).catch(() => []);
+          let earliest: number | null = null;
+          for (const tx of txns) {
+            if (!tx.timestamp) continue;
+            const received = tx.tokenTransfers.some(
+              (t) => t.mint === tokenAddress && t.tokenAmount > 0
+            );
+            if (received && (earliest === null || tx.timestamp < earliest)) {
+              earliest = tx.timestamp;
+            }
+          }
+          if (earliest) firstBuyMap.set(h.walletAddress, earliest);
+        })
       );
+    }
+
+    // ── Phase 3: filter, sort, display ───────────────────────────────────────
+    const withTimestamp = holders
+      .filter(h =>
+        h.balance > 0 &&
+        firstBuyMap.has(h.walletAddress) &&
+        (nowSec - firstBuyMap.get(h.walletAddress)!) >= MIN_HOLD_SECS
+      )
+      .map(h => ({ h, firstBuy: firstBuyMap.get(h.walletAddress)! }));
 
     if (withTimestamp.length === 0) {
       await ctx.api.editMessageText(
@@ -127,8 +163,8 @@ export async function handleDiamond(
       return;
     }
 
-    // Sort by first buy ascending — earliest buyer at #1
-    withTimestamp.sort((a, b) => (a.firstBuy ?? 0) - (b.firstBuy ?? 0));
+    // Earliest buyer first
+    withTimestamp.sort((a, b) => a.firstBuy - b.firstBuy);
 
     const top = withTimestamp.slice(0, TOP_N);
     const gmgnSlug = GMGN_CHAIN[chain] ?? chain;
