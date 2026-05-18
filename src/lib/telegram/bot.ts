@@ -42,7 +42,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `/tt &lt;address&gt; — top traders with PnL\n` +
         `/common — find common top traders across 2–10 tokens\n` +
         `/sh &lt;addrA&gt; &lt;addrB&gt; — find wallets holding two tokens\n` +
-        `/multiple &lt;address&gt; — holders with avg buy MC ≥ 20× current MC\n` +
+        `/multiple &lt;address&gt; — holders with avg buy MC ≥ 10× current MC\n` +
         `/diamond &lt;address&gt; — top 20 longest-holding wallets\n` +
         `/wallet &lt;address&gt; [chain] — analyze a wallet\n` +
         `/dp &lt;address&gt; — check DexScreener ad payment status\n` +
@@ -67,7 +67,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `<b>/sh</b> <code>&lt;addressA&gt; &lt;addressB&gt;</code>\n` +
         `Find wallets currently holding two tokens at the same time. Chain auto-detected.\n\n` +
         `<b>/multiple</b> <code>&lt;address&gt;</code>\n` +
-        `Find holders whose average buy MC is ≥ 20× the current MC.\n\n` +
+        `Find holders whose average buy MC is ≥ 10× the current MC.\n\n` +
         `<b>/diamond</b> <code>&lt;address&gt;</code>\n` +
         `Top 20 wallets that have held the token the longest.\n\n` +
         `<b>/wallet</b> <code>&lt;address&gt; [chain]</code>\n` +
@@ -210,7 +210,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
     if (!address) {
       await ctx.reply(
         `<b>Usage:</b> <code>/multiple &lt;token_address&gt;</code>\n\n` +
-        `Find holders whose average buy MC is ≥ 20× the current MC.\n` +
+        `Find holders whose average buy MC is ≥ 10× the current MC.\n` +
         `Chain is detected automatically.`,
         { parse_mode: "HTML" }
       );
@@ -511,7 +511,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
       { command: "tt",     description: "Top traders with realized PnL" },
       { command: "common", description: "Find common traders across 2–10 tokens" },
       { command: "sh",      description: "Find wallets holding two tokens — /sh addrA addrB" },
-      { command: "multiple", description: "Find holders with avg buy MC ≥ 20× current MC" },
+      { command: "multiple", description: "Find holders with avg buy MC ≥ 10× current MC" },
       { command: "diamond",  description: "Top 20 longest-holding wallets for a token" },
       { command: "wallet",   description: "Analyze a wallet — portfolio, holdings, PnL" },
       { command: "dp",     description: "Check DexScreener ad payment for a token" },
