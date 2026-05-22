@@ -41,7 +41,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `/th &lt;address&gt; — top holders\n` +
         `/tt &lt;address&gt; — top traders with PnL\n` +
         `/common — find common top traders across 2–10 tokens\n` +
-        `/sh &lt;addrA&gt; &lt;addrB&gt; — find wallets holding two tokens\n` +
+        `/sh &lt;addr1&gt; &lt;addr2&gt; [addr3–5] — find wallets holding 2–5 tokens\n` +
         `/multiple &lt;address&gt; — holders with avg buy MC ≥ 10× current MC\n` +
         `/diamond &lt;address&gt; — top 20 longest-holding wallets\n` +
         `/wallet &lt;address&gt; [chain] — analyze a wallet\n` +
@@ -64,8 +64,8 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `Top traders with realized PnL and trade counts.\n\n` +
         `<b>/common</b>\n` +
         `Find wallets that traded 2–10 tokens in common. Great for finding smart money.\n\n` +
-        `<b>/sh</b> <code>&lt;addressA&gt; &lt;addressB&gt;</code>\n` +
-        `Find wallets currently holding two tokens at the same time. Chain auto-detected.\n\n` +
+        `<b>/sh</b> <code>&lt;addr1&gt; &lt;addr2&gt; [addr3] [addr4] [addr5]</code>\n` +
+        `Find wallets currently holding 2–5 tokens at the same time. Chain auto-detected.\n\n` +
         `<b>/multiple</b> <code>&lt;address&gt;</code>\n` +
         `Find holders whose average buy MC is ≥ 10× the current MC.\n\n` +
         `<b>/diamond</b> <code>&lt;address&gt;</code>\n` +
@@ -186,19 +186,20 @@ export async function getBot(): Promise<Bot<MyContext>> {
     // Accept both space-separated and newline-separated addresses
     const parts = args.split(/[\s\n]+/).map((a) => a.trim()).filter(Boolean);
 
-    if (parts.length !== 2) {
+    if (parts.length < 2 || parts.length > 5) {
       await ctx.reply(
-        `<b>Usage:</b> <code>/sh &lt;addressA&gt; &lt;addressB&gt;</code>\n\n` +
-        `Find wallets that hold two tokens at the same time.\n` +
+        `<b>Usage:</b> <code>/sh &lt;addr1&gt; &lt;addr2&gt; [addr3] [addr4] [addr5]</code>\n\n` +
+        `Find wallets holding 2–5 tokens at the same time.\n` +
         `Chain is detected automatically from the address format.\n\n` +
-        `<i>Example:</i>\n` +
-        `<code>/sh 0xTokenA 0xTokenB</code>`,
+        `<i>Examples:</i>\n` +
+        `<code>/sh 0xTokenA 0xTokenB</code>\n` +
+        `<code>/sh 0xTokenA 0xTokenB 0xTokenC</code>`,
         { parse_mode: "HTML" }
       );
       return;
     }
 
-    await handleSharedHolders(ctx, parts[0], parts[1]);
+    await handleSharedHolders(ctx, parts);
   });
 
   // ── /multiple ──────────────────────────────────────────────────────────────────
@@ -510,7 +511,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
       { command: "th",     description: "Top holders with % ownership" },
       { command: "tt",     description: "Top traders with realized PnL" },
       { command: "common", description: "Find common traders across 2–10 tokens" },
-      { command: "sh",      description: "Find wallets holding two tokens — /sh addrA addrB" },
+      { command: "sh",      description: "Find wallets holding 2–5 tokens — /sh addr1 addr2 [addr3…5]" },
       { command: "multiple", description: "Find holders with avg buy MC ≥ 10× current MC" },
       { command: "diamond",  description: "Top 20 longest-holding wallets for a token" },
       { command: "wallet",   description: "Analyze a wallet — portfolio, holdings, PnL" },

@@ -109,7 +109,7 @@ function TokenCell({
   data,
   symbol,
 }: {
-  data: SharedHolder["tokenA"];
+  data: SharedHolder["tokens"][number];
   symbol: string;
 }) {
   return (
@@ -206,13 +206,13 @@ function HolderRow({
           <div className="text-[9px] font-mono font-semibold uppercase tracking-widest text-[#6B6B80] mb-2">
             {symbolA}
           </div>
-          <TokenCell data={holder.tokenA} symbol={symbolA} />
+          <TokenCell data={holder.tokens[0]} symbol={symbolA} />
         </div>
         <div className="sm:border-l sm:border-white/[0.04] sm:pl-4">
           <div className="text-[9px] font-mono font-semibold uppercase tracking-widest text-[#6B6B80] mb-2">
             {symbolB}
           </div>
-          <TokenCell data={holder.tokenB} symbol={symbolB} />
+          <TokenCell data={holder.tokens[1]} symbol={symbolB} />
         </div>
       </div>
     </div>
@@ -311,7 +311,7 @@ export default function SharedHoldPage() {
       const res = await fetch("/api/shared-holders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chain, addressA: trimA, addressB: trimB }),
+        body: JSON.stringify({ chain, addresses: [trimA, trimB] }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -507,10 +507,13 @@ export default function SharedHoldPage() {
                 {result.holders.length} shared holder{result.holders.length !== 1 ? "s" : ""}
               </span>
               <span className="text-[10px] font-mono text-[#6B6B80]">
-                holding both{" "}
-                <span className="text-[#00F0FF]">{result.tokenA.symbol}</span>
-                {" & "}
-                <span className="text-[#00F0FF]">{result.tokenB.symbol}</span>
+                holding all{" "}
+                {result.tokens.map((t, i) => (
+                  <span key={t.address}>
+                    <span className="text-[#00F0FF]">{t.symbol}</span>
+                    {i < result.tokens.length - 1 ? " & " : ""}
+                  </span>
+                ))}
                 {" on "}
                 <span className="text-[#E8E8ED]">{chainCfg.label}</span>
               </span>
@@ -529,7 +532,7 @@ export default function SharedHoldPage() {
 
           {/* Token info pills */}
           <div className="flex items-center gap-3 flex-wrap">
-            {[result.tokenA, result.tokenB].map((t) => (
+            {result.tokens.map((t) => (
               <div
                 key={t.address}
                 className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.06] text-xs font-mono"
@@ -575,8 +578,8 @@ export default function SharedHoldPage() {
                   key={holder.address}
                   holder={holder}
                   chain={result.chain}
-                  symbolA={result.tokenA.symbol}
-                  symbolB={result.tokenB.symbol}
+                  symbolA={result.tokens[0]?.symbol ?? ""}
+                  symbolB={result.tokens[1]?.symbol ?? ""}
                 />
               ))}
             </div>

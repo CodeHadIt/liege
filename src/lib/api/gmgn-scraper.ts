@@ -35,6 +35,10 @@ export interface GmgnTopTrader {
 
 // ─── Browser singleton ────────────────────────────────────────────────────────
 
+export async function warmupBrowser(): Promise<void> {
+  await getBrowser();
+}
+
 let browserInstance: Browser | null = null;
 let browserLaunchPromise: Promise<Browser> | null = null;
 

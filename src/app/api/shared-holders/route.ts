@@ -7,12 +7,12 @@ import type {
   SharedHoldersRequest,
   SharedHoldersResponse,
 } from "@/types/shared-holders";
-import { scrapeGmgnHoldersPaginated, type GmgnTopTrader } from "@/lib/api/gmgn-scraper";
+import { scrapeGmgnHoldersPaginated, warmupBrowser, type GmgnTopTrader } from "@/lib/api/gmgn-scraper";
 import { getAssetBatch, getMintInfo } from "@/lib/api/helius";
 import * as toncenter from "@/lib/api/toncenter";
 import * as tonapi from "@/lib/api/tonapi";
 
-export const maxDuration = 120;
+export const maxDuration = 180;
 
 // ── Address validation ────────────────────────────────────────────────────────
 
@@ -20,14 +20,16 @@ const EVM_RE    = /^0x[a-fA-F0-9]{40}$/;
 const SOLANA_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const TON_RE    = /^(?:EQ|UQ|Ef|Uf|kQ|kf|0Q|0f)[A-Za-z0-9_-]{46}$/;
 
-function validateAddresses(chain: SharedHoldChain, a: string, b: string): string | null {
+function validateAddresses(chain: SharedHoldChain, addresses: string[]): string | null {
   const re = chain === "solana" ? SOLANA_RE : chain === "ton" ? TON_RE : EVM_RE;
-  if (!re.test(a) || !re.test(b)) {
-    if (chain === "solana") return "Provide two valid Solana mint addresses.";
-    if (chain === "ton")    return "Provide two valid TON jetton addresses (EQ/UQ…).";
-    return "Provide two valid EVM contract addresses (0x…).";
+  for (const addr of addresses) {
+    if (!re.test(addr)) {
+      if (chain === "solana") return "Provide valid Solana mint addresses.";
+      if (chain === "ton")    return "Provide valid TON jetton addresses (EQ/UQ…).";
+      return "Provide valid EVM contract addresses (0x…).";
+    }
   }
-  if (a === b) return "Addresses must be different.";
+  if (new Set(addresses).size !== addresses.length) return "All addresses must be different.";
   return null;
 }
 
@@ -76,15 +78,13 @@ interface MoralisTokenMeta {
 
 async function fetchEvmTokenMeta(
   chain: string,
-  addrA: string,
-  addrB: string
+  addresses: string[]
 ): Promise<MoralisTokenMeta[] | null> {
   const key = process.env.MORALIS_API_KEY;
   if (!key) return null;
   const url = new URL(`${MORALIS_BASE}/erc20/metadata`);
   url.searchParams.set("chain", chain);
-  url.searchParams.set("addresses[0]", addrA);
-  url.searchParams.set("addresses[1]", addrB);
+  addresses.forEach((addr, i) => url.searchParams.set(`addresses[${i}]`, addr));
   try {
     const res = await fetch(url.toString(), {
       headers: { "X-API-Key": key, Accept: "application/json" },
@@ -105,15 +105,15 @@ interface SolTokenMeta {
   totalSupply: number | null;
 }
 
-async function fetchSolanaTokenMeta(mintA: string, mintB: string): Promise<[SolTokenMeta, SolTokenMeta]> {
-  const [assetMap, mintInfoA, mintInfoB] = await Promise.all([
-    getAssetBatch([mintA, mintB]),
-    getMintInfo(mintA),
-    getMintInfo(mintB),
+async function fetchSolanaTokenMeta(mints: string[]): Promise<SolTokenMeta[]> {
+  const [assetMap, mintInfos] = await Promise.all([
+    getAssetBatch(mints),
+    Promise.all(mints.map(getMintInfo)),
   ]);
 
-  function toMeta(mint: string, mintInfo: Awaited<ReturnType<typeof getMintInfo>>): SolTokenMeta {
+  return mints.map((mint, i) => {
     const asset = assetMap.get(mint);
+    const mintInfo = mintInfos[i];
     const decimals = mintInfo?.decimals ?? 6;
     const rawSupply = mintInfo?.supply ? parseInt(mintInfo.supply) : null;
     const totalSupply = rawSupply != null ? rawSupply / Math.pow(10, decimals) : null;
@@ -123,9 +123,7 @@ async function fetchSolanaTokenMeta(mintA: string, mintB: string): Promise<[SolT
       imageUrl:   asset?.logoUrl  ?? null,
       totalSupply,
     };
-  }
-
-  return [toMeta(mintA, mintInfoA), toMeta(mintB, mintInfoB)];
+  });
 }
 
 // ── Build per-token data from GMGN holder record ──────────────────────────────
@@ -157,198 +155,164 @@ function buildTokenData(trader: GmgnTopTrader, totalSupply: number | null): Shar
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as SharedHoldersRequest;
-    const { chain, addressA, addressB } = body;
+    const { chain, addresses } = body;
 
     const VALID_CHAINS: SharedHoldChain[] = ["eth", "base", "bsc", "solana", "ton"];
     if (!chain || !VALID_CHAINS.includes(chain)) {
       return NextResponse.json({ error: "Invalid chain. Use eth, base, bsc, solana, or ton." }, { status: 400 });
     }
+    if (!Array.isArray(addresses) || addresses.length < 2 || addresses.length > 5) {
+      return NextResponse.json({ error: "Provide 2–5 token addresses." }, { status: 400 });
+    }
 
-    const validationError = validateAddresses(chain, addressA ?? "", addressB ?? "");
+    const validationError = validateAddresses(chain, addresses);
     if (validationError) {
       return NextResponse.json({ error: validationError }, { status: 400 });
     }
 
     const isSolana = chain === "solana";
     const isTon    = chain === "ton";
-    // TON + Solana addresses are case-sensitive; EVM are lowercased
-    const addrA = isSolana || isTon ? addressA : addressA.toLowerCase();
-    const addrB = isSolana || isTon ? addressB : addressB.toLowerCase();
+    const addrs = addresses.map((addr) => (isSolana || isTon) ? addr : addr.toLowerCase());
 
     // ── TON: TonAPI for holders, TonCenter for metadata ───────────────────────
     if (isTon) {
-      const [holdersRawA, holdersRawB, masterA, masterB, dexImgA, dexImgB] = await Promise.all([
-        tonapi.getTonApiHolders(addrA, 200),
-        tonapi.getTonApiHolders(addrB, 200),
-        toncenter.getJettonMaster(addrA),
-        toncenter.getJettonMaster(addrB),
-        fetchDexImage("ton", addrA),
-        fetchDexImage("ton", addrB),
+      const [holdersRaws, masters, dexImgs] = await Promise.all([
+        Promise.all(addrs.map((addr) => tonapi.getTonApiHolders(addr, 200))),
+        Promise.all(addrs.map((addr) => toncenter.getJettonMaster(addr))),
+        Promise.all(addrs.map((addr) => fetchDexImage("ton", addr))),
       ]);
 
-      const tiA = masterA?.tokenInfo;
-      const tiB = masterB?.tokenInfo;
-      const decimalsA = tiA?.decimals ?? 9;
-      const decimalsB = tiB?.decimals ?? 9;
-      const totalSupplyA = masterA?.total_supply
-        ? toncenter.fromNano(masterA.total_supply, decimalsA) : null;
-      const totalSupplyB = masterB?.total_supply
-        ? toncenter.fromNano(masterB.total_supply, decimalsB) : null;
+      const pricePairs = await Promise.all(
+        addrs.map((addr) =>
+          fetch(`https://api.dexscreener.com/tokens/v1/ton/${addr}`, { signal: AbortSignal.timeout(6000) })
+            .then((r) => r.ok ? r.json() : []).catch(() => []) as Promise<Array<{ priceUsd?: string; liquidity?: { usd?: number } }>>
+        )
+      );
+      const prices = pricePairs.map((pairs) =>
+        parseFloat([...pairs].sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0]?.priceUsd ?? "0") || 0
+      );
 
-      // Fetch prices via DexScreener
-      const [pairsA, pairsB] = await Promise.all([
-        fetch(`https://api.dexscreener.com/tokens/v1/ton/${addrA}`, { signal: AbortSignal.timeout(6000) })
-          .then((r) => r.ok ? r.json() : []).catch(() => []) as Promise<Array<{ priceUsd?: string; liquidity?: { usd?: number } }>>,
-        fetch(`https://api.dexscreener.com/tokens/v1/ton/${addrB}`, { signal: AbortSignal.timeout(6000) })
-          .then((r) => r.ok ? r.json() : []).catch(() => []) as Promise<Array<{ priceUsd?: string; liquidity?: { usd?: number } }>>,
-      ]);
-      const priceA = parseFloat(
-        [...pairsA].sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0]?.priceUsd ?? "0"
-      ) || 0;
-      const priceB = parseFloat(
-        [...pairsB].sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0]?.priceUsd ?? "0"
-      ) || 0;
+      const holderMaps = holdersRaws.map((holdersRaw, i) => {
+        const ti = masters[i]?.tokenInfo;
+        const decimals = ti?.decimals ?? 9;
+        const totalSupply = masters[i]?.total_supply
+          ? toncenter.fromNano(masters[i].total_supply, decimals) : null;
+        const sum = holdersRaw.reduce((s, h) => s + parseFloat(h.balance), 0);
+        const denom = totalSupply ?? toncenter.fromNano(String(Math.floor(sum)), decimals);
+        const map = new Map<string, { balance: number; percentage: number }>();
+        for (const h of holdersRaw) {
+          const bal = toncenter.fromNano(h.balance, decimals);
+          map.set(h.ownerFriendly, { balance: bal, percentage: denom > 0 ? (bal / denom) * 100 : 0 });
+        }
+        return map;
+      });
 
-      // Build holder maps keyed by ownerFriendly address
-      const mapA = new Map<string, { balance: number; percentage: number }>();
-      const mapB = new Map<string, { balance: number; percentage: number }>();
+      const tokenMetas: SharedHolderTokenMeta[] = addrs.map((addr, i) => {
+        const ti = masters[i]?.tokenInfo;
+        const decimals = ti?.decimals ?? 9;
+        const totalSupply = masters[i]?.total_supply ? toncenter.fromNano(masters[i].total_supply, decimals) : null;
+        return {
+          address: addr, symbol: ti?.symbol ?? "???", name: ti?.name ?? "Unknown",
+          decimals, priceUsd: prices[i] || null, marketCap: null,
+          totalSupply, imageUrl: dexImgs[i] ?? ti?.image ?? null,
+        };
+      });
 
-      const sumA = holdersRawA.reduce((s, h) => s + parseFloat(h.balance), 0);
-      const sumB = holdersRawB.reduce((s, h) => s + parseFloat(h.balance), 0);
-      const denomA = totalSupplyA ?? toncenter.fromNano(String(Math.floor(sumA)), decimalsA);
-      const denomB = totalSupplyB ?? toncenter.fromNano(String(Math.floor(sumB)), decimalsB);
-
-      for (const h of holdersRawA) {
-        const bal = toncenter.fromNano(h.balance, decimalsA);
-        mapA.set(h.ownerFriendly, { balance: bal, percentage: denomA > 0 ? (bal / denomA) * 100 : 0 });
-      }
-      for (const h of holdersRawB) {
-        const bal = toncenter.fromNano(h.balance, decimalsB);
-        mapB.set(h.ownerFriendly, { balance: bal, percentage: denomB > 0 ? (bal / denomB) * 100 : 0 });
-      }
-
-      const tokenAMeta: SharedHolderTokenMeta = {
-        address: addrA, symbol: tiA?.symbol ?? "???", name: tiA?.name ?? "Unknown",
-        decimals: decimalsA, priceUsd: priceA || null, marketCap: null,
-        totalSupply: totalSupplyA, imageUrl: dexImgA ?? tiA?.image ?? null,
-      };
-      const tokenBMeta: SharedHolderTokenMeta = {
-        address: addrB, symbol: tiB?.symbol ?? "???", name: tiB?.name ?? "Unknown",
-        decimals: decimalsB, priceUsd: priceB || null, marketCap: null,
-        totalSupply: totalSupplyB, imageUrl: dexImgB ?? tiB?.image ?? null,
-      };
-
-      const commonAddresses = [...mapA.keys()].filter((addr) => mapB.has(addr));
+      const commonAddresses = [...holderMaps[0].keys()].filter((addr) => holderMaps.every((m) => m.has(addr)));
       if (commonAddresses.length === 0) {
-        return NextResponse.json({
-          holders: [], tokenA: tokenAMeta, tokenB: tokenBMeta, chain,
-        } satisfies SharedHoldersResponse);
+        return NextResponse.json({ holders: [], tokens: tokenMetas, chain } satisfies SharedHoldersResponse);
       }
 
       const holders: SharedHolder[] = commonAddresses
         .map((addr) => {
-          const hA = mapA.get(addr)!;
-          const hB = mapB.get(addr)!;
-          const balUsdA = priceA > 0 ? hA.balance * priceA : 0;
-          const balUsdB = priceB > 0 ? hB.balance * priceB : 0;
-          const tokenAData: SharedHolderTokenData = {
-            balance: String(hA.balance), balanceUsd: balUsdA, percentage: hA.percentage,
-            investedUsd: null, soldUsd: null, avgBuyPrice: null,
-            buyMarketCap: null, realizedPnl: null, totalPnl: 0,
-          };
-          const tokenBData: SharedHolderTokenData = {
-            balance: String(hB.balance), balanceUsd: balUsdB, percentage: hB.percentage,
-            investedUsd: null, soldUsd: null, avgBuyPrice: null,
-            buyMarketCap: null, realizedPnl: null, totalPnl: 0,
-          };
-          // No PnL data for TON — sort by combined holding USD value
-          return { address: addr, tokenA: tokenAData, tokenB: tokenBData, combinedPnl: balUsdA + balUsdB };
+          const tokens: SharedHolderTokenData[] = holderMaps.map((map, i) => {
+            const h = map.get(addr)!;
+            const balUsd = prices[i] > 0 ? h.balance * prices[i] : 0;
+            return {
+              balance: String(h.balance), balanceUsd: balUsd, percentage: h.percentage,
+              investedUsd: null, soldUsd: null, avgBuyPrice: null,
+              buyMarketCap: null, realizedPnl: null, totalPnl: 0,
+            };
+          });
+          // TON has no PnL data — sort by combined holding value
+          const combinedPnl = tokens.reduce((s, t) => s + t.balanceUsd, 0);
+          return { address: addr, tokens, combinedPnl };
         })
         .sort((a, b) => b.combinedPnl - a.combinedPnl);
 
-      return NextResponse.json({
-        holders, tokenA: tokenAMeta, tokenB: tokenBMeta, chain,
-      } satisfies SharedHoldersResponse);
+      return NextResponse.json({ holders, tokens: tokenMetas, chain } satisfies SharedHoldersResponse);
     }
 
-    // Scrape GMGN holders for both tokens + fetch metadata + images — all in parallel
-    const [rawHoldersA, rawHoldersB, metaResult, dexImgA, dexImgB] = await Promise.all([
-      scrapeGmgnHoldersPaginated(chain, addrA),
-      scrapeGmgnHoldersPaginated(chain, addrB),
-      isSolana
-        ? fetchSolanaTokenMeta(addrA, addrB)
-        : fetchEvmTokenMeta(MORALIS_CHAIN[chain], addrA, addrB),
-      fetchDexImage(chain, addrA),
-      fetchDexImage(chain, addrB),
-    ]);
+    // ── GMGN (Solana / EVM) ───────────────────────────────────────────────────
+    // Start metadata + image fetches immediately (no Playwright, fast)
+    const metaPromise = isSolana
+      ? fetchSolanaTokenMeta(addrs)
+      : fetchEvmTokenMeta(MORALIS_CHAIN[chain], addrs);
+    const dexImgsPromise = Promise.all(addrs.map((addr) => fetchDexImage(chain, addr)));
 
-    // Resolve metadata per chain
-    let symbolA = "???", nameA = "Unknown", totalSupplyA: number | null = null, logoA: string | null = null;
-    let symbolB = "???", nameB = "Unknown", totalSupplyB: number | null = null, logoB: string | null = null;
+    // Scrape holders one at a time — concurrent Playwright sessions overwhelm
+    // GMGN's bot detection and cause all sessions to return 0 holders.
+    // Pre-warm the browser so the first token's waitForResponse timer isn't
+    // eaten by Chromium cold-start latency.
+    await warmupBrowser();
+    const rawHoldersAll: Awaited<ReturnType<typeof scrapeGmgnHoldersPaginated>>[] = [];
+    for (const addr of addrs) {
+      rawHoldersAll.push(await scrapeGmgnHoldersPaginated(chain, addr));
+    }
 
-    if (isSolana) {
-      const [mA, mB] = metaResult as unknown as [SolTokenMeta, SolTokenMeta];
-      symbolA = mA.symbol; nameA = mA.name; totalSupplyA = mA.totalSupply; logoA = mA.imageUrl;
-      symbolB = mB.symbol; nameB = mB.name; totalSupplyB = mB.totalSupply; logoB = mB.imageUrl;
-    } else {
+    const [metaResult, dexImgs] = await Promise.all([metaPromise, dexImgsPromise]);
+
+    const metaArr = addrs.map((addr, i) => {
+      if (isSolana) {
+        const m = (metaResult as SolTokenMeta[])[i];
+        return { symbol: m.symbol, name: m.name, totalSupply: m.totalSupply, logo: m.imageUrl };
+      }
       const evmMeta = metaResult as MoralisTokenMeta[] | null;
-      const mA = evmMeta?.find((m) => m.address?.toLowerCase() === addrA);
-      const mB = evmMeta?.find((m) => m.address?.toLowerCase() === addrB);
-      symbolA = mA?.symbol ?? "???"; nameA = mA?.name ?? "Unknown";
-      totalSupplyA = mA?.total_supply_formatted != null ? parseFloat(mA.total_supply_formatted) || null : null;
-      logoA = mA?.logo ?? null;
-      symbolB = mB?.symbol ?? "???"; nameB = mB?.name ?? "Unknown";
-      totalSupplyB = mB?.total_supply_formatted != null ? parseFloat(mB.total_supply_formatted) || null : null;
-      logoB = mB?.logo ?? null;
-    }
+      const m = evmMeta?.find((x) => x.address?.toLowerCase() === addr);
+      return {
+        symbol: m?.symbol ?? "???",
+        name: m?.name ?? "Unknown",
+        totalSupply: m?.total_supply_formatted != null ? parseFloat(m.total_supply_formatted) || null : null,
+        logo: m?.logo ?? null,
+      };
+    });
 
-    const imageA = dexImgA ?? logoA ?? null;
-    const imageB = dexImgB ?? logoB ?? null;
+    const tokenMetas: SharedHolderTokenMeta[] = addrs.map((addr, i) => ({
+      address: addr,
+      symbol: metaArr[i].symbol,
+      name: metaArr[i].name,
+      decimals: 18,
+      priceUsd: null,
+      marketCap: null,
+      totalSupply: metaArr[i].totalSupply,
+      imageUrl: dexImgs[i] ?? metaArr[i].logo ?? null,
+    }));
 
-    // Filter: ≥$1 USD value, OR for Solana (pump.fun tokens often lack USD price)
-    // fall back to balance > 0 so price-less tokens aren't excluded entirely.
     const meetsThreshold = (t: GmgnTopTrader) =>
       t.balanceUsd >= 1 || (isSolana && t.balance > 0);
 
-    const holdersA = new Map<string, GmgnTopTrader>(
-      rawHoldersA.filter(meetsThreshold).map((t) => [t.walletAddress, t])
+    const holderMaps = rawHoldersAll.map((rawHolders) =>
+      new Map<string, GmgnTopTrader>(
+        rawHolders.filter(meetsThreshold).map((t) => [t.walletAddress, t])
+      )
     );
-    const holdersB = new Map<string, GmgnTopTrader>(
-      rawHoldersB.filter(meetsThreshold).map((t) => [t.walletAddress, t])
-    );
 
-    const tokenAMeta: SharedHolderTokenMeta = {
-      address: addrA, symbol: symbolA, name: nameA,
-      decimals: 18, priceUsd: null, marketCap: null,
-      totalSupply: totalSupplyA, imageUrl: imageA,
-    };
-    const tokenBMeta: SharedHolderTokenMeta = {
-      address: addrB, symbol: symbolB, name: nameB,
-      decimals: 18, priceUsd: null, marketCap: null,
-      totalSupply: totalSupplyB, imageUrl: imageB,
-    };
-
-    // Intersection
-    const commonAddresses = [...holdersA.keys()].filter((addr) => holdersB.has(addr));
-
+    const commonAddresses = [...holderMaps[0].keys()].filter((addr) => holderMaps.every((m) => m.has(addr)));
     if (commonAddresses.length === 0) {
-      return NextResponse.json({
-        holders: [], tokenA: tokenAMeta, tokenB: tokenBMeta, chain,
-      } satisfies SharedHoldersResponse);
+      return NextResponse.json({ holders: [], tokens: tokenMetas, chain } satisfies SharedHoldersResponse);
     }
 
     const holders: SharedHolder[] = commonAddresses
       .map((addr) => {
-        const tokenAData = buildTokenData(holdersA.get(addr)!, totalSupplyA);
-        const tokenBData = buildTokenData(holdersB.get(addr)!, totalSupplyB);
-        const combinedPnl = tokenAData.totalPnl + tokenBData.totalPnl;
-        return { address: addr, tokenA: tokenAData, tokenB: tokenBData, combinedPnl };
+        const tokens: SharedHolderTokenData[] = holderMaps.map((map, i) =>
+          buildTokenData(map.get(addr)!, metaArr[i].totalSupply)
+        );
+        const combinedPnl = tokens.reduce((s, t) => s + t.totalPnl, 0);
+        return { address: addr, tokens, combinedPnl };
       })
       .sort((a, b) => b.combinedPnl - a.combinedPnl);
 
-    return NextResponse.json({
-      holders, tokenA: tokenAMeta, tokenB: tokenBMeta, chain,
-    } satisfies SharedHoldersResponse);
+    return NextResponse.json({ holders, tokens: tokenMetas, chain } satisfies SharedHoldersResponse);
 
   } catch (error) {
     console.error("[shared-holders]", error);

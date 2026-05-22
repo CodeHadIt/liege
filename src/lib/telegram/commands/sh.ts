@@ -1,7 +1,6 @@
 import type { MyContext } from "../bot";
 import {
   escapeHtml,
-  formatPnl,
   formatCompact,
   truncateAddress,
   chainEmoji,
@@ -32,7 +31,6 @@ const TON_RE    = /^(?:EQ|UQ|Ef|Uf|kQ|kf|0Q|0f)[A-Za-z0-9_-]{46}$/;
 
 // ── Chain detection ───────────────────────────────────────────────────────────
 
-/** Detect "solana" | "evm" | "ton" | null purely from address format. */
 function detectAddrType(addr: string): "solana" | "evm" | "ton" | null {
   if (TON_RE.test(addr))    return "ton";
   if (SOLANA_RE.test(addr)) return "solana";
@@ -40,10 +38,6 @@ function detectAddrType(addr: string): "solana" | "evm" | "ton" | null {
   return null;
 }
 
-/**
- * For EVM addresses, use DexScreener to figure out Base vs BSC.
- * Returns "base" or "bsc" (falls back to "base" on error).
- */
 async function detectEvmChain(address: string): Promise<"base" | "bsc" | "eth"> {
   try {
     const [resBase, resBsc, resEth] = await Promise.all([
@@ -107,32 +101,27 @@ const TIER_EMOJI: Record<WealthTier, string> = {
 
 export async function handleSharedHolders(
   ctx: MyContext,
-  addrA: string,
-  addrB: string
+  addresses: string[]
 ): Promise<void> {
-  // Detect chain from address A (both must be same type)
-  const typeA = detectAddrType(addrA);
-  const typeB = detectAddrType(addrB);
+  const types = addresses.map(detectAddrType);
 
-  if (!typeA || !typeB) {
-    await ctx.reply("❌ Could not detect chain from the addresses provided.");
+  if (types.some((t) => !t)) {
+    await ctx.reply("❌ Could not detect chain from one or more addresses provided.");
     return;
   }
-  if (typeA !== typeB) {
-    await ctx.reply(
-      "❌ Addresses appear to be on different chains — both must be on the same chain."
-    );
+  if (new Set(types).size > 1) {
+    await ctx.reply("❌ All addresses must be on the same chain.");
     return;
   }
 
-  // Resolve specific chain
   let chain: ChainId | "eth";
-  if (typeA === "solana") {
+  const addrType = types[0]!;
+  if (addrType === "solana") {
     chain = "solana";
-  } else if (typeA === "ton") {
+  } else if (addrType === "ton") {
     chain = "ton";
   } else {
-    chain = await detectEvmChain(addrA);
+    chain = await detectEvmChain(addresses[0]);
   }
 
   const chainName = chainLabel(chain as ChainId);
@@ -140,7 +129,7 @@ export async function handleSharedHolders(
 
   const loading = await ctx.reply(
     `⏳ Finding shared holders on ${emoji} <b>${chainName}</b>…\n\n` +
-    `<i>Scanning top 500 holders per token — this takes ~30s.</i>`,
+    `<i>Scanning top 500 holders per token (${addresses.length} tokens) — this takes ~30s.</i>`,
     { parse_mode: "HTML" }
   );
 
@@ -148,7 +137,7 @@ export async function handleSharedHolders(
     const res = await fetch(`${APP_URL}/api/shared-holders`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chain, addressA: addrA, addressB: addrB }),
+      body: JSON.stringify({ chain, addresses }),
       signal: AbortSignal.timeout(180_000),
     });
 
@@ -164,70 +153,54 @@ export async function handleSharedHolders(
     }
 
     const data = (await res.json()) as SharedHoldersResponse;
-    const { holders, tokenA, tokenB } = data;
+    const { holders, tokens: tokenMetas } = data;
+
+    const tokenTitle = tokenMetas.map((t) => `<b>${escapeHtml(t.symbol)}</b>`).join(" · ");
 
     if (holders.length === 0) {
       await ctx.api.editMessageText(
         ctx.chat!.id,
         loading.message_id,
         `${emoji} <b>Shared Holders</b> · ${escapeHtml(chainName)}\n\n` +
-        `<b>${escapeHtml(tokenA.symbol)}</b> &amp; <b>${escapeHtml(tokenB.symbol)}</b>\n\n` +
+        `${tokenTitle}\n\n` +
         `🤷 No shared holders found in the top 500 of each token.`,
         { parse_mode: "HTML" }
       );
       return;
     }
 
-    const symA = escapeHtml(tokenA.symbol);
-    const symB = escapeHtml(tokenB.symbol);
-
     const titleBase =
       `${emoji} <b>Shared Holders</b> · ${escapeHtml(chainName)}\n` +
-      `<b>${symA}</b> &amp; <b>${symB}</b>`;
+      tokenTitle;
 
     const preamble =
-      `<code>${escapeHtml(addrA)}</code>\n` +
-      `<code>${escapeHtml(addrB)}</code>\n\n` +
+      addresses.map((a) => `<code>${escapeHtml(a)}</code>`).join("\n") + "\n\n" +
       `Found <b>${holders.length}</b> shared holder${holders.length === 1 ? "" : "s"} · sorted by combined PnL\n\n`;
 
-    // Build one entry per holder
     const entries: string[] = holders.map((h, i) => {
       const walletUrl  = chain === "ton"
         ? `https://tonviewer.com/${h.address}`
         : gmgnWalletUrl(chain as ChainId, h.address);
       const addrLabel  = escapeHtml(truncateAddress(h.address));
-      const combinedUsd = h.tokenA.balanceUsd + h.tokenB.balanceUsd;
+      const combinedUsd = h.tokens.reduce((s, t) => s + t.balanceUsd, 0);
       const tier        = TIER_EMOJI[wealthTier(combinedUsd)];
       const pnlSign     = h.combinedPnl >= 0 ? "📈" : "📉";
 
       let entry = `${i + 1}. <a href="${walletUrl}">${addrLabel}</a> ${tier}\n`;
 
-      // Combined PnL line
       entry +=
         `   ${pnlSign} Combined PnL: <b>${escapeHtml(fmtPnl(h.combinedPnl))}</b>` +
         `  Holding: <b>${escapeHtml(fmtUsd(combinedUsd))}</b>\n`;
 
-      // Per-token lines
-      const tA = h.tokenA;
-      const tB = h.tokenB;
-
-      const holdA   = escapeHtml(fmtUsd(tA.balanceUsd));
-      const boughtA = escapeHtml(fmtUsd(tA.investedUsd));
-      const pnlA    = escapeHtml(fmtPnl(tA.totalPnl));
-      const buyMcA  = tA.buyMarketCap != null ? escapeHtml(`$${formatCompact(tA.buyMarketCap)}`) : "—";
-
-      entry +=
-        `   <b>${symA}</b>: hold ${holdA} · bought ${boughtA} · buy MC ${buyMcA} · PnL ${pnlA}\n`;
-
-      entry += `   <code>- - - - - - - - - - -</code>\n`;
-
-      const holdB   = escapeHtml(fmtUsd(tB.balanceUsd));
-      const boughtB = escapeHtml(fmtUsd(tB.investedUsd));
-      const pnlB    = escapeHtml(fmtPnl(tB.totalPnl));
-      const buyMcB  = tB.buyMarketCap != null ? escapeHtml(`$${formatCompact(tB.buyMarketCap)}`) : "—";
-
-      entry +=
-        `   <b>${symB}</b>: hold ${holdB} · bought ${boughtB} · buy MC ${buyMcB} · PnL ${pnlB}\n`;
+      for (let ti = 0; ti < tokenMetas.length; ti++) {
+        const sym    = escapeHtml(tokenMetas[ti].symbol);
+        const td     = h.tokens[ti];
+        const hold   = escapeHtml(fmtUsd(td.balanceUsd));
+        const bought = escapeHtml(fmtUsd(td.investedUsd));
+        const pnl    = escapeHtml(fmtPnl(td.totalPnl));
+        const buyMc  = td.buyMarketCap != null ? escapeHtml(`$${formatCompact(td.buyMarketCap)}`) : "—";
+        entry += `   <b>${sym}</b>: hold ${hold} · bought ${bought} · buy MC ${buyMc} · PnL ${pnl}\n`;
+      }
 
       entry += "\n";
       return entry;

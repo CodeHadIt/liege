@@ -14,9 +14,8 @@ export interface SharedHolderTokenData {
 
 export interface SharedHolder {
   address: string;
-  tokenA: SharedHolderTokenData;
-  tokenB: SharedHolderTokenData;
-  combinedPnl: number;  // sum of both tokens' totalPnl
+  tokens: SharedHolderTokenData[];  // one entry per requested token, in request order
+  combinedPnl: number;
 }
 
 export interface SharedHolderTokenMeta {
@@ -32,13 +31,11 @@ export interface SharedHolderTokenMeta {
 
 export interface SharedHoldersRequest {
   chain: SharedHoldChain;
-  addressA: string;
-  addressB: string;
+  addresses: string[];  // 2–5 token addresses
 }
 
 export interface SharedHoldersResponse {
   holders: SharedHolder[];
-  tokenA: SharedHolderTokenMeta;
-  tokenB: SharedHolderTokenMeta;
+  tokens: SharedHolderTokenMeta[];  // metadata in same order as request addresses
   chain: SharedHoldChain;
 }
