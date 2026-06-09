@@ -43,7 +43,7 @@ const API_RATE_LIMITS: Record<string, RateLimiterConfig> = {
   birdeye: { maxTokens: 10, refillRate: 0.16 },
   solscan: { maxTokens: 10, refillRate: 0.16 },
   coingecko: { maxTokens: 30, refillRate: 0.5 },
-  helius: { maxTokens: 10, refillRate: 0.16 },
+  helius: { maxTokens: 20, refillRate: 8 },
   basescan: { maxTokens: 5, refillRate: 0.08 },
   bscscan: { maxTokens: 5, refillRate: 0.08 },
   jupiter: { maxTokens: 30, refillRate: 0.5 },

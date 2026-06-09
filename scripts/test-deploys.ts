@@ -2,12 +2,13 @@
 import { getDeployedTokens, bestLaunch } from "../src/lib/api/deploys";
 
 const cases: Array<{ chain: "solana" | "eth" | "base" | "bsc"; addr: string; note: string }> = [
-  { chain: "solana", addr: "B2oCruKe8e4s44n47myzD7TnNaGLqT7brNzforQx2Bjg", note: "VERIFIED recent pump.fun dev" },
-  { chain: "solana", addr: "5Drny4ZTPhg98nAL9f9E78dqUBvtDfe16HABKMmUT7f2", note: "user-provided sol address" },
-  { chain: "bsc",    addr: "0x40dcba226725b024216c40a2495d858ce3ca188d", note: "user-provided bsc address" },
-  { chain: "eth",    addr: "0x40dcba226725b024216c40a2495d858ce3ca188d", note: "same address on ETH" },
-  { chain: "base",   addr: "0x40dcba226725b024216c40a2495d858ce3ca188d", note: "same address on Base" },
+  // Override via CLI: `npx tsx scripts/test-deploys.ts <chain> <address>`
+  { chain: "solana", addr: "5UrNNGfvmGaJ8Uz4FzQPq1NTcbEbnv2ZnBqGU936iBZp", note: "pump.fun NYANCAT dev" },
 ];
+
+const cliChain = process.argv[2] as "solana" | "eth" | "base" | "bsc" | undefined;
+const cliAddr  = process.argv[3];
+if (cliChain && cliAddr) cases.length = 0, cases.push({ chain: cliChain, addr: cliAddr, note: "cli-supplied" });
 
 (async () => {
   for (const c of cases) {
