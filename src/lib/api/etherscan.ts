@@ -18,6 +18,9 @@ export interface EtherscanTx {
   gasPrice: string;
   functionName: string;
   isError: string;
+  /** Set when this tx created a contract (otherwise empty string) */
+  contractAddress?: string;
+  txreceipt_status?: string;
 }
 
 export interface EtherscanTokenTx {
@@ -104,7 +107,7 @@ export function createEtherscanClient(config: EtherscanConfig) {
       });
     },
 
-    async getNormalTxList(address: string, limit = 50): Promise<EtherscanTx[] | null> {
+    async getNormalTxList(address: string, limit = 50, sort: "asc" | "desc" = "desc"): Promise<EtherscanTx[] | null> {
       return fetchEtherscan<EtherscanTx[]>(config, {
         module: "account",
         action: "txlist",
@@ -113,7 +116,7 @@ export function createEtherscanClient(config: EtherscanConfig) {
         endblock: "99999999",
         page: "1",
         offset: limit.toString(),
-        sort: "desc",
+        sort,
       });
     },
 
@@ -211,4 +214,10 @@ export const bscscanClient = createEtherscanClient({
   apiUrl: "https://api.bscscan.com/api",
   apiKey: process.env.BSCSCAN_API_KEY || "",
   rateLimiterKey: "bscscan",
+});
+
+export const etherscanClient = createEtherscanClient({
+  apiUrl: "https://api.etherscan.io/api",
+  apiKey: process.env.ETHERSCAN_API_KEY || "",
+  rateLimiterKey: "etherscan",
 });

@@ -45,6 +45,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `/multiple &lt;address&gt; — holders with avg buy MC ≥ 10× current MC\n` +
         `/diamond &lt;address&gt; — top 20 longest-holding wallets\n` +
         `/wallet &lt;address&gt; [chain] — analyze a wallet\n` +
+        `/deploys &lt;address&gt; [chain] — tokens deployed by an address\n` +
         `/dp &lt;address&gt; — check DexScreener ad payment status\n` +
         `/dex &lt;bond|unbond&gt; &lt;timeframe&gt; [mcap] — browse DEX Paid tokens\n` +
         `/help — show this message\n\n` +
@@ -73,6 +74,9 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `<b>/wallet</b> <code>&lt;address&gt; [chain]</code>\n` +
         `Analyze a wallet — age, portfolio, top holdings, recent PnL.\n` +
         `Solana addresses are detected automatically. For EVM wallets, add chain: <code>eth</code>, <code>base</code>, or <code>bsc</code>.\n\n` +
+        `<b>/deploys</b> <code>&lt;address&gt; [chain]</code>\n` +
+        `List tokens deployed by an address — name, contract, current MC, highest MC, plus a Best Launch.\n` +
+        `Solana auto-detected; for EVM add chain: <code>eth</code>, <code>base</code>, or <code>bsc</code>.\n\n` +
         `<b>/dp</b> <code>&lt;address&gt;</code>\n` +
         `Check whether a token has paid for DexScreener ad placement.\n\n` +
         `<b>/dex</b> <code>&lt;bond|unbond&gt; &lt;timeframe&gt; [mcap]</code>\n` +
@@ -305,6 +309,67 @@ export async function getBot(): Promise<Bot<MyContext>> {
     await handleWallet(ctx, chainArg as EvmChain, address);
   });
 
+  // ── /deploys ─────────────────────────────────────────────────────────────────
+
+  bot.command("deploys", async (ctx) => {
+    const { handleDeploys } = await import("./commands/deploys");
+    const { getAddressType } = await import("./commands/wallet");
+    const args = ctx.match?.trim() ?? "";
+    const parts = args.split(/\s+/).filter(Boolean);
+
+    if (!parts.length) {
+      await ctx.reply(
+        `<b>Usage:</b>\n` +
+        `• Solana: <code>/deploys &lt;address&gt;</code>\n` +
+        `• EVM:    <code>/deploys &lt;address&gt; &lt;eth|base|bsc&gt;</code>\n\n` +
+        `Returns the tokens deployed by an address — name, contract address, current MC, and highest MC.`,
+        { parse_mode: "HTML" }
+      );
+      return;
+    }
+
+    const address = parts[0];
+    const addrType = getAddressType(address);
+
+    if (!addrType) {
+      await ctx.reply("❌ Could not recognize this address. Please provide a valid Solana or EVM address.");
+      return;
+    }
+
+    if (addrType === "ton") {
+      await ctx.reply("⛔ TON is not supported by /deploys yet.");
+      return;
+    }
+
+    if (addrType === "solana") {
+      await handleDeploys(ctx, "solana", address);
+      return;
+    }
+
+    // EVM — chain must be specified, else prompt with picker
+    const chainArg = parts[1]?.toLowerCase();
+    const VALID = ["eth", "base", "bsc"] as const;
+    type EvmChain = typeof VALID[number];
+
+    if (!chainArg || !VALID.includes(chainArg as EvmChain)) {
+      await ctx.reply(
+        `On what chain would you like to scan deploys?`,
+        {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: "Ethereum",  callback_data: `dchain:eth:${address}`  },
+              { text: "Base",      callback_data: `dchain:base:${address}` },
+              { text: "BNB Chain", callback_data: `dchain:bsc:${address}`  },
+            ]],
+          },
+        }
+      );
+      return;
+    }
+
+    await handleDeploys(ctx, chainArg as EvmChain, address);
+  });
+
   // ── /dp ───────────────────────────────────────────────────────────────────────
 
   bot.command("dp", async (ctx) => {
@@ -361,6 +426,18 @@ export async function getBot(): Promise<Bot<MyContext>> {
       if (msgId) {
         await ctx.api.deleteMessage(ctx.chat!.id, msgId).catch(() => null);
       }
+      return;
+    }
+
+    // dchain:{chain}:{address} — deploys after EVM chain selection
+    if (data.startsWith("dchain:")) {
+      await ctx.answerCallbackQuery();
+      const rest    = data.slice("dchain:".length);
+      const colon   = rest.indexOf(":");
+      const chain   = rest.slice(0, colon) as "eth" | "base" | "bsc";
+      const address = rest.slice(colon + 1);
+      const { handleDeploys } = await import("./commands/deploys");
+      await handleDeploys(ctx, chain, address);
       return;
     }
 
@@ -515,6 +592,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
       { command: "multiple", description: "Find holders with avg buy MC ≥ 10× current MC" },
       { command: "diamond",  description: "Top 20 longest-holding wallets for a token" },
       { command: "wallet",   description: "Analyze a wallet — portfolio, holdings, PnL" },
+      { command: "deploys", description: "List tokens deployed by an address with MC info" },
       { command: "dp",     description: "Check DexScreener ad payment for a token" },
       { command: "dex",    description: "Browse DEX Paid tokens — /dex bond 1h" },
       { command: "help",   description: "Show all commands" },
