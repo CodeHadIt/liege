@@ -45,12 +45,14 @@ const EVM_NATIVE_SYMBOL: Record<string, string> = {
   base: "ETH",
   bsc:  "BNB",
   eth:  "ETH",
+  rh:   "ETH",
 };
 
 const EVM_EXPLORER: Record<string, string> = {
   base: "https://basescan.org",
   bsc:  "https://bscscan.com",
   eth:  "https://etherscan.io",
+  rh:   "https://robinhoodchain.blockscout.com",
 };
 
 // Moralis profitability endpoint only works on ETH + Base
@@ -626,7 +628,7 @@ async function handleEvmWallet(
 
   // ── Build message ──────────────────────────────────────────────────────────
   const explorerAddrUrl = `${explorerUrl}/address/${address}`;
-  const gmgnChainMap: Record<string, string> = { base: "base", bsc: "bsc", eth: "eth" };
+  const gmgnChainMap: Record<string, string> = { base: "base", bsc: "bsc", eth: "eth", rh: "robinhood" };
   const gmgnChain       = gmgnChainMap[chain] ?? chain;
   const gmgnUrl         = `https://gmgn.ai/${gmgnChain}/address/${address}`;
   const emoji           = chainEmoji(chain);

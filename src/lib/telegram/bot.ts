@@ -49,7 +49,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `/dp &lt;address&gt; — check DexScreener ad payment status\n` +
         `/dex &lt;bond|unbond&gt; &lt;timeframe&gt; [mcap] — browse DEX Paid tokens\n` +
         `/help — show this message\n\n` +
-        `<i>Supports Solana, Base, BSC, and Ethereum. Chain detected automatically.</i>`,
+        `<i>Supports Solana, Base, BSC, Ethereum, and Robinhood. Chain detected automatically.</i>`,
       { parse_mode: "HTML" }
     );
   });
@@ -89,11 +89,11 @@ export async function getBot(): Promise<Bot<MyContext>> {
 
   // ── /token ──────────────────────────────────────────────────────────────────
 
-  bot.command("token", async (ctx) => {
+  bot.command(["token", "scan"], async (ctx) => {
     const { handleToken, detectEvmChain } = await import("./commands/token");
     const address = ctx.match?.trim();
     if (!address) {
-      await ctx.reply("Usage: /token <code>&lt;address&gt;</code>", {
+      await ctx.reply("Usage: /scan <code>&lt;address&gt;</code>", {
         parse_mode: "HTML",
       });
       return;
@@ -292,7 +292,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
 
     // EVM — chain must be specified
     const chainArg = parts[1]?.toLowerCase();
-    const VALID_EVM_CHAINS = ["eth", "base", "bsc"] as const;
+    const VALID_EVM_CHAINS = ["eth", "base", "bsc", "rh"] as const;
     type EvmChain = typeof VALID_EVM_CHAINS[number];
 
     if (!chainArg || !VALID_EVM_CHAINS.includes(chainArg as EvmChain)) {
@@ -300,7 +300,8 @@ export async function getBot(): Promise<Bot<MyContext>> {
         `⚠️ EVM wallet detected. Please specify the chain:\n` +
         `<code>/wallet ${address} eth</code>\n` +
         `<code>/wallet ${address} base</code>\n` +
-        `<code>/wallet ${address} bsc</code>`,
+        `<code>/wallet ${address} bsc</code>\n` +
+        `<code>/wallet ${address} rh</code>`,
         { parse_mode: "HTML" }
       );
       return;
@@ -446,7 +447,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
       await ctx.answerCallbackQuery();
       const rest    = data.slice("wchain:".length);
       const colon   = rest.indexOf(":");
-      const chain   = rest.slice(0, colon) as "eth" | "base" | "bsc";
+      const chain   = rest.slice(0, colon) as "eth" | "base" | "bsc" | "rh";
       const address = rest.slice(colon + 1);
       const { handleWallet } = await import("./commands/wallet");
       await handleWallet(ctx, chain, address);
@@ -515,9 +516,9 @@ export async function getBot(): Promise<Bot<MyContext>> {
     const parts = text.split(/\s+/);
     if (parts.length === 2 && EVM_ADDR.test(parts[0])) {
       const chainArg = parts[1].toLowerCase();
-      if (chainArg === "eth" || chainArg === "base" || chainArg === "bsc") {
+      if (chainArg === "eth" || chainArg === "base" || chainArg === "bsc" || chainArg === "rh") {
         const { handleWallet } = await import("./commands/wallet");
-        await handleWallet(ctx, chainArg as "eth" | "base" | "bsc", parts[0]);
+        await handleWallet(ctx, chainArg as "eth" | "base" | "bsc" | "rh", parts[0]);
         return;
       }
     }
@@ -527,7 +528,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
       const { handleToken, detectEvmChain } = await import("./commands/token");
       const { searchPairs } = await import("@/lib/api/dexscreener");
 
-      const SUPPORTED_CHAINS = new Set(["base", "bsc", "ethereum"]);
+      const SUPPORTED_CHAINS = new Set(["base", "bsc", "ethereum", "robinhood"]);
       const CHAIN_DISPLAY: Record<string, string> = {
         avalanche: "Avalanche", avax: "Avalanche",
         monad: "Monad", polygon: "Polygon",
@@ -568,6 +569,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
                 { text: "Ethereum",  callback_data: `wchain:eth:${addr}`  },
                 { text: "Base",      callback_data: `wchain:base:${addr}` },
                 { text: "BNB Chain", callback_data: `wchain:bsc:${addr}`  },
+                { text: "Robinhood", callback_data: `wchain:rh:${addr}`   },
               ]],
             },
           }
@@ -585,6 +587,7 @@ export async function getBot(): Promise<Bot<MyContext>> {
     // Register commands so they appear as suggestions when users type "/"
     await bot.api.setMyCommands([
       { command: "token",  description: "Analyze a token — price, MC, DD score, safety" },
+      { command: "scan",   description: "Analyze a token (alias for /token)" },
       { command: "th",     description: "Top holders with % ownership" },
       { command: "tt",     description: "Top traders with realized PnL" },
       { command: "common", description: "Find common traders across 2–10 tokens" },

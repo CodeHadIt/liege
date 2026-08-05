@@ -22,6 +22,14 @@ const providers: Record<string, ChainProvider> = {
     apiKey: process.env.ETHERSCAN_API_KEY || "",
     rateLimiterKey: "etherscan",
   }),
+  // Robinhood Chain: EVM L2. Token pair/metadata come from DexScreener +
+  // GeckoTerminal (robinhood slug); contract/holder queries use its Blockscout
+  // explorer's Etherscan-compatible API (no key required).
+  rh: new EvmChainProvider("rh", {
+    apiUrl: "https://robinhoodchain.blockscout.com/api",
+    apiKey: "",
+    rateLimiterKey: "robinscan",
+  }),
   ton: new TonChainProvider(),
 };
 
