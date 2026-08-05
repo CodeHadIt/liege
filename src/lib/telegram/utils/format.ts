@@ -80,6 +80,7 @@ export function chainEmoji(chain: string): string {
     case "bsc":    return "🟡";
     case "eth":    return "🔷";
     case "ton":    return "💎";
+    case "rh":     return "🟢";
     default: return "⛓";
   }
 }
@@ -91,6 +92,7 @@ export function chainLabel(chain: string): string {
     case "bsc":    return "BSC";
     case "eth":    return "Ethereum";
     case "ton":    return "TON";
+    case "rh":     return "Robinhood";
     default: return chain;
   }
 }

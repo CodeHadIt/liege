@@ -6,6 +6,7 @@ export const CHAIN_COLORS: Record<ChainId, { label: string; color: string; bg: s
   bsc:    { label: "BSC",  color: "#F0B90B", bg: "rgba(240, 185, 11, 0.1)" },
   eth:    { label: "ETH",  color: "#627EEA", bg: "rgba(98, 126, 234, 0.1)" },
   ton:    { label: "TON",  color: "#0088CC", bg: "rgba(0, 136, 204, 0.1)"  },
+  rh:     { label: "RH",   color: "#00C805", bg: "rgba(0, 200, 5, 0.1)"    },
 };
 
 /** Full pill badge — used in table columns, wallet headers, etc. */

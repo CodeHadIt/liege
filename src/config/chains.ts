@@ -76,8 +76,27 @@ export const CHAIN_CONFIGS: Record<ChainId, ChainConfig> = {
     addressPattern: /^(?:EQ|UQ|Ef|Uf|kQ|kf|0Q|0f)[A-Za-z0-9_-]{46}$/,
     isEvm: false,
   },
+  rh: {
+    id: "rh",
+    name: "Robinhood",
+    shortName: "RH",
+    logo: "/chains/rh.svg",
+    // Robinhood Chain is an Ethereum L2 (chain ID 4663) with ETH as its gas asset.
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrl: "https://rpc.mainnet.chain.robinhood.com",
+    explorerUrl: "https://robinhoodchain.blockscout.com",
+    explorerApiUrl: "https://robinhoodchain.blockscout.com/api",
+    // DexScreener and GeckoTerminal both index Robinhood Chain under the "robinhood" slug.
+    dexScreenerChainId: "robinhood",
+    geckoTerminalNetwork: "robinhood",
+    addressPattern: /^0x[a-fA-F0-9]{40}$/,
+    isEvm: true,
+  },
 };
 
+// Note: "rh" (Robinhood) is intentionally omitted here for now — it drives the
+// web common-traders chain selector, and only the Telegram /tt feature supports
+// RH so far. Add it once the web-facing RH features land.
 export const SUPPORTED_CHAINS: ChainId[] = ["solana", "base", "bsc", "eth", "ton"];
 
 export function getChainConfig(chainId: ChainId): ChainConfig {

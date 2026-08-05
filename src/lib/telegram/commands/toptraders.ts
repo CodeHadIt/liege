@@ -19,6 +19,7 @@ const GMGN_CHAIN: Record<string, string> = {
   base:   "base",
   bsc:    "bsc",
   eth:    "eth",
+  rh:     "robinhood",
 };
 
 function gmgnWalletUrl(chain: ChainId, wallet: string): string {
@@ -112,6 +113,9 @@ export async function handleTopTraders(
   );
 
   try {
+    // TON is indexed by GeckoTerminal, not GMGN. Everything else (including
+    // Robinhood, which GMGN serves under the "robinhood" slug) uses the GMGN
+    // scraper below.
     if (chain === "ton") {
       await handleTonTopTraders(ctx, loading.message_id, address);
       return;

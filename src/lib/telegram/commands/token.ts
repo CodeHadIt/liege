@@ -29,6 +29,7 @@ const CHAIN_LOGO: Record<ChainId, string> = {
   bsc:    "🟡",
   eth:    "🔷",
   ton:    "💎",
+  rh:     "🟢",
 };
 
 const GMGN_CHAIN: Record<ChainId, string> = {
@@ -37,6 +38,7 @@ const GMGN_CHAIN: Record<ChainId, string> = {
   bsc:    "bsc",
   eth:    "eth",
   ton:    "ton",
+  rh:     "robinhood",
 };
 
 // ── Chain detection ───────────────────────────────────────────────────────────
@@ -67,14 +69,17 @@ export async function detectEvmChain(address: string): Promise<ChainId> {
     const results = await searchPairs(address).catch(() => []);
     const evmPairs = results.filter((p) => {
       const c = p.chainId?.toLowerCase();
-      return c === "base" || c === "bsc" || c === "ethereum";
+      return c === "base" || c === "bsc" || c === "ethereum" || c === "robinhood";
     });
     if (evmPairs.length > 0) {
-      const liq: Record<string, number> = { base: 0, bsc: 0, ethereum: 0 };
+      const liq: Record<string, number> = { base: 0, bsc: 0, ethereum: 0, robinhood: 0 };
       for (const p of evmPairs) {
         const c = p.chainId?.toLowerCase() as string;
         liq[c] = (liq[c] ?? 0) + (p.liquidity?.usd ?? 0);
       }
+      // Robinhood Chain is a distinct L2 with EVM-format addresses — if it holds
+      // the deepest liquidity for this address, treat it as an RH token.
+      if (liq.robinhood > 0 && liq.robinhood >= liq.base && liq.robinhood >= liq.bsc && liq.robinhood >= liq.ethereum) return "rh";
       if (liq.ethereum >= liq.base && liq.ethereum >= liq.bsc) return "eth";
       return liq.bsc > liq.base ? "bsc" : "base";
     }
@@ -285,9 +290,9 @@ async function fetchDexPaid(chain: ChainId, address: string): Promise<DexPaidRes
 // ── Trading links ─────────────────────────────────────────────────────────────
 
 function tradingLinks(chain: ChainId, address: string, dexUrl?: string | null) {
-  const gmgnChain:     Record<ChainId, string> = { solana: "sol",    base: "base", bsc: "bsc", eth: "eth",     ton: "ton"  };
-  const axiomChain:    Record<ChainId, string> = { solana: "sol",    base: "base", bsc: "bsc", eth: "eth",     ton: ""     };
-  const terminalChain: Record<ChainId, string> = { solana: "solana", base: "base", bsc: "bsc", eth: "ethereum", ton: "ton" };
+  const gmgnChain:     Record<ChainId, string> = { solana: "sol",    base: "base", bsc: "bsc", eth: "eth",     ton: "ton",  rh: "robinhood" };
+  const axiomChain:    Record<ChainId, string> = { solana: "sol",    base: "base", bsc: "bsc", eth: "eth",     ton: "",     rh: ""          };
+  const terminalChain: Record<ChainId, string> = { solana: "solana", base: "base", bsc: "bsc", eth: "ethereum", ton: "ton",  rh: ""          };
 
   return {
     axi: `https://axiom.trade/t/${address}/@genes?chain=${axiomChain[chain]}`,

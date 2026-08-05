@@ -88,6 +88,7 @@ async function fetchDexScreenerImage(
     bsc:    "bsc",
     eth:    "ethereum",
     ton:    "ton",
+    rh:     "robinhood",
   };
   const dsChain = chainMap[chain];
   if (!dsChain) return null;

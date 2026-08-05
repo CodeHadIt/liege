@@ -97,11 +97,13 @@ async function getBrowser(): Promise<Browser> {
 // ─── GMGN chain ID mapping ────────────────────────────────────────────────────
 
 const CHAIN_TO_GMGN: Record<string, string> = {
-  solana:   "sol",
-  base:     "base",
-  bsc:      "bsc",
-  ethereum: "eth",
-  eth:      "eth",
+  solana:    "sol",
+  base:      "base",
+  bsc:       "bsc",
+  ethereum:  "eth",
+  eth:       "eth",
+  rh:        "robinhood",
+  robinhood: "robinhood",
 };
 
 // ─── Shared Playwright fetch helper ──────────────────────────────────────────
