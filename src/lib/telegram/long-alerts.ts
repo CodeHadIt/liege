@@ -166,8 +166,9 @@ export async function pollLongFirstTokens(): Promise<void> {
     const fresh = tokens.filter((t) => !w.seen!.has(t.tokenAddress));
     if (fresh.length === 0) continue;
 
-    // The inaugural launch = earliest-created among the new tokens.
-    const first = fresh.sort((a, b) => (a.pairCreatedAt ?? 0) - (b.pairCreatedAt ?? 0))[0];
+    // tokens is already sorted by on-chain deployment time (oldest first), so the
+    // first fresh entry is the earliest-launched new token.
+    const first = fresh[0];
     awaitingFirstToken.delete(stockAddr); // one ping per new stock
 
     if (!chatId) {

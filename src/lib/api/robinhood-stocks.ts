@@ -87,13 +87,45 @@ export interface CreatedToken {
   symbol: string;
   name: string;
   dexId: string;
-  /** pool creation time in ms (proxy for token creation) */
+  /** pool creation time in ms (when a pool for this pair first appeared) */
   pairCreatedAt: number | null;
+  /** on-chain contract deployment time in SECONDS — the true launch time */
+  onChainCreatedAt: number | null;
   priceUsd: number | null;
   liquidityUsd: number | null;
   marketCap: number | null;
   pairUrl: string | null;
   imageUrl: string | null;
+}
+
+/**
+ * Look up on-chain contract-deployment timestamps (unix seconds) for a batch of
+ * addresses via the Robinhood Chain Blockscout explorer. This is the true "launch
+ * time" — unlike a DexScreener pool's creation time, a token may be deployed well
+ * before (or pool later on) a given pair.
+ */
+export async function fetchTokenCreationTimes(addresses: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (addresses.length === 0) return out;
+  await rateLimit("robinscan");
+  try {
+    const res = await fetch(
+      `${RH_EXPLORER}/api?module=contract&action=getcontractcreation&contractaddresses=${addresses.join(",")}`,
+      { headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(15_000) }
+    );
+    if (!res.ok) return out;
+    const data = await res.json();
+    const arr: Array<{ contractAddress?: string; timestamp?: string | number }> =
+      Array.isArray(data?.result) ? data.result : [];
+    for (const x of arr) {
+      const addr = String(x.contractAddress ?? "").toLowerCase();
+      const ts = parseInt(String(x.timestamp ?? ""), 10);
+      if (addr && Number.isFinite(ts)) out.set(addr, ts);
+    }
+  } catch {
+    /* ignore — callers fall back to pool time */
+  }
+  return out;
 }
 
 interface DexPair {
@@ -154,7 +186,7 @@ export async function fetchTokensCreatedAgainst(
 
       const created = p.pairCreatedAt ?? null;
       const ex = byToken.get(otherAddr);
-      // keep the EARLIEST pool per token — its first launch time
+      // keep the EARLIEST pool per token
       if (!ex || (created ?? Infinity) < (ex.pairCreatedAt ?? Infinity)) {
         byToken.set(otherAddr, {
           tokenAddress: other.address ?? "",
@@ -162,6 +194,7 @@ export async function fetchTokensCreatedAgainst(
           name: other.name ?? other.symbol ?? "",
           dexId: p.dexId ?? "",
           pairCreatedAt: created,
+          onChainCreatedAt: null,
           priceUsd: null,
           liquidityUsd: null,
           marketCap: null,
@@ -170,7 +203,15 @@ export async function fetchTokensCreatedAgainst(
         });
       }
     }
-    return [...byToken.values()].sort((a, b) => (a.pairCreatedAt ?? 0) - (b.pairCreatedAt ?? 0));
+
+    const tokens = [...byToken.values()];
+    // Resolve true on-chain deployment times and sort by them (oldest first).
+    const times = await fetchTokenCreationTimes(tokens.map((t) => t.tokenAddress));
+    for (const t of tokens) t.onChainCreatedAt = times.get(t.tokenAddress.toLowerCase()) ?? null;
+
+    const launchKey = (t: CreatedToken): number =>
+      t.onChainCreatedAt ?? (t.pairCreatedAt != null ? Math.floor(t.pairCreatedAt / 1000) : Number.MAX_SAFE_INTEGER);
+    return tokens.sort((a, b) => launchKey(a) - launchKey(b));
   } catch {
     return [];
   }
