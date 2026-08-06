@@ -12,7 +12,7 @@ export async function register() {
     const { pollAndStoreDexProfiles, refreshCurrentMarketCaps } = await import("@/lib/api/dex-orders-cache");
     const { pollStonkFunCreations, pollStonkFunQuoteTokens } = await import("@/lib/telegram/stonkfun-alerts");
     const { pollSunriseStocks } = await import("@/lib/telegram/sunrise-alerts");
-    const { pollLongStocks } = await import("@/lib/telegram/long-alerts");
+    const { pollLongStocks, pollLongFirstTokens } = await import("@/lib/telegram/long-alerts");
 
     console.log("[instrumentation] Starting dex-profiles background poller (every 30s)");
     console.log("[instrumentation] Starting MC refresh poller (every 120s)");
@@ -62,6 +62,10 @@ export async function register() {
     setInterval(() => {
       pollLongStocks().catch((err) =>
         console.error("[instrumentation] Long poll error:", err)
+      );
+      // Watch newly-added stocks for their first token launch.
+      pollLongFirstTokens().catch((err) =>
+        console.error("[instrumentation] Long first-token poll error:", err)
       );
     }, LONG_INTERVAL);
 

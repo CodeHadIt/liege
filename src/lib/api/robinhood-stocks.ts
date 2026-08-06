@@ -76,3 +76,80 @@ export async function fetchRobinhoodStockTokens(): Promise<RhStockToken[]> {
 export function rhExplorerTokenUrl(address: string): string {
   return `${RH_EXPLORER}/token/${address}`;
 }
+
+// ── Tokens created against a stock (Long launches) ────────────────────────────
+// A token "created with a stock base pair" appears on-chain as a pool where the
+// new token is the base and the stock is the quote. DexScreener indexes these on
+// the robinhood network, so we read them from its token-pairs endpoint.
+
+export interface CreatedToken {
+  tokenAddress: string;
+  symbol: string;
+  name: string;
+  dexId: string;
+  /** pool creation time in ms (proxy for token creation) */
+  pairCreatedAt: number | null;
+  priceUsd: number | null;
+  liquidityUsd: number | null;
+  marketCap: number | null;
+  pairUrl: string | null;
+  imageUrl: string | null;
+}
+
+interface DexPair {
+  baseToken?: { address?: string; symbol?: string; name?: string };
+  quoteToken?: { address?: string };
+  dexId?: string;
+  pairCreatedAt?: number;
+  priceUsd?: string;
+  liquidity?: { usd?: number };
+  marketCap?: number;
+  url?: string;
+  info?: { imageUrl?: string };
+}
+
+/**
+ * Return the tokens that have been created against a given stock (i.e. pools
+ * where the stock is the quote token), deduped by token and sorted oldest-first.
+ */
+export async function fetchTokensCreatedAgainst(stockAddress: string): Promise<CreatedToken[]> {
+  await rateLimit("dexscreener");
+  try {
+    const res = await fetch(
+      `https://api.dexscreener.com/token-pairs/v1/robinhood/${stockAddress}`,
+      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15_000) }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    const pairs: DexPair[] = Array.isArray(data) ? data : (data?.pairs ?? []);
+    const stock = stockAddress.toLowerCase();
+
+    const byToken = new Map<string, CreatedToken>();
+    for (const p of pairs) {
+      // Only pools where the stock is the QUOTE side = something paired against it.
+      if ((p.quoteToken?.address ?? "").toLowerCase() !== stock) continue;
+      const addr = p.baseToken?.address ?? "";
+      if (!addr) continue;
+      const tok: CreatedToken = {
+        tokenAddress: addr,
+        symbol: p.baseToken?.symbol ?? "?",
+        name: p.baseToken?.name ?? p.baseToken?.symbol ?? "",
+        dexId: p.dexId ?? "",
+        pairCreatedAt: p.pairCreatedAt ?? null,
+        priceUsd: p.priceUsd ? parseFloat(p.priceUsd) : null,
+        liquidityUsd: p.liquidity?.usd ?? null,
+        marketCap: p.marketCap ?? null,
+        pairUrl: p.url ?? null,
+        imageUrl: p.info?.imageUrl ?? null,
+      };
+      // a token may have several pools against the stock — keep the deepest
+      const ex = byToken.get(addr);
+      if (!ex || (tok.liquidityUsd ?? 0) > (ex.liquidityUsd ?? 0)) byToken.set(addr, tok);
+    }
+    return [...byToken.values()].sort(
+      (a, b) => (a.pairCreatedAt ?? 0) - (b.pairCreatedAt ?? 0)
+    );
+  } catch {
+    return [];
+  }
+}
