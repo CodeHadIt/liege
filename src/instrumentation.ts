@@ -1,6 +1,10 @@
 export async function register() {
-  // Only run polling on the server (Node.js runtime), not in Edge or browser
-  if (typeof globalThis.setInterval !== "undefined" && typeof window === "undefined") {
+  // Only run polling on the Node.js runtime — never Edge or browser. This guard
+  // is critical: the StonkFun poller pulls in the Telegram bot, which
+  // transitively imports playwright-core (via the GMGN scraper). Playwright can't
+  // be bundled for the Edge runtime, so gating on NEXT_RUNTIME keeps that whole
+  // module graph out of the Edge instrumentation bundle.
+  if (process.env.NEXT_RUNTIME === "nodejs") {
     const POLL_INTERVAL = 30_000;
     const MC_REFRESH_INTERVAL = 120_000;
 
