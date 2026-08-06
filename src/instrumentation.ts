@@ -6,9 +6,22 @@ export async function register() {
 
     // Dynamic import so this only loads server-side
     const { pollAndStoreDexProfiles, refreshCurrentMarketCaps } = await import("@/lib/api/dex-orders-cache");
+    const { pollStonkFunCreations } = await import("@/lib/telegram/stonkfun-alerts");
 
     console.log("[instrumentation] Starting dex-profiles background poller (every 30s)");
     console.log("[instrumentation] Starting MC refresh poller (every 120s)");
+    console.log("[instrumentation] Starting StonkFun new-token alert poller (every 30s)");
+
+    const STONKFUN_INTERVAL = 30_000;
+    // Seed silently on boot, then poll for new creations.
+    pollStonkFunCreations().catch((err) =>
+      console.error("[instrumentation] Initial StonkFun poll error:", err)
+    );
+    setInterval(() => {
+      pollStonkFunCreations().catch((err) =>
+        console.error("[instrumentation] StonkFun poll error:", err)
+      );
+    }, STONKFUN_INTERVAL);
 
     // Initial poll on startup
     pollAndStoreDexProfiles().catch((err) =>
