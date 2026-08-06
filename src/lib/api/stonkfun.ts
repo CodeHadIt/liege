@@ -7,6 +7,52 @@ export const STONKFUN_DEPLOYER = "5CEbueQnq1Ym2uSSx2xXds3jQAqT1BDnkA59RZobSPAG";
 
 const STANDARD_SUPPLY = 1_000_000_000;
 
+export const STONKFUN_BASE = "https://www.stonkfun.xyz";
+
+/** A quote token = an asset you can pair a new StonkFun launch against. */
+export interface QuoteToken {
+  quoteMint: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+  category: string;
+  logoUrl: string | null;
+}
+
+/**
+ * Fetch the current list of quote tokens available on the StonkFun launch page.
+ * Backed by the site's own public JSON API (no scraping needed).
+ */
+export async function fetchQuoteTokens(): Promise<QuoteToken[]> {
+  await rateLimit("stonkfun");
+  try {
+    const res = await fetch(`${STONKFUN_BASE}/api/quote-tokens`, {
+      headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const list: unknown[] = Array.isArray(data?.quoteTokens) ? data.quoteTokens : [];
+    return list
+      .map((t) => {
+        const q = t as Record<string, unknown>;
+        const logo = typeof q.logoUrl === "string" ? q.logoUrl : null;
+        return {
+          quoteMint: String(q.quoteMint ?? ""),
+          symbol: String(q.symbol ?? "?"),
+          name: String(q.name ?? ""),
+          decimals: typeof q.decimals === "number" ? q.decimals : 0,
+          category: String(q.category ?? "other"),
+          // logoUrl comes back relative (e.g. /api/asset/quote-logo/…)
+          logoUrl: logo ? (logo.startsWith("http") ? logo : `${STONKFUN_BASE}${logo}`) : null,
+        };
+      })
+      .filter((q) => q.quoteMint.length > 0);
+  } catch {
+    return [];
+  }
+}
+
 export interface StonkFunCreation {
   mint: string;
   /** Best-effort symbol from the tx description; refined by DAS in enrichment */

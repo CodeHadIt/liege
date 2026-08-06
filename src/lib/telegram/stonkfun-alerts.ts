@@ -1,9 +1,12 @@
 import {
   fetchRecentCreations,
   enrichCreation,
+  fetchQuoteTokens,
   STONKFUN_DEPLOYER,
+  STONKFUN_BASE,
   type StonkFunCreation,
   type StonkFunTokenDetails,
+  type QuoteToken,
 } from "@/lib/api/stonkfun";
 import { getBot } from "./bot";
 import { escapeHtml, formatCompact, formatPrice, formatTimeAgo } from "./utils/format";
@@ -149,5 +152,93 @@ export async function sendStonkFunTestPing(chatId: string): Promise<boolean> {
   if (creations.length === 0) return false;
   const details = await enrichCreation(creations[0]);
   await sendAlert(chatId, details);
+  return true;
+}
+
+// ── Quote-token monitoring ────────────────────────────────────────────────────
+// StonkFun's /launch page lets creators pick a "quote token" — the asset a new
+// token is paired against. We watch that list and alert when a new one is added.
+
+const seenQuotes = new Set<string>();
+let quotesSeeded = false;
+
+const CATEGORY_LABEL: Record<string, string> = {
+  xstock:   "📈 Tokenized Stock",
+  prestock: "🌅 Pre-Market Stock",
+  currency: "💱 Currency",
+  backpack: "🎒 Backpack",
+  tessera:  "🧩 Tessera",
+  custom:   "⛓ On-chain Asset",
+};
+
+export function formatQuoteTokenAlert(q: QuoteToken): string {
+  const lines: string[] = [];
+  lines.push(`✨ <b>New Quote Token on StonkFun</b>`);
+  lines.push(`<i>You can now pair new launches against this asset.</i>`);
+  lines.push("");
+  lines.push(`<b>${escapeHtml(q.name || q.symbol)}</b>  ·  <code>$${escapeHtml(q.symbol)}</code>`);
+  lines.push(`🏷 ${escapeHtml(CATEGORY_LABEL[q.category] ?? q.category)}`);
+  lines.push("");
+  lines.push(`<code>${escapeHtml(q.quoteMint)}</code>`);
+  lines.push(
+    `🔍 <a href="https://solscan.io/token/${q.quoteMint}">Solscan</a>` +
+    `  ·  🚀 <a href="${STONKFUN_BASE}/launch">Launch a token</a>`
+  );
+  return lines.join("\n");
+}
+
+async function sendQuoteAlert(chatId: string, q: QuoteToken): Promise<void> {
+  const bot = await getBot();
+  const text = formatQuoteTokenAlert(q);
+  if (q.logoUrl) {
+    await bot.api
+      .sendPhoto(chatId, q.logoUrl, { caption: text, parse_mode: "HTML" })
+      .catch(async () => {
+        await bot.api.sendMessage(chatId, text, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
+      });
+  } else {
+    await bot.api.sendMessage(chatId, text, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
+  }
+}
+
+/**
+ * One poll cycle for quote tokens: alert when StonkFun adds a new pairing asset.
+ * Seeds the existing list silently on first run.
+ */
+export async function pollStonkFunQuoteTokens(): Promise<void> {
+  const quotes = await fetchQuoteTokens();
+  if (quotes.length === 0) return;
+
+  if (!quotesSeeded) {
+    for (const q of quotes) seenQuotes.add(q.quoteMint);
+    quotesSeeded = true;
+    console.log(`[stonkfun] seeded ${seenQuotes.size} existing quote tokens (no alert on backlog)`);
+    return;
+  }
+
+  const fresh = quotes.filter((q) => !seenQuotes.has(q.quoteMint));
+  if (fresh.length === 0) return;
+
+  const chatId = alertChatId();
+  for (const q of fresh) {
+    seenQuotes.add(q.quoteMint);
+    if (!chatId) {
+      console.log(`[stonkfun] new quote token ${q.symbol} — STONKFUN_ALERT_CHAT_ID not set, skipping ping`);
+      continue;
+    }
+    try {
+      await sendQuoteAlert(chatId, q);
+      console.log(`[stonkfun] alerted new quote token: ${q.symbol} (${q.category})`);
+    } catch (err) {
+      console.error("[stonkfun] failed to send quote-token alert:", err);
+    }
+  }
+}
+
+/** Manual test: send the newest existing quote token so the format can be verified. */
+export async function sendQuoteTokenTestPing(chatId: string): Promise<boolean> {
+  const quotes = await fetchQuoteTokens();
+  if (quotes.length === 0) return false;
+  await sendQuoteAlert(chatId, quotes[0]);
   return true;
 }
