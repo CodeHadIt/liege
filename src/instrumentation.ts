@@ -12,6 +12,7 @@ export async function register() {
     const { pollAndStoreDexProfiles, refreshCurrentMarketCaps } = await import("@/lib/api/dex-orders-cache");
     const { pollStonkFunCreations, pollStonkFunQuoteTokens } = await import("@/lib/telegram/stonkfun-alerts");
     const { pollSunriseStocks } = await import("@/lib/telegram/sunrise-alerts");
+    const { pollLongStocks } = await import("@/lib/telegram/long-alerts");
 
     console.log("[instrumentation] Starting dex-profiles background poller (every 30s)");
     console.log("[instrumentation] Starting MC refresh poller (every 120s)");
@@ -51,6 +52,18 @@ export async function register() {
         console.error("[instrumentation] Sunrise poll error:", err)
       );
     }, SUNRISE_INTERVAL);
+
+    // Long / Robinhood Chain new-stock-token poller — 60s.
+    console.log("[instrumentation] Starting Long (Robinhood Chain) stock alert poller (every 60s)");
+    const LONG_INTERVAL = 60_000;
+    pollLongStocks().catch((err) =>
+      console.error("[instrumentation] Initial Long poll error:", err)
+    );
+    setInterval(() => {
+      pollLongStocks().catch((err) =>
+        console.error("[instrumentation] Long poll error:", err)
+      );
+    }, LONG_INTERVAL);
 
     // Initial poll on startup
     pollAndStoreDexProfiles().catch((err) =>
