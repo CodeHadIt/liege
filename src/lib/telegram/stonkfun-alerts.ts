@@ -13,6 +13,10 @@ import { escapeHtml, formatCompact, formatPrice, formatTimeAgo } from "./utils/f
 const seen = new Set<string>();
 let seeded = false;
 
+// Never alert on a launch older than this, even if it somehow escapes dedupe
+// (e.g. after a container restart re-seeds). Keeps pings to genuinely new tokens.
+const MAX_ALERT_AGE_SECONDS = 15 * 60;
+
 function alertChatId(): string {
   return process.env.STONKFUN_ALERT_CHAT_ID || "";
 }
@@ -109,8 +113,13 @@ export async function pollStonkFunCreations(): Promise<void> {
   if (fresh.length === 0) return;
 
   const chatId = alertChatId();
+  const nowSec = Date.now() / 1000;
   for (const c of fresh) {
     seen.add(c.mint);
+    if (c.timestamp > 0 && nowSec - c.timestamp > MAX_ALERT_AGE_SECONDS) {
+      console.log(`[stonkfun] skipping stale launch ${c.symbol} (${Math.round((nowSec - c.timestamp) / 60)}m old)`);
+      continue;
+    }
     if (!chatId) {
       console.log(`[stonkfun] new token ${c.symbol} (${c.mint}) — STONKFUN_ALERT_CHAT_ID not set, skipping ping`);
       continue;

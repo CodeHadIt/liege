@@ -82,13 +82,18 @@ export async function fetchRecentCreations(limit = 25): Promise<StonkFunCreation
     for (const tx of data as HeliusTx[]) {
       if (tx?.type !== "TOKEN_MINT") continue;
       const transfers = Array.isArray(tx.tokenTransfers) ? tx.tokenTransfers : [];
-      // The freshly minted token is the one credited (~1B) to the deployer.
-      const minted =
-        transfers.find(
-          (t) => t?.mint && t.toUserAccount === STONKFUN_DEPLOYER &&
-                 (t.tokenAmount ?? 0) >= STANDARD_SUPPLY * 0.99
-        ) ?? transfers.find((t) => t?.mint && t.toUserAccount === STONKFUN_DEPLOYER);
-      const mint = minted?.mint ?? transfers[0]?.mint;
+      // A real StonkFun launch mints EXACTLY 1,000,000,000 of the new token to the
+      // deployer. The deployer also does other TOKEN_MINTs (fee/utility mints with
+      // odd amounts, no metadata, no pool) — requiring the standard 1B supply
+      // filters those out so we only alert on genuine launches.
+      const minted = transfers.find(
+        (t) =>
+          t?.mint &&
+          t.toUserAccount === STONKFUN_DEPLOYER &&
+          (t.tokenAmount ?? 0) >= STANDARD_SUPPLY * 0.999 &&
+          (t.tokenAmount ?? 0) <= STANDARD_SUPPLY * 1.001
+      );
+      const mint = minted?.mint;
       if (!mint || !tx.signature) continue;
 
       // description looks like: "5CEbue… minted 1000000000.00 ASSDAQ."
