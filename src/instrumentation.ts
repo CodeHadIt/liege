@@ -11,6 +11,7 @@ export async function register() {
     // Dynamic import so this only loads server-side
     const { pollAndStoreDexProfiles, refreshCurrentMarketCaps } = await import("@/lib/api/dex-orders-cache");
     const { pollStonkFunCreations, pollStonkFunQuoteTokens } = await import("@/lib/telegram/stonkfun-alerts");
+    const { pollSunriseStocks } = await import("@/lib/telegram/sunrise-alerts");
 
     console.log("[instrumentation] Starting dex-profiles background poller (every 30s)");
     console.log("[instrumentation] Starting MC refresh poller (every 120s)");
@@ -38,6 +39,18 @@ export async function register() {
         console.error("[instrumentation] StonkFun quote-token poll error:", err)
       );
     }, STONKFUN_QUOTE_INTERVAL);
+
+    // Sunrise new-stock-pair poller (tokenized stocks vs USDC) — 60s.
+    console.log("[instrumentation] Starting Sunrise stock-pair alert poller (every 60s)");
+    const SUNRISE_INTERVAL = 60_000;
+    pollSunriseStocks().catch((err) =>
+      console.error("[instrumentation] Initial Sunrise poll error:", err)
+    );
+    setInterval(() => {
+      pollSunriseStocks().catch((err) =>
+        console.error("[instrumentation] Sunrise poll error:", err)
+      );
+    }, SUNRISE_INTERVAL);
 
     // Initial poll on startup
     pollAndStoreDexProfiles().catch((err) =>
