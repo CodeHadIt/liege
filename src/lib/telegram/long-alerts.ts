@@ -1,6 +1,7 @@
 import {
   fetchRobinhoodStockTokens,
   fetchTokensCreatedAgainst,
+  enrichCreatedToken,
   rhExplorerTokenUrl,
   type RhStockToken,
   type CreatedToken,
@@ -147,13 +148,15 @@ async function sendFirstTokenAlert(chatId: string, stockSymbol: string, t: Creat
 export async function pollLongFirstTokens(): Promise<void> {
   if (awaitingFirstToken.size === 0) return;
   const chatId = alertChatId();
+  // Exclude other stock contracts (a stock↔stock pool isn't a launch).
+  const excl = new Set([...seen].map((a) => a.toLowerCase()));
 
   for (const [stockAddr, w] of awaitingFirstToken) {
     if (Date.now() - w.addedAt > WATCH_TTL_MS) {
       awaitingFirstToken.delete(stockAddr);
       continue;
     }
-    const tokens = await fetchTokensCreatedAgainst(stockAddr);
+    const tokens = await fetchTokensCreatedAgainst(stockAddr, excl);
 
     if (w.seen === null) {
       w.seen = new Set(tokens.map((t) => t.tokenAddress));
@@ -172,7 +175,7 @@ export async function pollLongFirstTokens(): Promise<void> {
       continue;
     }
     try {
-      await sendFirstTokenAlert(chatId, w.symbol, first);
+      await sendFirstTokenAlert(chatId, w.symbol, await enrichCreatedToken(first));
       console.log(`[long] alerted first token ${first.symbol} vs ${w.symbol}`);
     } catch (err) {
       console.error("[long] failed to send first-token alert:", err);
@@ -189,15 +192,15 @@ export async function sendLongTestPing(chatId: string, symbol?: string): Promise
   return true;
 }
 
-/** Manual test: send the newest token created against a given stock. */
+/** Manual test: send the FIRST token launched against a given stock. */
 export async function sendFirstTokenTestPing(chatId: string, stockSymbol: string): Promise<boolean> {
   const stocks = await fetchRobinhoodStockTokens();
   const stock = stocks.find((s) => s.symbol.toLowerCase() === stockSymbol.toLowerCase());
   if (!stock) return false;
-  const tokens = await fetchTokensCreatedAgainst(stock.contractAddress);
+  const excl = new Set(stocks.map((s) => s.contractAddress.toLowerCase()));
+  const tokens = await fetchTokensCreatedAgainst(stock.contractAddress, excl);
   if (tokens.length === 0) return false;
-  // newest by creation time, for demo purposes
-  const newest = [...tokens].sort((a, b) => (b.pairCreatedAt ?? 0) - (a.pairCreatedAt ?? 0))[0];
-  await sendFirstTokenAlert(chatId, stock.symbol, newest);
+  // fetchTokensCreatedAgainst returns oldest-first → [0] is the first launch
+  await sendFirstTokenAlert(chatId, stock.symbol, await enrichCreatedToken(tokens[0]));
   return true;
 }

@@ -98,7 +98,7 @@ export interface CreatedToken {
 
 interface DexPair {
   baseToken?: { address?: string; symbol?: string; name?: string };
-  quoteToken?: { address?: string };
+  quoteToken?: { address?: string; symbol?: string; name?: string };
   dexId?: string;
   pairCreatedAt?: number;
   priceUsd?: string;
@@ -108,11 +108,27 @@ interface DexPair {
   info?: { imageUrl?: string };
 }
 
+// Standard quote/base currencies on Robinhood Chain — a pool of stock↔currency is
+// the stock's own price pool, NOT a token launched against the stock.
+const QUOTE_CURRENCIES = new Set([
+  "USDG", "USDC", "USDT", "DAI", "WETH", "ETH", "WBTC", "BTC",
+  "WBNB", "BNB", "FRAX", "PYUSD", "USD1", "USDE",
+]);
+
 /**
- * Return the tokens that have been created against a given stock (i.e. pools
- * where the stock is the quote token), deduped by token and sorted oldest-first.
+ * Return the tokens launched against a given stock — i.e. pools pairing the stock
+ * with a NON-currency token. DexScreener's base/quote labeling is inconsistent
+ * per stock (the stock can be labeled either side), so we identify the "other"
+ * side by address and keep it only when it isn't a currency or another stock.
+ * Deduped by token (earliest pool kept) and sorted oldest-first.
+ *
+ * Stats (price/liq/mc/image) are left null here because the stock's pairs report
+ * the stock's metrics, not the launched token's — enrich via enrichCreatedToken.
  */
-export async function fetchTokensCreatedAgainst(stockAddress: string): Promise<CreatedToken[]> {
+export async function fetchTokensCreatedAgainst(
+  stockAddress: string,
+  excludeAddresses?: Set<string>
+): Promise<CreatedToken[]> {
   await rateLimit("dexscreener");
   try {
     const res = await fetch(
@@ -123,33 +139,73 @@ export async function fetchTokensCreatedAgainst(stockAddress: string): Promise<C
     const data = await res.json();
     const pairs: DexPair[] = Array.isArray(data) ? data : (data?.pairs ?? []);
     const stock = stockAddress.toLowerCase();
+    const excl = excludeAddresses ?? new Set<string>();
 
     const byToken = new Map<string, CreatedToken>();
     for (const p of pairs) {
-      // Only pools where the stock is the QUOTE side = something paired against it.
-      if ((p.quoteToken?.address ?? "").toLowerCase() !== stock) continue;
-      const addr = p.baseToken?.address ?? "";
-      if (!addr) continue;
-      const tok: CreatedToken = {
-        tokenAddress: addr,
-        symbol: p.baseToken?.symbol ?? "?",
-        name: p.baseToken?.name ?? p.baseToken?.symbol ?? "",
-        dexId: p.dexId ?? "",
-        pairCreatedAt: p.pairCreatedAt ?? null,
-        priceUsd: p.priceUsd ? parseFloat(p.priceUsd) : null,
-        liquidityUsd: p.liquidity?.usd ?? null,
-        marketCap: p.marketCap ?? null,
-        pairUrl: p.url ?? null,
-        imageUrl: p.info?.imageUrl ?? null,
-      };
-      // a token may have several pools against the stock — keep the deepest
-      const ex = byToken.get(addr);
-      if (!ex || (tok.liquidityUsd ?? 0) > (ex.liquidityUsd ?? 0)) byToken.set(addr, tok);
+      const baseAddr = (p.baseToken?.address ?? "").toLowerCase();
+      const quoteAddr = (p.quoteToken?.address ?? "").toLowerCase();
+      // The "other" token is whichever side isn't the stock.
+      const other = baseAddr === stock ? p.quoteToken : quoteAddr === stock ? p.baseToken : null;
+      const otherAddr = (other?.address ?? "").toLowerCase();
+      if (!other || !otherAddr) continue;
+      if (QUOTE_CURRENCIES.has((other.symbol ?? "").toUpperCase())) continue; // stock's own pool
+      if (excl.has(otherAddr)) continue; // another stock, not a launch
+
+      const created = p.pairCreatedAt ?? null;
+      const ex = byToken.get(otherAddr);
+      // keep the EARLIEST pool per token — its first launch time
+      if (!ex || (created ?? Infinity) < (ex.pairCreatedAt ?? Infinity)) {
+        byToken.set(otherAddr, {
+          tokenAddress: other.address ?? "",
+          symbol: other.symbol ?? "?",
+          name: other.name ?? other.symbol ?? "",
+          dexId: p.dexId ?? "",
+          pairCreatedAt: created,
+          priceUsd: null,
+          liquidityUsd: null,
+          marketCap: null,
+          pairUrl: p.url ?? null,
+          imageUrl: null,
+        });
+      }
     }
-    return [...byToken.values()].sort(
-      (a, b) => (a.pairCreatedAt ?? 0) - (b.pairCreatedAt ?? 0)
-    );
+    return [...byToken.values()].sort((a, b) => (a.pairCreatedAt ?? 0) - (b.pairCreatedAt ?? 0));
   } catch {
     return [];
+  }
+}
+
+/**
+ * Fill in a launched token's real stats from its OWN highest-liquidity pool
+ * (where it is the base token, so price/market cap are the token's, not the
+ * stock's). Falls back to the deepest pool if it's never the base.
+ */
+export async function enrichCreatedToken(t: CreatedToken): Promise<CreatedToken> {
+  await rateLimit("dexscreener");
+  try {
+    const res = await fetch(
+      `https://api.dexscreener.com/token-pairs/v1/robinhood/${t.tokenAddress}`,
+      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15_000) }
+    );
+    if (!res.ok) return t;
+    const data = await res.json();
+    const pairs: DexPair[] = Array.isArray(data) ? data : (data?.pairs ?? []);
+    const self = t.tokenAddress.toLowerCase();
+    const asBase = pairs.filter((p) => (p.baseToken?.address ?? "").toLowerCase() === self);
+    const pool = (asBase.length ? asBase : pairs).sort(
+      (a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0)
+    )[0];
+    if (!pool) return t;
+    return {
+      ...t,
+      priceUsd: pool.priceUsd ? parseFloat(pool.priceUsd) : t.priceUsd,
+      liquidityUsd: pool.liquidity?.usd ?? t.liquidityUsd,
+      marketCap: pool.marketCap ?? t.marketCap,
+      imageUrl: pool.info?.imageUrl ?? t.imageUrl,
+      pairUrl: t.pairUrl ?? pool.url ?? null,
+    };
+  } catch {
+    return t;
   }
 }
