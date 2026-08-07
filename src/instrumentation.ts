@@ -53,7 +53,8 @@ export async function register() {
       );
     }, SUNRISE_INTERVAL);
 
-    // Long / Robinhood Chain new-stock-token poller — 60s.
+    // Long / Robinhood Chain: new stocks are added rarely, so poll the asset
+    // registry every 60s...
     console.log("[instrumentation] Starting Long (Robinhood Chain) stock alert poller (every 60s)");
     const LONG_INTERVAL = 60_000;
     pollLongStocks().catch((err) =>
@@ -63,12 +64,21 @@ export async function register() {
       pollLongStocks().catch((err) =>
         console.error("[instrumentation] Long poll error:", err)
       );
-      // Real-time on-chain watcher: ping the first token paired against a
-      // newly-added stock via Uniswap V4 Initialize events.
+    }, LONG_INTERVAL);
+
+    // ...but run the on-chain first-token watcher tighter (30s) so a launch
+    // against a newly-added stock is caught fast. Blockscout getLogs is free,
+    // so a faster cadence adds no cost.
+    console.log("[instrumentation] Starting Long on-chain first-token watcher (every 30s)");
+    const LONG_ONCHAIN_INTERVAL = 30_000;
+    pollLongOnchainCreations().catch((err) =>
+      console.error("[instrumentation] Initial Long on-chain poll error:", err)
+    );
+    setInterval(() => {
       pollLongOnchainCreations().catch((err) =>
         console.error("[instrumentation] Long on-chain poll error:", err)
       );
-    }, LONG_INTERVAL);
+    }, LONG_ONCHAIN_INTERVAL);
 
     // Initial poll on startup
     pollAndStoreDexProfiles().catch((err) =>
