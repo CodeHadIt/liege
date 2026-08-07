@@ -8,7 +8,7 @@ import {
   type StonkFunTokenDetails,
   type QuoteToken,
 } from "@/lib/api/stonkfun";
-import { getBot } from "./bot";
+import { getAlertsBot, broadcastAlert } from "./alerts-bot";
 import { escapeHtml, formatCompact, formatPrice, formatTimeAgo } from "./utils/format";
 
 // In-memory dedupe of mints we've already processed. Seeded on first poll so we
@@ -19,10 +19,6 @@ let seeded = false;
 // Never alert on a launch older than this, even if it somehow escapes dedupe
 // (e.g. after a container restart re-seeds). Keeps pings to genuinely new tokens.
 const MAX_ALERT_AGE_SECONDS = 15 * 60;
-
-function alertChatId(): string {
-  return process.env.STONKFUN_ALERT_CHAT_ID || "";
-}
 
 function solscanToken(mint: string): string {
   return `https://solscan.io/token/${mint}`;
@@ -76,7 +72,7 @@ export function formatStonkFunAlert(d: StonkFunTokenDetails): string {
 }
 
 async function sendAlert(chatId: string, details: StonkFunTokenDetails): Promise<void> {
-  const bot = await getBot();
+  const bot = await getAlertsBot();
   const text = formatStonkFunAlert(details);
   if (details.imageUrl) {
     await bot.api
@@ -115,7 +111,6 @@ export async function pollStonkFunCreations(): Promise<void> {
   const fresh: StonkFunCreation[] = creations.filter((c) => !seen.has(c.mint)).reverse();
   if (fresh.length === 0) return;
 
-  const chatId = alertChatId();
   const nowSec = Date.now() / 1000;
   for (const c of fresh) {
     seen.add(c.mint);
@@ -123,13 +118,9 @@ export async function pollStonkFunCreations(): Promise<void> {
       console.log(`[stonkfun] skipping stale launch ${c.symbol} (${Math.round((nowSec - c.timestamp) / 60)}m old)`);
       continue;
     }
-    if (!chatId) {
-      console.log(`[stonkfun] new token ${c.symbol} (${c.mint}) — STONKFUN_ALERT_CHAT_ID not set, skipping ping`);
-      continue;
-    }
     try {
       const details = await enrichCreation(c);
-      await sendAlert(chatId, details);
+      await broadcastAlert((chatId) => sendAlert(chatId, details));
       console.log(`[stonkfun] alerted: ${details.symbol} vs ${details.pairedSymbol ?? "?"}`);
     } catch (err) {
       console.error("[stonkfun] failed to send alert:", err);
@@ -188,7 +179,7 @@ export function formatQuoteTokenAlert(q: QuoteToken): string {
 }
 
 async function sendQuoteAlert(chatId: string, q: QuoteToken): Promise<void> {
-  const bot = await getBot();
+  const bot = await getAlertsBot();
   const text = formatQuoteTokenAlert(q);
   if (q.logoUrl) {
     await bot.api
@@ -219,15 +210,10 @@ export async function pollStonkFunQuoteTokens(): Promise<void> {
   const fresh = quotes.filter((q) => !seenQuotes.has(q.quoteMint));
   if (fresh.length === 0) return;
 
-  const chatId = alertChatId();
   for (const q of fresh) {
     seenQuotes.add(q.quoteMint);
-    if (!chatId) {
-      console.log(`[stonkfun] new quote token ${q.symbol} — STONKFUN_ALERT_CHAT_ID not set, skipping ping`);
-      continue;
-    }
     try {
-      await sendQuoteAlert(chatId, q);
+      await broadcastAlert((chatId) => sendQuoteAlert(chatId, q));
       console.log(`[stonkfun] alerted new quote token: ${q.symbol} (${q.category})`);
     } catch (err) {
       console.error("[stonkfun] failed to send quote-token alert:", err);

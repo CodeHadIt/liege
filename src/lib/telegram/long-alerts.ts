@@ -14,7 +14,7 @@ import {
   ZERO_ADDRESS,
   type Launchpad,
 } from "@/lib/api/long-onchain";
-import { getBot } from "./bot";
+import { getAlertsBot, broadcastAlert } from "./alerts-bot";
 import { escapeHtml, formatCompact, formatPrice } from "./utils/format";
 
 // Currency symbols that indicate a stock's own price pool (not a token launched
@@ -29,10 +29,6 @@ const LONG_CREATE_URL = "https://app.long.xyz/create";
 // the system comes online.
 const seen = new Set<string>();
 let seeded = false;
-
-function alertChatId(): string {
-  return process.env.LONG_ALERT_CHAT_ID || process.env.STONKFUN_ALERT_CHAT_ID || "";
-}
 
 export function formatLongStockAlert(t: RhStockToken): string {
   // Names look like "Take-Two Interactive Software • Robinhood Token"
@@ -56,7 +52,7 @@ export function formatLongStockAlert(t: RhStockToken): string {
 }
 
 async function sendAlert(chatId: string, t: RhStockToken): Promise<void> {
-  const bot = await getBot();
+  const bot = await getAlertsBot();
   const text = formatLongStockAlert(t);
   if (t.logoUrl) {
     await bot.api
@@ -87,18 +83,13 @@ export async function pollLongStocks(): Promise<void> {
   const fresh = stocks.filter((s) => !seen.has(s.contractAddress));
   if (fresh.length === 0) return;
 
-  const chatId = alertChatId();
   for (const s of fresh) {
     seen.add(s.contractAddress);
     // Begin watching this newly-added stock (by lowercase address, to match
     // on-chain event topics) for its inaugural token launch.
     awaitingFirstToken.set(s.contractAddress.toLowerCase(), { symbol: s.symbol, addedAt: Date.now() });
-    if (!chatId) {
-      console.log(`[long] new stock ${s.symbol} — alert chat not set, skipping ping`);
-      continue;
-    }
     try {
-      await sendAlert(chatId, s);
+      await broadcastAlert((chatId) => sendAlert(chatId, s));
       console.log(`[long] alerted new stock: ${s.symbol} (${s.name})`);
     } catch (err) {
       console.error("[long] failed to send alert:", err);
@@ -151,7 +142,7 @@ export function formatFirstTokenAlert(stockSymbol: string, t: CreatedToken, plat
 }
 
 async function sendFirstTokenAlert(chatId: string, stockSymbol: string, t: CreatedToken, platform?: Launchpad): Promise<void> {
-  const bot = await getBot();
+  const bot = await getAlertsBot();
   const text = formatFirstTokenAlert(stockSymbol, t, platform);
   if (t.imageUrl) {
     await bot.api
@@ -197,7 +188,6 @@ export async function pollLongOnchainCreations(): Promise<void> {
     if (now - w.addedAt > WATCH_TTL_MS) awaitingFirstToken.delete(addr);
   }
 
-  const chatId = alertChatId();
   const stockSet = new Set([...seen].map((a) => a.toLowerCase()));
 
   for (const ev of events) {
@@ -217,10 +207,6 @@ export async function pollLongOnchainCreations(): Promise<void> {
     const w = awaitingFirstToken.get(watchedStock)!;
     awaitingFirstToken.delete(watchedStock); // one ping per new stock
 
-    if (!chatId) {
-      console.log(`[long] first token ${meta.symbol} vs ${w.symbol} — alert chat not set`);
-      continue;
-    }
     try {
       const token: CreatedToken = {
         tokenAddress: other,
@@ -238,7 +224,8 @@ export async function pollLongOnchainCreations(): Promise<void> {
       // identify which launchpad created the pool (best-effort)
       const platform = await resolveLaunchpad(ev.hooks, ev.txHash, other);
       // best-effort market stats (may be empty for a brand-new pool)
-      await sendFirstTokenAlert(chatId, w.symbol, await enrichCreatedToken(token), platform);
+      const enriched = await enrichCreatedToken(token);
+      await broadcastAlert((chatId) => sendFirstTokenAlert(chatId, w.symbol, enriched, platform));
       console.log(`[long] alerted first token ${meta.symbol} vs ${w.symbol} on ${platform.name} (onchain)`);
     } catch (err) {
       console.error("[long] failed to send first-token alert:", err);

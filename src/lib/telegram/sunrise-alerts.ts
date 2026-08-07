@@ -4,7 +4,7 @@ import {
   sunriseTokenUrl,
   type SunriseToken,
 } from "@/lib/api/sunrise";
-import { getBot } from "./bot";
+import { getAlertsBot, broadcastAlert } from "./alerts-bot";
 import { escapeHtml } from "./utils/format";
 
 // Which asset classes to alert on. Sunrise's focus (and the user's) is tokenized
@@ -15,12 +15,6 @@ const ALERT_ASSET_CLASSES = new Set(["stock"]);
 // the system comes online — not the existing backlog.
 const seen = new Set<string>();
 let seeded = false;
-
-// Reuses the StonkFun alert chat by default so no new env var is needed; can be
-// split out with SUNRISE_ALERT_CHAT_ID.
-function alertChatId(): string {
-  return process.env.SUNRISE_ALERT_CHAT_ID || process.env.STONKFUN_ALERT_CHAT_ID || "";
-}
 
 const ASSET_CLASS_LABEL: Record<string, string> = {
   stock:      "📈 Stock",
@@ -63,7 +57,7 @@ export function formatSunriseAlert(t: SunriseToken): string {
 }
 
 async function sendAlert(chatId: string, t: SunriseToken): Promise<void> {
-  const bot = await getBot();
+  const bot = await getAlertsBot();
   const text = formatSunriseAlert(t);
   if (t.icon) {
     await bot.api
@@ -96,19 +90,10 @@ export async function pollSunriseStocks(): Promise<void> {
   const fresh = relevant.filter((t) => !seen.has(t.address));
   if (fresh.length === 0) return;
 
-  const chatId = alertChatId();
   for (const t of fresh) {
     seen.add(t.address);
-    if (!chatId) {
-      console.log(`[sunrise] new stock pair ${t.symbol} — alert chat not set, skipping ping`);
-      continue;
-    }
-    try {
-      await sendAlert(chatId, t);
-      console.log(`[sunrise] alerted new stock pair: ${t.symbol} (${t.name})`);
-    } catch (err) {
-      console.error("[sunrise] failed to send alert:", err);
-    }
+    await broadcastAlert((chatId) => sendAlert(chatId, t));
+    console.log(`[sunrise] alerted new stock pair: ${t.symbol} (${t.name})`);
   }
 }
 
