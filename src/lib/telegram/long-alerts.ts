@@ -6,8 +6,20 @@ import {
   type RhStockToken,
   type CreatedToken,
 } from "@/lib/api/robinhood-stocks";
+import {
+  getLatestBlock,
+  getInitializeEvents,
+  getTokenMeta,
+  ZERO_ADDRESS,
+} from "@/lib/api/long-onchain";
 import { getBot } from "./bot";
 import { escapeHtml, formatCompact, formatPrice } from "./utils/format";
+
+// Currency symbols that indicate a stock's own price pool (not a token launched
+// against it) — used to skip when the "other" side of an Initialize is a currency.
+const QUOTE_SYMBOLS = new Set([
+  "USDG", "USDC", "USDT", "DAI", "WETH", "ETH", "WBTC", "BTC", "WBNB", "BNB", "FRAX", "PYUSD",
+]);
 
 const LONG_CREATE_URL = "https://app.long.xyz/create";
 
@@ -76,8 +88,9 @@ export async function pollLongStocks(): Promise<void> {
   const chatId = alertChatId();
   for (const s of fresh) {
     seen.add(s.contractAddress);
-    // Begin watching this newly-added stock for its inaugural token launch.
-    awaitingFirstToken.set(s.contractAddress, { symbol: s.symbol, seen: null, addedAt: Date.now() });
+    // Begin watching this newly-added stock (by lowercase address, to match
+    // on-chain event topics) for its inaugural token launch.
+    awaitingFirstToken.set(s.contractAddress.toLowerCase(), { symbol: s.symbol, addedAt: Date.now() });
     if (!chatId) {
       console.log(`[long] new stock ${s.symbol} — alert chat not set, skipping ping`);
       continue;
@@ -95,12 +108,13 @@ export async function pollLongStocks(): Promise<void> {
 
 interface FirstTokenWatch {
   symbol: string;
-  /** Baseline token set at watch start (null until seeded); a token not in here is a new launch. */
-  seen: Set<string> | null;
   addedAt: number;
 }
-const awaitingFirstToken = new Map<string, FirstTokenWatch>(); // key: stock contract
+const awaitingFirstToken = new Map<string, FirstTokenWatch>(); // key: lowercase stock contract
 const WATCH_TTL_MS = 14 * 24 * 60 * 60 * 1000; // stop watching after 14 days with no launch
+// Never scan more than this many blocks in one pass (after downtime, skip the gap).
+const MAX_BLOCK_SPAN = 100_000;
+let lastScannedBlock: number | null = null;
 
 export function formatFirstTokenAlert(stockSymbol: string, t: CreatedToken): string {
   const lines: string[] = [];
@@ -140,48 +154,119 @@ async function sendFirstTokenAlert(chatId: string, stockSymbol: string, t: Creat
 }
 
 /**
- * For each newly-added stock we're watching, detect the first token launched
- * against it and ping once. On the first pass per stock we snapshot the existing
- * tokens (baseline) so a pre-existing token is never mistaken for the inaugural
- * launch; the first token beyond the baseline is the winner.
+ * Real-time watcher: scans new Uniswap V4 PoolManager `Initialize` events on
+ * Robinhood Chain and pings the moment a token is paired against a stock we're
+ * watching (a newly-added stock). This is the actual on-chain creation event —
+ * not a post-hoc DexScreener pool index — so it fires as the pool is created.
+ *
+ * A stock is watched from the block we first observe it; the first Initialize
+ * pairing a non-currency token with it is the inaugural launch. One ping per
+ * stock, then it stops watching.
  */
-export async function pollLongFirstTokens(): Promise<void> {
-  if (awaitingFirstToken.size === 0) return;
+export async function pollLongOnchainCreations(): Promise<void> {
+  const latest = await getLatestBlock();
+  if (latest == null) return;
+
+  // Baseline on first run; also advance the cursor when nothing is being watched
+  // so we never backfill a huge history once a stock is added.
+  if (lastScannedBlock == null || awaitingFirstToken.size === 0) {
+    lastScannedBlock = latest;
+    return;
+  }
+  if (latest <= lastScannedBlock) return;
+
+  const from = Math.max(lastScannedBlock + 1, latest - MAX_BLOCK_SPAN);
+  const events = await getInitializeEvents(from, latest);
+  lastScannedBlock = latest;
+  if (events.length === 0) return;
+
   const chatId = alertChatId();
-  // Exclude other stock contracts (a stock↔stock pool isn't a launch).
-  const excl = new Set([...seen].map((a) => a.toLowerCase()));
+  const stockSet = new Set([...seen].map((a) => a.toLowerCase()));
 
-  for (const [stockAddr, w] of awaitingFirstToken) {
-    if (Date.now() - w.addedAt > WATCH_TTL_MS) {
-      awaitingFirstToken.delete(stockAddr);
-      continue;
+  for (const ev of events) {
+    // TTL cleanup as we go
+    for (const [addr, w] of awaitingFirstToken) {
+      if (Date.now() - w.addedAt > WATCH_TTL_MS) awaitingFirstToken.delete(addr);
     }
-    const tokens = await fetchTokensCreatedAgainst(stockAddr, excl);
+    const watchedStock = awaitingFirstToken.has(ev.currency0)
+      ? ev.currency0
+      : awaitingFirstToken.has(ev.currency1)
+        ? ev.currency1
+        : null;
+    if (!watchedStock) continue;
 
-    if (w.seen === null) {
-      w.seen = new Set(tokens.map((t) => t.tokenAddress));
-      continue; // baseline established this pass
-    }
+    const other = watchedStock === ev.currency0 ? ev.currency1 : ev.currency0;
+    if (other === ZERO_ADDRESS || stockSet.has(other)) continue; // native ETH / stock↔stock
 
-    const fresh = tokens.filter((t) => !w.seen!.has(t.tokenAddress));
-    if (fresh.length === 0) continue;
+    const meta = await getTokenMeta(other);
+    if (!meta || QUOTE_SYMBOLS.has(meta.symbol.toUpperCase())) continue; // a currency pool
 
-    // tokens is already sorted by on-chain deployment time (oldest first), so the
-    // first fresh entry is the earliest-launched new token.
-    const first = fresh[0];
-    awaitingFirstToken.delete(stockAddr); // one ping per new stock
+    const w = awaitingFirstToken.get(watchedStock)!;
+    awaitingFirstToken.delete(watchedStock); // one ping per new stock
 
     if (!chatId) {
-      console.log(`[long] first token ${first.symbol} vs ${w.symbol} — alert chat not set`);
+      console.log(`[long] first token ${meta.symbol} vs ${w.symbol} — alert chat not set`);
       continue;
     }
     try {
-      await sendFirstTokenAlert(chatId, w.symbol, await enrichCreatedToken(first));
-      console.log(`[long] alerted first token ${first.symbol} vs ${w.symbol}`);
+      const token: CreatedToken = {
+        tokenAddress: other,
+        symbol: meta.symbol,
+        name: meta.name,
+        dexId: "Uniswap V4",
+        pairCreatedAt: Date.now(),
+        onChainCreatedAt: null,
+        priceUsd: null,
+        liquidityUsd: null,
+        marketCap: null,
+        pairUrl: null,
+        imageUrl: meta.iconUrl,
+      };
+      // best-effort market stats (may be empty for a brand-new pool)
+      await sendFirstTokenAlert(chatId, w.symbol, await enrichCreatedToken(token));
+      console.log(`[long] alerted first token ${meta.symbol} vs ${w.symbol} (onchain)`);
     } catch (err) {
       console.error("[long] failed to send first-token alert:", err);
     }
   }
+}
+
+/**
+ * Manual test: scan a historical block range for the first on-chain Initialize
+ * pairing a token with the given stock, and ping it — exercises the real
+ * getInitializeEvents → getTokenMeta → alert path used by the live watcher.
+ */
+export async function sendOnchainFirstTokenTest(
+  chatId: string,
+  stockSymbol: string,
+  fromBlock: number,
+  toBlock: number
+): Promise<boolean> {
+  const stocks = await fetchRobinhoodStockTokens();
+  const stock = stocks.find((s) => s.symbol.toLowerCase() === stockSymbol.toLowerCase());
+  if (!stock) return false;
+  const stockAddr = stock.contractAddress.toLowerCase();
+  const stockSet = new Set(stocks.map((s) => s.contractAddress.toLowerCase()));
+
+  const events = await getInitializeEvents(fromBlock, toBlock);
+  for (const ev of events) {
+    const isStock = ev.currency0 === stockAddr || ev.currency1 === stockAddr;
+    if (!isStock) continue;
+    const other = ev.currency0 === stockAddr ? ev.currency1 : ev.currency0;
+    if (other === ZERO_ADDRESS || stockSet.has(other)) continue;
+    const meta = await getTokenMeta(other);
+    if (!meta || QUOTE_SYMBOLS.has(meta.symbol.toUpperCase())) continue;
+
+    const token: CreatedToken = {
+      tokenAddress: other, symbol: meta.symbol, name: meta.name, dexId: "Uniswap V4",
+      pairCreatedAt: null, onChainCreatedAt: null, priceUsd: null, liquidityUsd: null,
+      marketCap: null, pairUrl: null, imageUrl: meta.iconUrl,
+    };
+    await sendFirstTokenAlert(chatId, stock.symbol, await enrichCreatedToken(token));
+    console.log(`[long] (test) first onchain token ${meta.symbol} vs ${stock.symbol} at block ${ev.blockNumber}`);
+    return true;
+  }
+  return false;
 }
 
 /** Manual test: send an existing stock so the format can be verified. */
