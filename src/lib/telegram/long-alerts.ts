@@ -236,7 +236,7 @@ export async function pollLongOnchainCreations(): Promise<void> {
         imageUrl: meta.iconUrl,
       };
       // identify which launchpad created the pool (best-effort)
-      const platform = await resolveLaunchpad(ev.hooks, ev.txHash);
+      const platform = await resolveLaunchpad(ev.hooks, ev.txHash, other);
       // best-effort market stats (may be empty for a brand-new pool)
       await sendFirstTokenAlert(chatId, w.symbol, await enrichCreatedToken(token), platform);
       console.log(`[long] alerted first token ${meta.symbol} vs ${w.symbol} on ${platform.name} (onchain)`);
@@ -277,7 +277,7 @@ export async function sendOnchainFirstTokenTest(
       pairCreatedAt: null, onChainCreatedAt: null, priceUsd: null, liquidityUsd: null,
       marketCap: null, pairUrl: null, imageUrl: meta.iconUrl,
     };
-    const platform = await resolveLaunchpad(ev.hooks, ev.txHash);
+    const platform = await resolveLaunchpad(ev.hooks, ev.txHash, other);
     await sendFirstTokenAlert(chatId, stock.symbol, await enrichCreatedToken(token), platform);
     console.log(`[long] (test) first onchain token ${meta.symbol} vs ${stock.symbol} on ${platform.name} at block ${ev.blockNumber}`);
     return true;

@@ -145,6 +145,14 @@ const ROUTER_PLATFORMS: Record<string, Launchpad> = {
   "0x22e99278308b393ea1260859b181ad7e78f5eeed": { name: "Long", url: "https://app.long.xyz/create", via: false }, // LongLauncher
 };
 
+// Some launchpads (e.g. Pons) create plain no-hook Uniswap V4 pools via the
+// standard PositionManager, so neither the hook nor the pool router identifies
+// them. Their fingerprint is the TOKEN: the factory that deployed it (lowercase)
+// is deterministic per launchpad and is the authoritative signal.
+const FACTORY_PLATFORMS: Record<string, Launchpad> = {
+  "0x3711cea4feade896c913c68f01eda97cb06d1a42": { name: "Pons", url: "https://www.ponsfamily.com/launchpad/create", via: false }, // PonsV2 factory
+};
+
 // Brand from a contract's verified name (router or hook). Substring match keeps
 // this resilient to per-deploy hook addresses (Clanker/Flaunch deploy many).
 function brandFromName(name?: string | null): Launchpad | null {
@@ -194,14 +202,40 @@ async function getContractName(address: string): Promise<string | null> {
   }
 }
 
+/** The factory/deployer that created a contract (lowercase), or null. */
+async function getContractFactory(address: string): Promise<string | null> {
+  await rateLimit("robinscan");
+  try {
+    const res = await fetch(
+      `${RH_EXPLORER}/api?module=contract&action=getcontractcreation&contractaddresses=${address}`,
+      { headers: { Accept: "application/json", "User-Agent": UA }, signal: AbortSignal.timeout(15_000) }
+    );
+    if (!res.ok) return null;
+    const d = await res.json();
+    const row = Array.isArray(d?.result) ? d.result[0] : null;
+    const f = row?.contractFactory ?? row?.contractCreator;
+    return f ? String(f).toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Best-effort platform behind a pool creation. Resolution order:
- *   1. branded launch-tx router (address map, then verified name),
- *   2. known hook address,
- *   3. hook's on-chain protocol name,
- *   4. generic Uniswap V4.
+ * Best-effort platform behind a launch. Resolution order, most-specific first:
+ *   1. branded launch-tx router (e.g. LongLauncher),
+ *   2. the launched token's deployer factory (e.g. Pons factory),
+ *   3. the launched token's verified contract name (e.g. PonsV2LauncherToken),
+ *   4. known hook address (no hook -> Uniswap V4 / pools.trade; Doppler; Klik),
+ *   5. hook's on-chain protocol name,
+ *   6. generic Uniswap V4.
+ * `tokenAddress` is the freshly-launched token — its origin is the only signal
+ * for launchpads that create plain no-hook Uniswap pools (Pons).
  */
-export async function resolveLaunchpad(hook: string, txHash?: string): Promise<Launchpad> {
+export async function resolveLaunchpad(
+  hook: string,
+  txHash?: string,
+  tokenAddress?: string
+): Promise<Launchpad> {
   const h = (hook || "").toLowerCase();
 
   // 1. Branded router the launch tx called (most specific frontend signal).
@@ -214,10 +248,18 @@ export async function resolveLaunchpad(hook: string, txHash?: string): Promise<L
     }
   }
 
-  // 2. Known hook address.
+  // 2/3. The launched token's own origin — deployer factory, then contract name.
+  if (tokenAddress) {
+    const factory = await getContractFactory(tokenAddress);
+    if (factory && FACTORY_PLATFORMS[factory]) return FACTORY_PLATFORMS[factory];
+    const byToken = brandFromName(await getContractName(tokenAddress));
+    if (byToken) return byToken;
+  }
+
+  // 4. Known hook address.
   if (HOOK_PLATFORMS[h]) return HOOK_PLATFORMS[h];
 
-  // 3. Hook's on-chain protocol/brand name (skip the zero hook).
+  // 5. Hook's on-chain protocol/brand name (skip the zero hook).
   if (h && h !== ZERO_ADDRESS) {
     const hookName = await getContractName(h);
     const byHook = brandFromName(hookName);
@@ -228,6 +270,6 @@ export async function resolveLaunchpad(hook: string, txHash?: string): Promise<L
     }
   }
 
-  // 4. Fallback.
+  // 6. Fallback.
   return { name: "Uniswap V4", url: null, via: true };
 }
