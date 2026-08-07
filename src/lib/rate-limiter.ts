@@ -46,7 +46,11 @@ const API_RATE_LIMITS: Record<string, RateLimiterConfig> = {
   helius: { maxTokens: 20, refillRate: 8 },
   basescan: { maxTokens: 5, refillRate: 0.08 },
   bscscan: { maxTokens: 5, refillRate: 0.08 },
-  robinscan: { maxTokens: 5, refillRate: 0.08 },
+  // Robinhood Chain Blockscout reads. Sized for the 30s on-chain watcher, which
+  // can spend several calls per pass (latest block + getLogs + token meta +
+  // enrich). Blockscout's read API allows well above this, so 2/s with a burst of
+  // 10 keeps the watcher from ever blocking on the limiter while staying polite.
+  robinscan: { maxTokens: 10, refillRate: 2 },
   stonkfun: { maxTokens: 10, refillRate: 0.5 },
   sunrise: { maxTokens: 10, refillRate: 0.5 },
   robinhood: { maxTokens: 10, refillRate: 0.5 },

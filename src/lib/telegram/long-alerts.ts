@@ -180,14 +180,16 @@ export async function pollLongOnchainCreations(): Promise<void> {
   lastScannedBlock = latest;
   if (events.length === 0) return;
 
+  // Drop stale watches once per pass (not per event).
+  const now = Date.now();
+  for (const [addr, w] of awaitingFirstToken) {
+    if (now - w.addedAt > WATCH_TTL_MS) awaitingFirstToken.delete(addr);
+  }
+
   const chatId = alertChatId();
   const stockSet = new Set([...seen].map((a) => a.toLowerCase()));
 
   for (const ev of events) {
-    // TTL cleanup as we go
-    for (const [addr, w] of awaitingFirstToken) {
-      if (Date.now() - w.addedAt > WATCH_TTL_MS) awaitingFirstToken.delete(addr);
-    }
     const watchedStock = awaitingFirstToken.has(ev.currency0)
       ? ev.currency0
       : awaitingFirstToken.has(ev.currency1)
