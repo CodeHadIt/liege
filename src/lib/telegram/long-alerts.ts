@@ -10,7 +10,9 @@ import {
   getLatestBlock,
   getInitializeEvents,
   getTokenMeta,
+  resolveLaunchpad,
   ZERO_ADDRESS,
+  type Launchpad,
 } from "@/lib/api/long-onchain";
 import { getBot } from "./bot";
 import { escapeHtml, formatCompact, formatPrice } from "./utils/format";
@@ -116,10 +118,19 @@ const WATCH_TTL_MS = 14 * 24 * 60 * 60 * 1000; // stop watching after 14 days wi
 const MAX_BLOCK_SPAN = 100_000;
 let lastScannedBlock: number | null = null;
 
-export function formatFirstTokenAlert(stockSymbol: string, t: CreatedToken): string {
+function formatLaunchpadLine(p: Launchpad): string {
+  const verb = p.via ? "Launched via" : "Launched on";
+  const label = p.url
+    ? `<a href="${escapeHtml(p.url)}">${escapeHtml(p.name)}</a>`
+    : `<b>${escapeHtml(p.name)}</b>`;
+  return `🚀 ${verb} ${label}`;
+}
+
+export function formatFirstTokenAlert(stockSymbol: string, t: CreatedToken, platform?: Launchpad): string {
   const lines: string[] = [];
   lines.push(`🥇 <b>First token vs $${escapeHtml(stockSymbol)}</b>`);
   lines.push(`<i>Inaugural launch paired to the newly-added stock.</i>`);
+  if (platform) lines.push(formatLaunchpadLine(platform));
   lines.push("");
   lines.push(`<b>${escapeHtml(t.name || t.symbol)}</b>  ·  <code>$${escapeHtml(t.symbol)}</code>`);
   lines.push(`🔗 <b>$${escapeHtml(t.symbol)}</b> ⇄ <b>$${escapeHtml(stockSymbol)}</b>${t.dexId ? `  ·  🏦 ${escapeHtml(t.dexId)}` : ""}`);
@@ -139,9 +150,9 @@ export function formatFirstTokenAlert(stockSymbol: string, t: CreatedToken): str
   return lines.join("\n");
 }
 
-async function sendFirstTokenAlert(chatId: string, stockSymbol: string, t: CreatedToken): Promise<void> {
+async function sendFirstTokenAlert(chatId: string, stockSymbol: string, t: CreatedToken, platform?: Launchpad): Promise<void> {
   const bot = await getBot();
-  const text = formatFirstTokenAlert(stockSymbol, t);
+  const text = formatFirstTokenAlert(stockSymbol, t, platform);
   if (t.imageUrl) {
     await bot.api
       .sendPhoto(chatId, t.imageUrl, { caption: text, parse_mode: "HTML" })
@@ -224,9 +235,11 @@ export async function pollLongOnchainCreations(): Promise<void> {
         pairUrl: null,
         imageUrl: meta.iconUrl,
       };
+      // identify which launchpad created the pool (best-effort)
+      const platform = await resolveLaunchpad(ev.hooks, ev.txHash);
       // best-effort market stats (may be empty for a brand-new pool)
-      await sendFirstTokenAlert(chatId, w.symbol, await enrichCreatedToken(token));
-      console.log(`[long] alerted first token ${meta.symbol} vs ${w.symbol} (onchain)`);
+      await sendFirstTokenAlert(chatId, w.symbol, await enrichCreatedToken(token), platform);
+      console.log(`[long] alerted first token ${meta.symbol} vs ${w.symbol} on ${platform.name} (onchain)`);
     } catch (err) {
       console.error("[long] failed to send first-token alert:", err);
     }
@@ -264,8 +277,9 @@ export async function sendOnchainFirstTokenTest(
       pairCreatedAt: null, onChainCreatedAt: null, priceUsd: null, liquidityUsd: null,
       marketCap: null, pairUrl: null, imageUrl: meta.iconUrl,
     };
-    await sendFirstTokenAlert(chatId, stock.symbol, await enrichCreatedToken(token));
-    console.log(`[long] (test) first onchain token ${meta.symbol} vs ${stock.symbol} at block ${ev.blockNumber}`);
+    const platform = await resolveLaunchpad(ev.hooks, ev.txHash);
+    await sendFirstTokenAlert(chatId, stock.symbol, await enrichCreatedToken(token), platform);
+    console.log(`[long] (test) first onchain token ${meta.symbol} vs ${stock.symbol} on ${platform.name} at block ${ev.blockNumber}`);
     return true;
   }
   return false;
