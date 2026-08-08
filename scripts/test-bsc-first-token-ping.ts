@@ -13,6 +13,11 @@
  *   npx tsx scripts/test-bsc-first-token-ping.ts [SYMBOL] [START_ISO]
  *   npx tsx scripts/test-bsc-first-token-ping.ts NVDAB 2026-07-28T00:00:00Z
  */
+// Next loads .env.local itself, but this script runs standalone under tsx, so
+// the alerts-bot credentials have to be pulled in explicitly.
+import { config as loadEnv } from "dotenv";
+loadEnv({ path: ".env.local" });
+
 import { fetchFlapPaymentTokens, FLAP_BSC_CHAIN_ID } from "../src/lib/api/flap";
 import {
   getLatestBscBlock,
