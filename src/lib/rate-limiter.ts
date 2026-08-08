@@ -54,6 +54,16 @@ const API_RATE_LIMITS: Record<string, RateLimiterConfig> = {
   stonkfun: { maxTokens: 10, refillRate: 0.5 },
   sunrise: { maxTokens: 10, refillRate: 0.5 },
   robinhood: { maxTokens: 10, refillRate: 0.5 },
+  // BSC stock-quote watchers. Both scrape a page (and, for Flap, its app bundle)
+  // rather than an API, so they poll gently — new quote assets are listed on the
+  // order of days, not seconds.
+  fourmeme: { maxTokens: 5, refillRate: 0.2 },
+  flap: { maxTokens: 6, refillRate: 0.2 },
+  // Public BNB Chain RPCs, used by the on-chain launch watcher. A pass costs a
+  // block number, one getLogs per watched platform, and a couple of calls per
+  // matching launch — well inside the free endpoints' limits at 5/s, and the
+  // client rotates endpoints on failure anyway.
+  bscrpc: { maxTokens: 20, refillRate: 5 },
   jupiter: { maxTokens: 30, refillRate: 0.5 },
   moralis: { maxTokens: 20, refillRate: 0.33 },
 };

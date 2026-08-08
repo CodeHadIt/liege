@@ -14,6 +14,13 @@ import {
   ZERO_ADDRESS,
   type Launchpad,
 } from "@/lib/api/long-onchain";
+import {
+  fetchFlapPaymentTokens,
+  flapLogoUrl,
+  flapLaunchUrl,
+  FLAP_ROBINHOOD_CHAIN_ID,
+  type FlapPaymentToken,
+} from "@/lib/api/flap";
 import { getAlertsBot, broadcastAlert } from "./alerts-bot";
 import { escapeHtml, formatCompact, formatPrice } from "./utils/format";
 
@@ -188,7 +195,9 @@ export async function pollLongOnchainCreations(): Promise<void> {
     if (now - w.addedAt > WATCH_TTL_MS) awaitingFirstToken.delete(addr);
   }
 
-  const stockSet = new Set([...seen].map((a) => a.toLowerCase()));
+  // Every stock we know of on this chain, from either source — a pool pairing
+  // two of them is not a launch.
+  const stockSet = new Set([...seen, ...flapStockAddresses].map((a) => a.toLowerCase()));
 
   for (const ev of events) {
     const watchedStock = awaitingFirstToken.has(ev.currency0)
@@ -231,6 +240,108 @@ export async function pollLongOnchainCreations(): Promise<void> {
       console.error("[long] failed to send first-token alert:", err);
     }
   }
+}
+
+// ── Flap on Robinhood Chain ───────────────────────────────────────────────────
+// Long isn't the only launchpad pricing tokens in tokenized stocks on Robinhood
+// Chain — Flap runs there too, with its own quote catalog. That catalog is not
+// a subset of Robinhood's asset registry (it carries third-party issues such as
+// HOODon), so it's a genuinely additional source of "a new stock is tradable".
+// New Flap stocks feed the same on-chain first-token watcher as registry ones.
+
+const flapSeen = new Set<string>(); // lowercase addresses, dedupe for alerts
+const flapStockAddresses = new Set<string>(); // union'd into the on-chain stock filter
+let flapSeeded = false;
+
+export function formatFlapRhStockAlert(t: FlapPaymentToken): string {
+  // Names look like "Apple • Robinhood Token" — keep the company, drop the issuer.
+  const company = t.name.split("•")[0].trim() || t.symbol;
+
+  const lines: string[] = [];
+  lines.push(`📈 <b>New Stock Quote on Flap</b>`);
+  lines.push(`<i>Tradable as a launch pair on Robinhood Chain.</i>`);
+  lines.push("");
+  lines.push(`<b>${escapeHtml(company)}</b>  ·  <code>$${escapeHtml(t.symbol)}</code>`);
+  lines.push(`🏷 Tokenized stock  ·  ⛓ Robinhood Chain`);
+  lines.push("");
+  if (t.address) {
+    lines.push(`<code>${escapeHtml(t.address)}</code>`);
+    lines.push(
+      `🔭 <a href="${rhExplorerTokenUrl(t.address)}">Blockscout</a>` +
+        `  ·  🚀 <a href="${escapeHtml(flapLaunchUrl("robinhood"))}">Launch on Flap</a>`
+    );
+  } else {
+    lines.push(`<i>Contract not deployed yet.</i>`);
+    lines.push(`🚀 <a href="${escapeHtml(flapLaunchUrl("robinhood"))}">Flap</a>`);
+  }
+  return lines.join("\n");
+}
+
+async function sendFlapRhAlert(chatId: string, t: FlapPaymentToken): Promise<void> {
+  const bot = await getAlertsBot();
+  const text = formatFlapRhStockAlert(t);
+  const logo = flapLogoUrl(t.logoUrl);
+  if (logo) {
+    await bot.api
+      .sendPhoto(chatId, logo, { caption: text, parse_mode: "HTML" })
+      .catch(async () => {
+        await bot.api.sendMessage(chatId, text, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
+      });
+  } else {
+    await bot.api.sendMessage(chatId, text, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
+  }
+}
+
+/**
+ * One poll cycle over Flap's Robinhood Chain quote catalog. Alerts on newly
+ * listed tokenized stocks and hands them to the on-chain first-token watcher.
+ * Seeds silently on first run.
+ */
+export async function pollFlapRobinhoodStocks(): Promise<void> {
+  const all = await fetchFlapPaymentTokens();
+  const stocks = all.filter(
+    (t) => t.chainId === FLAP_ROBINHOOD_CHAIN_ID && t.category === "rwa" && t.status === "available"
+  );
+  if (stocks.length === 0) return;
+
+  for (const s of stocks) {
+    if (s.address) flapStockAddresses.add(s.address.toLowerCase());
+  }
+
+  if (!flapSeeded) {
+    for (const s of stocks) flapSeen.add(s.address ?? s.symbol.toLowerCase());
+    flapSeeded = true;
+    console.log(`[long] seeded ${flapSeen.size} existing Flap stock quotes on Robinhood Chain`);
+    return;
+  }
+
+  for (const s of stocks) {
+    const key = s.address ?? s.symbol.toLowerCase();
+    if (flapSeen.has(key)) continue;
+    flapSeen.add(key);
+
+    if (s.address) {
+      // Watch for the inaugural launch, same as a registry-sourced stock.
+      awaitingFirstToken.set(s.address.toLowerCase(), { symbol: s.symbol, addedAt: Date.now() });
+    }
+    try {
+      await broadcastAlert((chatId) => sendFlapRhAlert(chatId, s));
+      console.log(`[long] alerted new Flap stock quote: ${s.symbol} (${s.name})`);
+    } catch (err) {
+      console.error("[long] failed to send Flap stock alert:", err);
+    }
+  }
+}
+
+/** Manual test: send an existing Flap Robinhood-chain stock to verify the format. */
+export async function sendFlapRhTestPing(chatId: string, symbol?: string): Promise<boolean> {
+  const all = await fetchFlapPaymentTokens();
+  const stocks = all.filter((t) => t.chainId === FLAP_ROBINHOOD_CHAIN_ID && t.category === "rwa");
+  if (stocks.length === 0) return false;
+  const pick = symbol ? stocks.find((s) => s.symbol.toLowerCase() === symbol.toLowerCase()) : stocks[0];
+  if (!pick) return false;
+  await sendFlapRhAlert(chatId, pick);
+  return true;
 }
 
 /**

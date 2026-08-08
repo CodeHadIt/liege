@@ -1,5 +1,6 @@
 import { rateLimit } from "@/lib/rate-limiter";
 import { RH_EXPLORER } from "@/lib/api/robinhood-stocks";
+import { FLAP_PORTALS, FLAP_ROBINHOOD_CHAIN_ID } from "@/lib/api/flap";
 
 // Long launches are Uniswap V4 pools created via the singleton PoolManager on
 // Robinhood Chain. Each creation emits an `Initialize` event carrying both
@@ -143,6 +144,10 @@ const HOOK_PLATFORMS: Record<string, Launchpad> = {
 // Known branded router contract addresses (lowercase) → frontend.
 const ROUTER_PLATFORMS: Record<string, Launchpad> = {
   "0x22e99278308b393ea1260859b181ad7e78f5eeed": { name: "Long", url: "https://app.long.xyz/create", via: false }, // LongLauncher
+  // Flap's Robinhood Chain launch portal. It's deployed as a bare
+  // TransparentUpgradeableProxy, so its verified name reveals nothing about
+  // Flap — only this address identifies it.
+  [FLAP_PORTALS[FLAP_ROBINHOOD_CHAIN_ID]]: { name: "Flap", url: "https://flap.sh/launch?chain=robinhood&lang=en", via: false },
 };
 
 // Some launchpads (e.g. Pons) create plain no-hook Uniswap V4 pools via the
@@ -160,7 +165,8 @@ function brandFromName(name?: string | null): Launchpad | null {
   const n = name.toLowerCase();
   if (n.includes("long")) return { name: "Long", url: "https://app.long.xyz/create", via: false };
   if (n.includes("pons")) return { name: "Pons", url: "https://www.ponsfamily.com/launchpad/create", via: false };
-  if (n.includes("flaunch")) return { name: "Flaunch", url: "https://flaunch.gg", via: false };
+  if (n.includes("flaunch")) return { name: "Flaunch", url: "https://flaunch.gg", via: false }; // before "flap": distinct brands
+  if (n.includes("flap")) return { name: "Flap", url: "https://flap.sh/launch?chain=robinhood&lang=en", via: false };
   if (n.includes("clanker")) return { name: "Clanker", url: "https://clanker.world", via: false };
   if (n.includes("doppler")) return { name: "Doppler", url: null, via: true };
   if (n.includes("klik")) return { name: "Klik", url: null, via: true };

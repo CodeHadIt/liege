@@ -85,7 +85,8 @@ export async function getAlertsBot(): Promise<Bot<Context>> {
           `You'll receive live pings for new launches across supported chains:\n` +
           `• 📈 StonkFun (Solana) — new tokens &amp; quote assets\n` +
           `• 🌅 Sunrise (Solana) — new stock pairs\n` +
-          `• 🟢 Robinhood Chain — first token vs a new stock, with the launchpad (Long, Pons, Uniswap…)\n\n` +
+          `• 🟢 Robinhood Chain — first token vs a new stock, with the launchpad (Long, Flap, Pons, Uniswap…)\n` +
+          `• 🟡 BNB Chain — new tokenized-stock quotes on Four.meme &amp; Flap, plus the first token launched against each\n\n` +
           `More chains &amp; platforms coming. This bot is private — use /status any time.`,
         { parse_mode: "HTML" }
       );
@@ -110,7 +111,7 @@ export async function getAlertsBot(): Promise<Bot<Context>> {
       await ctx.reply(
         `✅ <b>Liège Alerts is running.</b>\n\n` +
           `Recipients on allow-list: <b>${ids.length}</b>\n` +
-          `Feeds: StonkFun · Sunrise · Robinhood Chain\n` +
+          `Feeds: StonkFun · Sunrise · Robinhood Chain · BNB Chain (Four.meme, Flap)\n` +
           `<i>Push-only — nothing you send is acted on beyond these commands.</i>`,
         { parse_mode: "HTML" }
       );

@@ -12,7 +12,8 @@ export async function register() {
     const { pollAndStoreDexProfiles, refreshCurrentMarketCaps } = await import("@/lib/api/dex-orders-cache");
     const { pollStonkFunCreations, pollStonkFunQuoteTokens } = await import("@/lib/telegram/stonkfun-alerts");
     const { pollSunriseStocks } = await import("@/lib/telegram/sunrise-alerts");
-    const { pollLongStocks, pollLongOnchainCreations } = await import("@/lib/telegram/long-alerts");
+    const { pollLongStocks, pollLongOnchainCreations, pollFlapRobinhoodStocks } = await import("@/lib/telegram/long-alerts");
+    const { pollBscStockQuotes, pollBscOnchainLaunches } = await import("@/lib/telegram/bsc-stock-alerts");
 
     console.log("[instrumentation] Starting dex-profiles background poller (every 30s)");
     console.log("[instrumentation] Starting MC refresh poller (every 120s)");
@@ -79,6 +80,49 @@ export async function register() {
         console.error("[instrumentation] Long on-chain poll error:", err)
       );
     }, LONG_ONCHAIN_INTERVAL);
+
+    // Flap also launches on Robinhood Chain against its own stock catalog, which
+    // isn't a subset of Robinhood's registry — poll it alongside the registry.
+    console.log("[instrumentation] Starting Flap (Robinhood Chain) stock quote poller (every 120s)");
+    const FLAP_RH_INTERVAL = 120_000;
+    pollFlapRobinhoodStocks().catch((err) =>
+      console.error("[instrumentation] Initial Flap RH poll error:", err)
+    );
+    setInterval(() => {
+      pollFlapRobinhoodStocks().catch((err) =>
+        console.error("[instrumentation] Flap RH poll error:", err)
+      );
+    }, FLAP_RH_INTERVAL);
+
+    // BNB Chain tokenized-stock quotes (Four.meme + Flap). New quote assets are
+    // listed on the order of days and both sources are scraped pages rather than
+    // APIs, so 120s is ample and keeps us light on their origins.
+    console.log("[instrumentation] Starting BSC stock-quote alert poller (every 120s)");
+    const BSC_QUOTE_INTERVAL = 120_000;
+    pollBscStockQuotes().catch((err) =>
+      console.error("[instrumentation] Initial BSC stock-quote poll error:", err)
+    );
+    setInterval(() => {
+      pollBscStockQuotes().catch((err) =>
+        console.error("[instrumentation] BSC stock-quote poll error:", err)
+      );
+    }, BSC_QUOTE_INTERVAL);
+
+    // ...but once a stock IS live, watch the chain itself for the first launch
+    // against it. This reads Flap's and Four.meme's bonding-curve creation
+    // events, so a launch is caught as the curve is deployed — not whenever an
+    // indexer gets round to the pool. Public BSC RPCs are free, and the scan
+    // short-circuits entirely while nothing is being watched.
+    console.log("[instrumentation] Starting BSC on-chain launch watcher (every 20s)");
+    const BSC_LAUNCH_INTERVAL = 20_000;
+    pollBscOnchainLaunches().catch((err) =>
+      console.error("[instrumentation] Initial BSC launch poll error:", err)
+    );
+    setInterval(() => {
+      pollBscOnchainLaunches().catch((err) =>
+        console.error("[instrumentation] BSC launch poll error:", err)
+      );
+    }, BSC_LAUNCH_INTERVAL);
 
     // Initial poll on startup
     pollAndStoreDexProfiles().catch((err) =>
