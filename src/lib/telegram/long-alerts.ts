@@ -32,6 +32,11 @@ const QUOTE_SYMBOLS = new Set([
 
 const LONG_CREATE_URL = "https://app.long.xyz/create";
 
+// Flap ships the same launchpad — and overlapping stocks — on both Robinhood
+// Chain and BNB Chain, so alerts from this file name the chain explicitly.
+// The BNB Chain side lives in bsc-stock-alerts.ts and labels itself the same way.
+const CHAIN_LABEL = "Robinhood Chain";
+
 // In-memory dedupe, seeded on first poll so we only alert on stocks added after
 // the system comes online.
 const seen = new Set<string>();
@@ -42,11 +47,11 @@ export function formatLongStockAlert(t: RhStockToken): string {
   const company = t.name.split("•")[0].trim() || t.symbol;
 
   const lines: string[] = [];
-  lines.push(`📈 <b>New Stock on Robinhood Chain</b>`);
+  lines.push(`📈 <b>New Stock on ${escapeHtml(CHAIN_LABEL)}</b>`);
   lines.push(`<i>New base pair — tradable on Long.</i>`);
   lines.push("");
   lines.push(`<b>${escapeHtml(company)}</b>  ·  <code>$${escapeHtml(t.symbol)}</code>`);
-  const meta = ["🏷 Stock · Robinhood Token"];
+  const meta = ["🏷 Stock · Robinhood Token", `⛓ ${CHAIN_LABEL}`];
   if (t.isin) meta.push(`🔢 ${escapeHtml(t.isin)}`);
   lines.push(meta.join("  ·  "));
   lines.push("");
@@ -126,9 +131,9 @@ function formatLaunchpadLine(p: Launchpad): string {
 
 export function formatFirstTokenAlert(stockSymbol: string, t: CreatedToken, platform?: Launchpad): string {
   const lines: string[] = [];
-  lines.push(`🥇 <b>First token vs $${escapeHtml(stockSymbol)}</b>`);
-  lines.push(`<i>Inaugural launch paired to the newly-added stock.</i>`);
-  if (platform) lines.push(formatLaunchpadLine(platform));
+  lines.push(`🥇 <b>First token vs $${escapeHtml(stockSymbol)}</b>  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
+  lines.push(`<i>Inaugural launch paired to the newly-added stock on ${escapeHtml(CHAIN_LABEL)}.</i>`);
+  if (platform) lines.push(`${formatLaunchpadLine(platform)}  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
   lines.push("");
   lines.push(`<b>${escapeHtml(t.name || t.symbol)}</b>  ·  <code>$${escapeHtml(t.symbol)}</code>`);
   lines.push(`🔗 <b>$${escapeHtml(t.symbol)}</b> ⇄ <b>$${escapeHtml(stockSymbol)}</b>${t.dexId ? `  ·  🏦 ${escapeHtml(t.dexId)}` : ""}`);
@@ -258,11 +263,11 @@ export function formatFlapRhStockAlert(t: FlapPaymentToken): string {
   const company = t.name.split("•")[0].trim() || t.symbol;
 
   const lines: string[] = [];
-  lines.push(`📈 <b>New Stock Quote on Flap</b>`);
-  lines.push(`<i>Tradable as a launch pair on Robinhood Chain.</i>`);
+  lines.push(`📈 <b>New Stock Quote on Flap</b>  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
+  lines.push(`<i>Tradable as a launch pair on ${escapeHtml(CHAIN_LABEL)}.</i>`);
   lines.push("");
   lines.push(`<b>${escapeHtml(company)}</b>  ·  <code>$${escapeHtml(t.symbol)}</code>`);
-  lines.push(`🏷 Tokenized stock  ·  ⛓ Robinhood Chain`);
+  lines.push(`🏷 Tokenized stock  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
   lines.push("");
   if (t.address) {
     lines.push(`<code>${escapeHtml(t.address)}</code>`);

@@ -41,6 +41,12 @@ const PLATFORM_URL: Record<Platform, string> = {
   fourmeme: FOUR_MEME_CREATE_URL,
 };
 
+// Flap runs the same launchpad on BNB Chain and Robinhood Chain, and lists
+// overlapping stocks on both, so every alert names the chain it belongs to —
+// otherwise "new stock quote on Flap" is ambiguous. Robinhood-side Flap alerts
+// live in long-alerts.ts and carry the same labelling.
+const CHAIN_LABEL = "BNB Chain";
+
 export interface StockQuote {
   platform: Platform;
   symbol: string;
@@ -174,19 +180,19 @@ export function formatStockQuoteAlert(q: StockQuote, event: "listed" | "live"): 
   const lines: string[] = [];
 
   if (event === "live") {
-    lines.push(`📈 <b>New Stock Quote live on ${escapeHtml(platform)}</b>`);
+    lines.push(`📈 <b>New Stock Quote live on ${escapeHtml(platform)}</b>  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
     lines.push(`<i>You can now launch a token priced in this stock.</i>`);
   } else if (q.live) {
-    lines.push(`📈 <b>New Stock Quote on ${escapeHtml(platform)}</b>`);
+    lines.push(`📈 <b>New Stock Quote on ${escapeHtml(platform)}</b>  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
     lines.push(`<i>Listed and already tradable as a launch pair.</i>`);
   } else {
-    lines.push(`🕒 <b>Upcoming Stock Quote on ${escapeHtml(platform)}</b>`);
+    lines.push(`🕒 <b>Upcoming Stock Quote on ${escapeHtml(platform)}</b>  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
     lines.push(`<i>Announced as a launch pair — not tradable yet.</i>`);
   }
 
   lines.push("");
   lines.push(`<b>${escapeHtml(q.name)}</b>  ·  <code>$${escapeHtml(q.symbol)}</code>`);
-  lines.push([assetLabel(q), "⛓ BNB Chain"].join("  ·  "));
+  lines.push([assetLabel(q), `⛓ ${CHAIN_LABEL}`].join("  ·  "));
 
   lines.push("");
   if (q.address) {
@@ -216,9 +222,12 @@ export function formatBscFirstTokenAlert(w: FirstTokenWatch, d: LaunchAlertData)
   const t = d.launch;
   const lines: string[] = [];
 
-  lines.push(`🥇 <b>First token vs $${escapeHtml(w.symbol)} on ${escapeHtml(platform)}</b>`);
-  lines.push(`<i>Inaugural launch against this stock on ${escapeHtml(platform)}.</i>`);
-  lines.push(`🚀 <a href="${escapeHtml(PLATFORM_URL[w.platform])}">${escapeHtml(platform)}</a>  ·  🌱 Bonding curve just created`);
+  lines.push(`🥇 <b>First token vs $${escapeHtml(w.symbol)} on ${escapeHtml(platform)}</b>  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
+  lines.push(`<i>Inaugural launch against this stock on ${escapeHtml(platform)} (${escapeHtml(CHAIN_LABEL)}).</i>`);
+  lines.push(
+    `🚀 <a href="${escapeHtml(PLATFORM_URL[w.platform])}">${escapeHtml(platform)}</a>` +
+      `  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}  ·  🌱 Bonding curve just created`
+  );
   lines.push("");
   lines.push(`<b>${escapeHtml(t.name || t.symbol || "Unknown")}</b>  ·  <code>$${escapeHtml(t.symbol || "?")}</code>`);
   lines.push(`🔗 <b>$${escapeHtml(t.symbol || "?")}</b> ⇄ <b>$${escapeHtml(w.symbol)}</b>`);

@@ -10,26 +10,19 @@ export async function register() {
 
     // Dynamic import so this only loads server-side
     const { pollAndStoreDexProfiles, refreshCurrentMarketCaps } = await import("@/lib/api/dex-orders-cache");
-    const { pollStonkFunCreations, pollStonkFunQuoteTokens } = await import("@/lib/telegram/stonkfun-alerts");
+    const { pollStonkFunQuoteTokens, pollStonkFunFirstTokens } = await import("@/lib/telegram/stonkfun-alerts");
     const { pollSunriseStocks } = await import("@/lib/telegram/sunrise-alerts");
     const { pollLongStocks, pollLongOnchainCreations, pollFlapRobinhoodStocks } = await import("@/lib/telegram/long-alerts");
     const { pollBscStockQuotes, pollBscOnchainLaunches } = await import("@/lib/telegram/bsc-stock-alerts");
 
     console.log("[instrumentation] Starting dex-profiles background poller (every 30s)");
     console.log("[instrumentation] Starting MC refresh poller (every 120s)");
-    console.log("[instrumentation] Starting StonkFun new-token alert poller (every 30s)");
+    // NOTE: the every-launch StonkFun feed (pollStonkFunCreations) is PAUSED —
+    // it pinged on every mint, which drowned out the signal. StonkFun now follows
+    // the same shape as the Robinhood Chain and BNB Chain watchers: alert when a
+    // pairing asset is added, then alert the first token launched against it.
+    // Re-schedule pollStonkFunCreations here to bring the old feed back.
     console.log("[instrumentation] Starting StonkFun quote-token alert poller (every 60s)");
-
-    const STONKFUN_INTERVAL = 30_000;
-    // Seed silently on boot, then poll for new creations.
-    pollStonkFunCreations().catch((err) =>
-      console.error("[instrumentation] Initial StonkFun poll error:", err)
-    );
-    setInterval(() => {
-      pollStonkFunCreations().catch((err) =>
-        console.error("[instrumentation] StonkFun poll error:", err)
-      );
-    }, STONKFUN_INTERVAL);
 
     // New quote-token (pairing asset) poller — added less often, so 60s is plenty.
     const STONKFUN_QUOTE_INTERVAL = 60_000;
@@ -41,6 +34,20 @@ export async function register() {
         console.error("[instrumentation] StonkFun quote-token poll error:", err)
       );
     }, STONKFUN_QUOTE_INTERVAL);
+
+    // First token launched against a newly-added StonkFun quote. Runs tighter
+    // than the catalog poll so a launch is caught while it's still news, and
+    // short-circuits entirely while no quote is being watched.
+    console.log("[instrumentation] Starting StonkFun first-token watcher (every 30s)");
+    const STONKFUN_FIRST_TOKEN_INTERVAL = 30_000;
+    pollStonkFunFirstTokens().catch((err) =>
+      console.error("[instrumentation] Initial StonkFun first-token poll error:", err)
+    );
+    setInterval(() => {
+      pollStonkFunFirstTokens().catch((err) =>
+        console.error("[instrumentation] StonkFun first-token poll error:", err)
+      );
+    }, STONKFUN_FIRST_TOKEN_INTERVAL);
 
     // Sunrise new-stock-pair poller (tokenized stocks vs USDC) — 60s.
     console.log("[instrumentation] Starting Sunrise stock-pair alert poller (every 60s)");
