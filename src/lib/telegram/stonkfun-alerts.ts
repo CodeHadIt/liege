@@ -244,13 +244,27 @@ export async function sendQuoteTokenTestPing(chatId: string): Promise<boolean> {
 // Same shape as the Robinhood Chain and BNB Chain watchers: once a pairing asset
 // appears, ping the first token actually launched against it, then stop.
 //
-// Detection differs from BNB Chain in one way worth knowing. The mint itself is
-// on-chain and immediate (Helius TOKEN_MINT from StonkFun's deployer), but
-// StonkFun seeds the pool in a LATER transaction, so the mint tx never names the
-// quote — verified by probe-stonkfun-pair.ts. Reading it back on-chain is
-// ambiguous too, because the token's early transactions route through SOL/USDC.
-// The pair therefore comes from the token's deepest indexed pool, retried across
-// passes while the pool is still being indexed.
+// Detection differs from BNB Chain in one way that shapes everything below.
+//
+// On BNB Chain the launchpad emits (token, paymentToken) in a single creation
+// event, so a launch and its pair are known together, atomically, at the moment
+// the curve is deployed. StonkFun gives no such event. Its mint IS on-chain and
+// immediate (Helius TOKEN_MINT from the platform deployer), but the pool is
+// seeded in a LATER transaction, so the mint tx names only the new token —
+// verified by probe-stonkfun-pair.ts, which found exactly one mint and no quote
+// in five consecutive launches. Reading the pair back from the token's own
+// history doesn't work either: its early transactions route through SOL and USDC
+// via aggregators, so several "known quote" candidates appear with nothing to
+// distinguish the real one.
+//
+// So the pair comes from the token's deepest indexed pool, which means it is not
+// known at mint time and arrives some seconds later. Two consequences:
+//   - a creation may need several passes before its pair resolves, hence the
+//     pending queue with bounded retries rather than a single fixed delay;
+//   - pools are NOT indexed in launch order, so resolution order says nothing
+//     about launch order. The queue is therefore drained strictly oldest-first
+//     and stops at the first unresolved creation, so a token can never be
+//     announced as "first" while an older launch's pair is still unknown.
 
 interface QuoteWatch {
   quote: QuoteToken;
@@ -335,11 +349,12 @@ export async function pollStonkFunFirstTokens(): Promise<void> {
       console.log(`[stonkfun] stopped watching ${w.quote.symbol} — no launch in 14 days`);
     }
   }
-  if (awaitingFirstToken.size === 0) {
-    pending.clear();
-    return;
-  }
 
+  // Track creations on EVERY pass, even when nothing is being watched. A new
+  // quote is noticed up to one catalog poll after it appears, and a token can be
+  // launched against it inside that gap. If tracking only began once a watch
+  // existed, that launch would land in the seed set and be discarded — and the
+  // NEXT token would then be announced as the first, which is worse than silence.
   const creations = await fetchRecentCreations(25);
   if (creations.length === 0) return;
 
@@ -351,7 +366,7 @@ export async function pollStonkFunFirstTokens(): Promise<void> {
   }
 
   // Queue anything new, oldest-first, so the true first wins if several land at once.
-  const nowSec = Date.now() / 1000;
+  const nowSec = now / 1000;
   for (const c of creations.filter((x) => !seen.has(x.mint)).reverse()) {
     seen.add(c.mint);
     if (c.timestamp > 0 && nowSec - c.timestamp > MAX_ALERT_AGE_SECONDS) continue;
@@ -362,18 +377,37 @@ export async function pollStonkFunFirstTokens(): Promise<void> {
     for (const c of creations) seen.add(c.mint);
   }
 
+  // Forget creations that aged out of the alert window, so a quiet spell doesn't
+  // leave a stale queue to resolve when a quote is finally added.
+  for (const [mint, p] of pending) {
+    if (p.creation.timestamp > 0 && nowSec - p.creation.timestamp > MAX_ALERT_AGE_SECONDS) {
+      pending.delete(mint);
+    }
+  }
+
+  // Resolving a pair costs an indexer lookup per creation, so only do it when
+  // there is actually a quote to match against. The queue above still filled, so
+  // the moment a quote IS added its recent launches are already waiting.
+  if (awaitingFirstToken.size === 0) return;
+
   const queued = [...pending.values()].sort((a, b) => a.creation.timestamp - b.creation.timestamp);
   for (const p of queued) {
     const mint = p.creation.mint;
     try {
       const details = await enrichCreation(p.creation);
       if (!details.pairedAddress) {
-        // Pool not indexed yet — try again next pass, then give up.
+        // Pool not indexed yet. Retry next pass, and give up eventually.
         if (++p.attempts >= MAX_RESOLVE_ATTEMPTS) {
           pending.delete(mint);
           console.log(`[stonkfun] gave up resolving pair for ${details.symbol}`);
+          continue;
         }
-        continue;
+        // Stop the pass here rather than moving on. Pools are not indexed in
+        // launch order, so a younger creation can resolve first — and if it
+        // pairs against the same quote it would be announced as the "first",
+        // permanently beating a token that actually launched earlier. While an
+        // older pair is unknown, no younger one can be judged first.
+        return;
       }
 
       pending.delete(mint); // pair known — this creation is settled either way
