@@ -141,3 +141,14 @@ docker build -t liege .
 # Run container
 docker run -p 3000:3000 --env-file .env.local liege
 ```
+
+---
+
+## Documentation
+
+Detailed docs live in [`docs/`](docs/README.md):
+
+- [**Alert system**](docs/alerts/alert-system.md) — how the Liège Alerts bot's
+  push feeds work on each chain (Solana, Robinhood Chain, BNB Chain)
+- [Feature deep dives](docs/features/) — Dex Orders data flow, Dune queries
+- [Third-party schemas](docs/reference/) — GMGN address, top-trader and scraper fields
