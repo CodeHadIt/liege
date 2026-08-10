@@ -44,3 +44,9 @@ next-env.d.ts
 # local documentation
 APP_FLOW.md
 FEATURES.md
+
+# Research pipeline working files — regenerable caches, not deliverables.
+# The dataset itself (data/rh-ath-2m-60d.json) and the watchlist ARE committed.
+data/rh-candidates.json
+data/rh-traders-cache.json
+data/rh-contract-flags.json
