@@ -18,15 +18,20 @@ export const MAX_WALLETS_TO_ALERT = 5;
  *
  * This is load-bearing, not a nicety. Robinhood Chain runs 0.1s blocks and the
  * alpha wallets trade constantly, so measured against live data two of them
- * touching the same token is common: with no size floor the feed fires ~173
- * times a day. A $500 floor cuts that to ~29, because the noise is dust —
- * $66, $246, $278 buys — while genuine conviction entries clear it easily.
+ * touching the same token is common. Confluence events per day, by floor:
+ *
+ *   $0 → ~173     $250 → ~58     $500 → ~29     $2,500 → ~29
+ *
+ * $250 keeps the feed at roughly one event every 25 minutes while still cutting
+ * the dust that dominated the raw signal ($66, $246, $278 buys). Raise it if the
+ * feed proves noisier than the sample suggested — the sample covered under an
+ * hour, so treat these rates as indicative rather than precise.
  *
  * Buys we cannot price are allowed through: an unpriced token is one no indexer
  * has picked up yet, which is the earliest and most interesting case, and the
  * sender check has already ruled out airdrops.
  */
-export const MIN_BUY_USD = 500;
+export const MIN_BUY_USD = 250;
 
 const RH_EXPLORER = "https://robinhoodchain.blockscout.com";
 
