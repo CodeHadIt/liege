@@ -64,6 +64,10 @@ const API_RATE_LIMITS: Record<string, RateLimiterConfig> = {
   // matching launch — well inside the free endpoints' limits at 5/s, and the
   // client rotates endpoints on failure anyway.
   bscrpc: { maxTokens: 20, refillRate: 5 },
+  // Robinhood Chain JSON-RPC, used by the alpha-wallet watcher. A poll costs a
+  // block number plus one getLogs; only a detected buy adds calls, and those are
+  // rare, so this is generous headroom.
+  rhrpc: { maxTokens: 20, refillRate: 5 },
   jupiter: { maxTokens: 30, refillRate: 0.5 },
   moralis: { maxTokens: 20, refillRate: 0.33 },
 };

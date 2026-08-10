@@ -14,6 +14,7 @@ export async function register() {
     const { pollSunriseStocks } = await import("@/lib/telegram/sunrise-alerts");
     const { pollLongStocks, pollLongOnchainCreations, pollFlapRobinhoodStocks } = await import("@/lib/telegram/long-alerts");
     const { pollBscStockQuotes, pollBscOnchainLaunches } = await import("@/lib/telegram/bsc-stock-alerts");
+    const { pollAlphaConfluence } = await import("@/lib/telegram/alpha-watcher");
 
     console.log("[instrumentation] Starting dex-profiles background poller (every 30s)");
     console.log("[instrumentation] Starting MC refresh poller (every 120s)");
@@ -130,6 +131,21 @@ export async function register() {
         console.error("[instrumentation] BSC launch poll error:", err)
       );
     }, BSC_LAUNCH_INTERVAL);
+
+    // Alpha wallet confluence on Robinhood Chain. A poll is one block number
+    // plus one getLogs covering EVERY alpha wallet (OR-filtered on the Transfer
+    // recipient), so the cost does not grow with the size of the watchlist —
+    // which is what lets this run at 30s.
+    console.log("[instrumentation] Starting alpha-wallet confluence watcher (every 30s)");
+    const ALPHA_INTERVAL = 30_000;
+    pollAlphaConfluence().catch((err) =>
+      console.error("[instrumentation] Initial alpha confluence poll error:", err)
+    );
+    setInterval(() => {
+      pollAlphaConfluence().catch((err) =>
+        console.error("[instrumentation] Alpha confluence poll error:", err)
+      );
+    }, ALPHA_INTERVAL);
 
     // Initial poll on startup
     pollAndStoreDexProfiles().catch((err) =>

@@ -13,6 +13,21 @@ export const CONFLUENCE_WINDOW_MS = 4 * 60 * 60 * 1000;
 export const MIN_WALLETS_TO_ALERT = 2;
 export const MAX_WALLETS_TO_ALERT = 5;
 
+/**
+ * Ignore buys below this size.
+ *
+ * This is load-bearing, not a nicety. Robinhood Chain runs 0.1s blocks and the
+ * alpha wallets trade constantly, so measured against live data two of them
+ * touching the same token is common: with no size floor the feed fires ~173
+ * times a day. A $500 floor cuts that to ~29, because the noise is dust —
+ * $66, $246, $278 buys — while genuine conviction entries clear it easily.
+ *
+ * Buys we cannot price are allowed through: an unpriced token is one no indexer
+ * has picked up yet, which is the earliest and most interesting case, and the
+ * sender check has already ruled out airdrops.
+ */
+export const MIN_BUY_USD = 500;
+
 const RH_EXPLORER = "https://robinhoodchain.blockscout.com";
 
 export interface AlphaBuyer {
