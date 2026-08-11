@@ -16,6 +16,7 @@ export async function register() {
     const { pollBscStockQuotes, pollBscOnchainLaunches } = await import("@/lib/telegram/bsc-stock-alerts");
     const { pollAlphaConfluence } = await import("@/lib/telegram/alpha-watcher");
     const { maybeRunDailyScan } = await import("@/lib/telegram/ath-daily-scan");
+    const { pollDeployerLaunches } = await import("@/lib/telegram/deployer-alerts");
 
     console.log("[instrumentation] Starting dex-profiles background poller (every 30s)");
     console.log("[instrumentation] Starting MC refresh poller (every 120s)");
@@ -159,6 +160,20 @@ export async function register() {
         console.error("[instrumentation] Daily ATH scan error:", err)
       );
     }, 60_000);
+
+    // Alpha deployers — devs with 2+ $2M runners, watched for their next launch.
+    // One request per deployer per pass and the list is small, so 2 minutes is
+    // frequent enough to catch a deploy while it still matters.
+    console.log("[instrumentation] Starting alpha deployer launch watcher (every 120s)");
+    const DEPLOYER_INTERVAL = 120_000;
+    pollDeployerLaunches().catch((err) =>
+      console.error("[instrumentation] Initial deployer poll error:", err)
+    );
+    setInterval(() => {
+      pollDeployerLaunches().catch((err) =>
+        console.error("[instrumentation] Deployer poll error:", err)
+      );
+    }, DEPLOYER_INTERVAL);
 
     // Initial poll on startup
     pollAndStoreDexProfiles().catch((err) =>

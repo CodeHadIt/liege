@@ -61,7 +61,24 @@ export async function fetchDeployer(
     const creator = d?.creator_address_hash ? String(d.creator_address_hash).toLowerCase() : null;
     if (!creator) return { deployer: null, factory: null };
 
-    const isFactory = creator in FACTORY_LAUNCHPAD;
+    // Whether the creator is a factory is decided by asking the chain, not by a
+    // hardcoded list. Launchpads we haven't catalogued would otherwise be
+    // recorded as prolific "deployers" — one such contract looked like a dev
+    // behind 6 separate $2M runners when it was simply the launchpad everyone
+    // used.
+    let isFactory = creator in FACTORY_LAUNCHPAD;
+    if (!isFactory) {
+      await rateLimit("robinscan");
+      try {
+        const cRes = await fetch(`${RH_EXPLORER}/api/v2/addresses/${creator}`, {
+          headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (cRes.ok) isFactory = (await cRes.json())?.is_contract === true;
+      } catch {
+        /* treat as an EOA on failure — see below */
+      }
+    }
     if (!isFactory) return { deployer: creator, factory: null };
 
     // Launchpad-deployed: the creation tx's sender is the actual person.
