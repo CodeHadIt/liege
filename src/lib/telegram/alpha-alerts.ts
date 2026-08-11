@@ -71,6 +71,10 @@ export interface ConfluenceToken {
   /** NFT only */
   totalSupply?: number | null;
   holders?: number | null;
+  /** NFT only: lowest recent on-chain fill, the closest available thing to a floor */
+  floorUsd?: number | null;
+  floorEth?: number | null;
+  floorSales?: number | null;
 }
 
 const isNft = (t: ConfluenceToken) => t.assetType === "erc721";
@@ -118,6 +122,10 @@ function buyLine(chain: string, b: AlphaBuyer, nft: boolean): string {
 
 function footer(t: ConfluenceToken): string[] {
   const lines: string[] = [];
+  if (isNft(t) && t.floorUsd != null) {
+    lines.push("");
+    lines.push(`<i>Floor = lowest of ${t.floorSales ?? "recent"} on-chain sales; this chain has no orderbook to quote asks from.</i>`);
+  }
   lines.push("");
   lines.push(`<code>${escapeHtml(t.address)}</code>`);
   // GMGN indexes fungible tokens, not NFT collections — linking there for an
@@ -150,6 +158,10 @@ export function formatConfluenceAlert(t: ConfluenceToken, buyers: AlphaBuyer[]):
   if (nft) {
     // An NFT has no market cap or pool; supply and holders are the equivalent
     // sense of how big and how distributed the thing is.
+    if (t.floorUsd != null) {
+      const eth = t.floorEth != null ? ` (${t.floorEth.toFixed(4)} ETH)` : "";
+      stat.push(`🏷 Floor ~${mc(t.floorUsd)}${eth}`);
+    }
     if (t.totalSupply != null) stat.push(`🧾 Supply ${t.totalSupply.toLocaleString()}`);
     if (t.holders != null) stat.push(`👥 ${t.holders.toLocaleString()} holders`);
   } else {
@@ -190,6 +202,10 @@ export function formatConfluenceFollowUp(
 
   if (nft) {
     const bits: string[] = [];
+    if (t.floorUsd != null) {
+      const eth = t.floorEth != null ? ` (${t.floorEth.toFixed(4)} ETH)` : "";
+      bits.push(`🏷 Floor ~${mc(t.floorUsd)}${eth}`);
+    }
     if (t.totalSupply != null) bits.push(`🧾 Supply ${t.totalSupply.toLocaleString()}`);
     if (t.holders != null) bits.push(`👥 ${t.holders.toLocaleString()} holders`);
     if (bits.length) lines.push(bits.join("  ·  "));

@@ -17,6 +17,7 @@ import {
   getTxInfo,
   getNftCollection,
   getEthUsdPrice,
+  getNftSaleStats,
 } from "../src/lib/api/rh-onchain";
 import {
   sendConfluenceAlert,
@@ -90,7 +91,15 @@ async function main() {
 
   const col = await getNftCollection(collection);
   const eth = await getEthUsdPrice();
-  console.log(`collection: ${col?.name} (${col?.symbol}) supply=${col?.totalSupply}  ETH=$${eth}\n`);
+  const sales = await getNftSaleStats(collection, latest);
+  console.log(
+    `collection: ${col?.name} (${col?.symbol}) supply=${col?.totalSupply} holders=${col?.holders}  ETH=$${eth}`
+  );
+  console.log(
+    sales
+      ? `floor (lowest of ${sales.sales} recent fills): ${sales.lowEth.toFixed(4)} ETH  median ${sales.medianEth.toFixed(4)} ETH\n`
+      : `no priced secondary sales found — floor omitted\n`
+  );
 
   const buyers: AlphaBuyer[] = [];
   for (const [addr, info] of perWallet) {
@@ -118,6 +127,9 @@ async function main() {
     assetType: "erc721",
     totalSupply: col?.totalSupply ?? null,
     holders: col?.holders ?? null,
+    floorEth: sales?.lowEth ?? null,
+    floorUsd: sales && eth != null ? sales.lowEth * eth : null,
+    floorSales: sales?.sales ?? null,
   };
 
   const first = buyers.slice(0, MIN_WALLETS_TO_ALERT);

@@ -8,6 +8,7 @@ import {
   getRhTokenDecimals,
   getEthUsdPrice,
   getNftCollection,
+  getNftSaleStats,
   type AssetStandard,
 } from "@/lib/api/rh-onchain";
 import { rateLimit } from "@/lib/rate-limiter";
@@ -59,6 +60,9 @@ interface TokenMarket {
   liquidityUsd: number | null;
   totalSupply?: number | null;
   holders?: number | null;
+  floorUsd?: number | null;
+  floorEth?: number | null;
+  floorSales?: number | null;
 }
 
 /** Market snapshot for a token from its deepest Robinhood-chain pool. */
@@ -213,6 +217,7 @@ export async function pollAlphaConfluence(): Promise<void> {
     if (nft) {
       const col = await getNftCollection(b.tokenAddress);
       const eth = await getEthUsdPrice();
+      const sales = await getNftSaleStats(b.tokenAddress, b.blockNumber);
       m = {
         symbol: col?.symbol ?? "?",
         name: col?.name ?? "",
@@ -221,6 +226,9 @@ export async function pollAlphaConfluence(): Promise<void> {
         liquidityUsd: null,
         totalSupply: col?.totalSupply ?? null,
         holders: col?.holders ?? null,
+        floorEth: sales?.lowEth ?? null,
+        floorUsd: sales && eth != null ? sales.lowEth * eth : null,
+        floorSales: sales?.sales ?? null,
       };
       const ethSpent = Number(b.valueWei) / 1e18;
       amountUsd = eth != null ? ethSpent * eth : null;
@@ -408,6 +416,9 @@ async function advanceConfluence(buy: DetectedBuy, market: TokenMarket, nft: boo
     assetType: nft ? "erc721" : "erc20",
     totalSupply: market.totalSupply ?? null,
     holders: market.holders ?? null,
+    floorUsd: market.floorUsd ?? null,
+    floorEth: market.floorEth ?? null,
+    floorSales: market.floorSales ?? null,
   };
 
   const patch: Record<string, unknown> = { wallet_count: distinct };

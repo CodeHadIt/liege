@@ -21,6 +21,9 @@ const HEADERS = {
 /** keccak256("Transfer(address,address,uint256)") */
 export const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
+/** Raised when a range matches more logs than the node will return. */
+class LogLimitError extends Error {}
+
 async function rpc<T>(method: string, params: unknown[], tries = 3): Promise<T | null> {
   for (let i = 0; i < tries; i++) {
     await rateLimit("rhrpc");
@@ -33,9 +36,16 @@ async function rpc<T>(method: string, params: unknown[], tries = 3): Promise<T |
       });
       if (!res.ok) continue;
       const d = await res.json();
-      if (d?.error) continue;
+      if (d?.error) {
+        // "logs matched by query exceeds limit of 10000" is not a transient
+        // failure — retrying the same range can only fail again. Surface it so
+        // the caller can split the range instead of spinning.
+        if (String(d.error?.message ?? "").includes("exceeds limit")) throw new LogLimitError();
+        continue;
+      }
       if (d?.result !== undefined) return d.result as T;
-    } catch {
+    } catch (err) {
+      if (err instanceof LogLimitError) throw err;
       /* retry */
     }
   }
@@ -74,22 +84,50 @@ export interface IncomingTransfer {
  * RPC failure so the caller can hold its cursor rather than mistake a failed
  * read for a quiet period.
  */
+type RawLog = { address: string; topics: string[]; data: string; transactionHash: string; blockNumber: string };
+
+/**
+ * eth_getLogs over a range, splitting in half whenever the node refuses the
+ * query for matching too many logs. Without this a busy range fails
+ * permanently — the error is deterministic, so a caller that just retries
+ * never advances.
+ */
+async function getLogsSplitting(
+  wallets: string[],
+  fromBlock: number,
+  toBlock: number,
+  depth = 0
+): Promise<RawLog[] | null> {
+  try {
+    const logs = await rpc<RawLog[]>("eth_getLogs", [
+      {
+        fromBlock: "0x" + fromBlock.toString(16),
+        toBlock: "0x" + toBlock.toString(16),
+        topics: [TRANSFER_TOPIC, null, wallets.map(padTopic)],
+      },
+    ]);
+    return Array.isArray(logs) ? logs : null;
+  } catch (err) {
+    if (!(err instanceof LogLimitError)) return null;
+    // A single block that still exceeds the limit can't be split further.
+    if (fromBlock >= toBlock || depth > 12) return [];
+    const mid = Math.floor((fromBlock + toBlock) / 2);
+    const [a, b] = await Promise.all([
+      getLogsSplitting(wallets, fromBlock, mid, depth + 1),
+      getLogsSplitting(wallets, mid + 1, toBlock, depth + 1),
+    ]);
+    if (a == null || b == null) return null;
+    return [...a, ...b];
+  }
+}
+
 export async function getTransfersToWallets(
   wallets: string[],
   fromBlock: number,
   toBlock: number
 ): Promise<IncomingTransfer[] | null> {
   if (wallets.length === 0) return [];
-  const logs = await rpc<Array<{ address: string; topics: string[]; data: string; transactionHash: string; blockNumber: string }>>(
-    "eth_getLogs",
-    [
-      {
-        fromBlock: "0x" + fromBlock.toString(16),
-        toBlock: "0x" + toBlock.toString(16),
-        topics: [TRANSFER_TOPIC, null, wallets.map(padTopic)],
-      },
-    ]
-  );
+  const logs = await getLogsSplitting(wallets, fromBlock, toBlock);
   if (!Array.isArray(logs)) return null;
 
   const out: IncomingTransfer[] = [];
@@ -182,6 +220,77 @@ export async function getEthUsdPrice(): Promise<number | null> {
   }
 }
 
+/**
+ * Recent sale prices for a collection, derived from on-chain fills.
+ *
+ * No orderbook exists to query on this chain — OpenSea, Reservoir and Magic Eden
+ * all fail for it — so a true "lowest current ask" floor is not obtainable.
+ * What IS observable is what people actually paid: secondary sales settle
+ * through Seaport, and the transaction value divided by the number of ids moved
+ * gives a per-NFT price. The lowest recent fill is the closest honest proxy for
+ * a floor, and it is labelled as such rather than presented as an ask.
+ */
+export interface NftSaleStats {
+  /** lowest per-NFT price paid in the window */
+  lowEth: number;
+  medianEth: number;
+  sales: number;
+  windowBlocks: number;
+}
+
+export async function getNftSaleStats(
+  collection: string,
+  latestBlock: number,
+  windowBlocks = 50_000,
+  maxTxLookups = 40
+): Promise<NftSaleStats | null> {
+  const from = latestBlock - windowBlocks;
+  const logs: RawLog[] = [];
+  // Chunked to stay under the node's 10k-log cap.
+  for (let start = from; start < latestBlock; start += 2_000) {
+    const end = Math.min(start + 1_999, latestBlock);
+    let chunk: RawLog[] | null = null;
+    try {
+      chunk = await rpc<RawLog[]>("eth_getLogs", [
+        {
+          address: collection,
+          fromBlock: "0x" + start.toString(16),
+          toBlock: "0x" + end.toString(16),
+          topics: [TRANSFER_TOPIC],
+        },
+      ]);
+    } catch {
+      continue; // over the cap even at this size — skip rather than fail the alert
+    }
+    if (Array.isArray(chunk)) logs.push(...chunk);
+  }
+  if (logs.length === 0) return null;
+
+  // Mints are not sales — a free mint would drag any floor to zero.
+  const zeroTopic = "0x" + "0".repeat(64);
+  const secondary = logs.filter((l) => l.topics?.[1] !== zeroTopic);
+  if (secondary.length === 0) return null;
+
+  const perTx = new Map<string, number>();
+  for (const l of secondary) perTx.set(l.transactionHash, (perTx.get(l.transactionHash) ?? 0) + 1);
+
+  const prices: number[] = [];
+  for (const [txHash, count] of [...perTx].slice(0, maxTxLookups)) {
+    const info = await getTxInfo(txHash);
+    if (!info || info.valueWei <= BigInt(0)) continue; // transfer, not a purchase
+    prices.push(Number(info.valueWei) / 1e18 / Math.max(count, 1));
+  }
+  if (prices.length === 0) return null;
+
+  prices.sort((a, b) => a - b);
+  return {
+    lowEth: prices[0],
+    medianEth: prices[Math.floor(prices.length / 2)],
+    sales: prices.length,
+    windowBlocks,
+  };
+}
+
 export interface NftCollection {
   name: string;
   symbol: string;
@@ -208,7 +317,9 @@ export async function getNftCollection(address: string): Promise<NftCollection |
       name: String(d.name ?? d.symbol ?? ""),
       symbol: String(d.symbol ?? "?"),
       totalSupply: num(d.total_supply),
-      holders: num(d.holders),
+      // Blockscout returns holders_count, not holders — reading the latter
+      // silently produced null on every collection.
+      holders: num(d.holders_count ?? d.holders),
     };
   } catch {
     return null;
