@@ -27,11 +27,22 @@ export const MAX_WALLETS_TO_ALERT = 5;
  * feed proves noisier than the sample suggested — the sample covered under an
  * hour, so treat these rates as indicative rather than precise.
  *
- * Buys we cannot price are allowed through: an unpriced token is one no indexer
- * has picked up yet, which is the earliest and most interesting case, and the
- * sender check has already ruled out airdrops.
+ * Buys we cannot price do NOT count toward confluence. They used to, on the
+ * reasoning that an unpriced token is one no indexer has seen yet and therefore
+ * the earliest case worth catching. In practice it meant anything without a
+ * price bypassed the floor entirely, and a single ERC-721 collection produced
+ * 452 valueless "buys" and 31 alerts. The cost of that outweighs being a few
+ * minutes early: once a real token is indexed, later alpha buys still trigger it.
  */
 export const MIN_BUY_USD = 250;
+
+/**
+ * Once a token's window closes, ignore it for this long before opening another.
+ * Without it a burst of activity re-opens a window the instant the previous one
+ * fills, and the same token alerts indefinitely — the Spritehood incident opened
+ * 8 windows in 34 minutes, each running the full 4 alerts.
+ */
+export const WINDOW_REOPEN_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 const RH_EXPLORER = "https://robinhoodchain.blockscout.com";
 

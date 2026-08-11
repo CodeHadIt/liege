@@ -15,6 +15,7 @@ import {
   MIN_WALLETS_TO_ALERT,
   MAX_WALLETS_TO_ALERT,
   MIN_BUY_USD,
+  WINDOW_REOPEN_COOLDOWN_MS,
   type AlphaBuyer,
   type ConfluenceToken,
 } from "./alpha-alerts";
@@ -201,9 +202,13 @@ export async function pollAlphaConfluence(): Promise<void> {
       continue;
     }
 
-    // Recorded either way — the buy history stays complete — but dust does not
-    // drive confluence. See MIN_BUY_USD for why this floor exists.
-    if (amountUsd != null && amountUsd < MIN_BUY_USD) {
+    // Recorded either way — the buy history stays complete — but neither dust
+    // nor anything we cannot price drives confluence. See MIN_BUY_USD.
+    if (amountUsd == null) {
+      console.log(`[alpha] ${b.label} received ${b.tokenAddress.slice(0, 10)}… with no price — not counted`);
+      continue;
+    }
+    if (amountUsd < MIN_BUY_USD) {
       console.log(`[alpha] ${b.label} bought ${m.symbol} for $${amountUsd.toFixed(0)} — below $${MIN_BUY_USD} floor, not counted`);
       continue;
     }
@@ -242,6 +247,18 @@ async function advanceConfluence(buy: DetectedBuy, market: TokenMarket): Promise
     .limit(1);
 
   let row = openRows?.[0];
+
+  if (!row) {
+    // Don't re-open straight after a window closed — see WINDOW_REOPEN_COOLDOWN_MS.
+    const { data: recent } = await supabase
+      .from("alpha_confluence")
+      .select("window_expires_at")
+      .eq("chain", CHAIN)
+      .eq("token_address", buy.tokenAddress)
+      .gte("window_expires_at", new Date(buy.boughtAtMs - WINDOW_REOPEN_COOLDOWN_MS).toISOString())
+      .limit(1);
+    if (recent && recent.length > 0) return;
+  }
 
   if (!row) {
     // First alpha buy for this token — start watching, but stay silent. One

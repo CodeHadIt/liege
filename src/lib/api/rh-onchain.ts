@@ -89,13 +89,24 @@ export async function getTransfersToWallets(
 
   const out: IncomingTransfer[] = [];
   for (const l of logs) {
-    if (!l.topics || l.topics.length < 3) continue;
+    // ERC-721 shares ERC-20's Transfer topic0 exactly, so an NFT mint is
+    // indistinguishable by topic alone. The difference is arity: ERC-20 indexes
+    // (from, to) and carries `value` in data — 3 topics; ERC-721 also indexes
+    // `tokenId` — 4 topics, with empty data.
+    //
+    // Without this check an NFT collection reads as a token every alpha wallet
+    // is "buying" for $0, which is exactly what happened with Spritehood Wisp
+    // (ERC-721, 44,444 supply): 452 phantom buys and 31 alerts.
+    if (!l.topics || l.topics.length !== 3) continue;
+
     let rawValue = BigInt(0);
     try {
       rawValue = BigInt(l.data && l.data !== "0x" ? l.data : "0x0");
     } catch {
       /* keep zero */
     }
+    // A zero-value transfer is not a purchase.
+    if (rawValue <= BigInt(0)) continue;
     out.push({
       tokenAddress: l.address.toLowerCase(),
       from: ("0x" + l.topics[1].slice(-40)).toLowerCase(),
