@@ -267,6 +267,192 @@ export async function scrapeGmgnTopTraders(
   return traders;
 }
 
+// ─── Dev / creator info ──────────────────────────────────────────────────────
+// GMGN already resolves a token's creator and everything else they've deployed,
+// including each token's ATH market cap and launchpad. That replaces tracing a
+// creation transaction on Blockscout, walking a dev's transaction history for
+// create2 internal transactions, and pricing every deploy through GeckoTerminal
+// — three sources and roughly a hundred requests collapse into two calls.
+
+export interface GmgnDevToken {
+  tokenAddress: string;
+  symbol: string | null;
+  name: string | null;
+  createdAt: number | null;
+  athMcUsd: number | null;
+  marketCapUsd: number | null;
+  holders: number | null;
+  launchpad: string | null;
+  /** graduated off its bonding curve */
+  isOpen: boolean;
+}
+
+export interface GmgnDevInfo {
+  devAddress: string;
+  /** every token the dev has created, per GMGN's own counters */
+  totalCreated: number;
+  graduatedCount: number;
+  tokens: GmgnDevToken[];
+  bestToken: { address: string; symbol: string | null; athMcUsd: number | null } | null;
+}
+
+/** Fetch an arbitrary GMGN API URL using a real page session. */
+async function fetchGmgnApi(pageUrl: string, apiUrl: string, label: string): Promise<Record<string, unknown> | null> {
+  const browser = await getBrowser();
+  const context = await browser.newContext({
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  });
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", { get: () => false });
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(pageUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await new Promise((r) => setTimeout(r, 6_000));
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      if (attempt > 1) await new Promise((r) => setTimeout(r, 3_000 * attempt));
+      const res = await page
+        .evaluate(async (url: string) => {
+          try {
+            const r = await fetch(url, { credentials: "include" });
+            return { ok: r.ok, status: r.status, body: r.ok ? await r.json() : null };
+          } catch {
+            return { ok: false, status: 0, body: null };
+          }
+        }, apiUrl)
+        .catch(() => ({ ok: false as const, status: 0, body: null }));
+      if (res.ok && res.body) return res.body as Record<string, unknown>;
+      console.log(`[gmgn-scraper] ${label} attempt ${attempt} -> ${res.status}`);
+    }
+    return null;
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/**
+ * The creator address GMGN attributes to a token.
+ *
+ * mutil_window_token_info is a POST the page fires itself, so its response is
+ * captured rather than re-requested — rebuilding it as a GET returns 404.
+ */
+export async function scrapeGmgnTokenDev(chain: string, tokenAddress: string): Promise<string | null> {
+  const gmgnChain = CHAIN_TO_GMGN[chain.toLowerCase()];
+  if (!gmgnChain) return null;
+  const token = chain.toLowerCase() === "solana" ? tokenAddress : tokenAddress.toLowerCase();
+
+  const browser = await getBrowser();
+  const context = await browser.newContext({
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  });
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", { get: () => false });
+  });
+  const page = await context.newPage();
+  let dev: string | null = null;
+
+  // The address sits at dev.creator_address, not on the row itself — `dev` is an
+  // object, so a top-level key scan silently finds nothing.
+  const pick = (row: Record<string, unknown>): string | null => {
+    const nested = row.dev as Record<string, unknown> | undefined;
+    const candidates = [
+      nested?.creator_address,
+      nested?.address,
+      row.creator_address,
+      row.creator,
+      row.deployer,
+    ];
+    for (const v of candidates) {
+      if (typeof v === "string" && /^0x[0-9a-fA-F]{40}$/.test(v)) return v.toLowerCase();
+    }
+    return null;
+  };
+
+  try {
+    page.on("response", async (res) => {
+      if (dev || !res.url().includes("mutil_window_token_info")) return;
+      try {
+        const body = await res.json();
+        const rows = Array.isArray(body?.data) ? body.data : [];
+        for (const r of rows) {
+          const hit = pick(r as Record<string, unknown>);
+          if (hit) {
+            dev = hit;
+            return;
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    });
+    await page.goto(`https://gmgn.ai/${gmgnChain}/token/${token}`, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
+    for (let i = 0; i < 20 && !dev; i++) await new Promise((r) => setTimeout(r, 700));
+    return dev;
+  } catch {
+    return null;
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
+/** Everything a dev has deployed, with each token's ATH market cap. */
+export async function scrapeGmgnDevTokens(chain: string, devAddress: string): Promise<GmgnDevInfo | null> {
+  const gmgnChain = CHAIN_TO_GMGN[chain.toLowerCase()];
+  if (!gmgnChain) return null;
+  const dev = devAddress.toLowerCase();
+
+  const body = await fetchGmgnApi(
+    `https://gmgn.ai/${gmgnChain}/address/${dev}`,
+    `https://gmgn.ai/api/v1/dev_created_tokens/${gmgnChain}/${dev}?limit=200`,
+    `devtokens:${dev.slice(0, 10)}`
+  );
+  const data = (body as { data?: Record<string, unknown> })?.data;
+  if (!data) return null;
+
+  const num = (v: unknown): number | null => {
+    const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const rows = Array.isArray(data.tokens) ? (data.tokens as Array<Record<string, unknown>>) : [];
+  const inner = num(data.inner_count) ?? 0;
+  const open = num(data.open_count) ?? 0;
+  const ath = data.creator_ath_info as Record<string, unknown> | undefined;
+
+  return {
+    devAddress: dev,
+    // GMGN splits its own count into bonding-curve and graduated; the sum is the
+    // dev's true output, and is larger than the token list it returns.
+    totalCreated: Math.max(inner + open, rows.length),
+    graduatedCount: open,
+    bestToken: ath
+      ? {
+          address: String(ath.ath_token ?? ""),
+          symbol: (ath.token_symbol as string) ?? null,
+          athMcUsd: num(ath.ath_mc),
+        }
+      : null,
+    tokens: rows.map((t) => ({
+      tokenAddress: String(t.token_address ?? "").toLowerCase(),
+      symbol: (t.symbol as string) ?? null,
+      name: (t.name as string) ?? null,
+      createdAt: num(t.create_timestamp),
+      athMcUsd: num(t.token_ath_mc),
+      marketCapUsd: num(t.market_cap),
+      holders: num(t.holders),
+      launchpad: (t.launchpad_platform as string) ?? null,
+      isOpen: t.is_open === true,
+    })),
+  };
+}
+
 // ─── Top Holders (sorted by current balance) ─────────────────────────────────
 
 export async function scrapeGmgnTopHolders(
