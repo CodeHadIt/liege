@@ -15,6 +15,7 @@ export async function register() {
     const { pollLongStocks, pollLongOnchainCreations, pollFlapRobinhoodStocks } = await import("@/lib/telegram/long-alerts");
     const { pollBscStockQuotes, pollBscOnchainLaunches } = await import("@/lib/telegram/bsc-stock-alerts");
     const { pollAlphaConfluence } = await import("@/lib/telegram/alpha-watcher");
+    const { maybeRunDailyScan } = await import("@/lib/telegram/ath-daily-scan");
 
     console.log("[instrumentation] Starting dex-profiles background poller (every 30s)");
     console.log("[instrumentation] Starting MC refresh poller (every 120s)");
@@ -146,6 +147,18 @@ export async function register() {
         console.error("[instrumentation] Alpha confluence poll error:", err)
       );
     }, ALPHA_INTERVAL);
+
+    // Daily ATH scan at 23:00 UTC. Checked every minute rather than scheduled
+    // with a single long timer: a timer set once drifts over days and a redeploy
+    // at the wrong moment would skip the day entirely. The run is claimed by UTC
+    // date in the database, so repeated checks — and multiple instances — still
+    // produce exactly one run.
+    console.log("[instrumentation] Starting daily ATH scan scheduler (23:00 UTC)");
+    setInterval(() => {
+      maybeRunDailyScan().catch((err) =>
+        console.error("[instrumentation] Daily ATH scan error:", err)
+      );
+    }, 60_000);
 
     // Initial poll on startup
     pollAndStoreDexProfiles().catch((err) =>
