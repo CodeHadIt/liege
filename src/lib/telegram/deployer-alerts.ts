@@ -5,7 +5,7 @@ import {
   deployerSuccessRate,
   athMultiple,
   recentTxs,
-  mintedTokensInTx,
+  createdTokensInTx,
   markDeployerChecked,
   SUCCESS_MULTIPLE,
   SUCCESS_ATH_MC_USD,
@@ -143,7 +143,7 @@ export async function pollDeployerLaunches(): Promise<void> {
     if (fresh.length === 0) continue;
 
     for (const tx of fresh) {
-      const minted = await mintedTokensInTx(tx.hash);
+      const minted = await createdTokensInTx(tx.hash);
       for (const token of minted) {
         // A launch is announced once, ever — the unique constraint on
         // (chain, token_address) is what survives restarts and cursor resets.

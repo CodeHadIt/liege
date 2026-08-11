@@ -232,59 +232,94 @@ export interface DeployerTx {
   timestamp: string | null;
 }
 
-/** A deployer's most recent transactions, newest first. */
-export async function recentTxs(address: string): Promise<DeployerTx[]> {
-  await rateLimit("robinscan");
-  try {
-    const res = await fetch(`${RH_EXPLORER}/api/v2/addresses/${address}/transactions`, {
-      headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!res.ok) return [];
-    const d = await res.json();
-    return (d?.items ?? []).map((t: { hash: string; timestamp?: string }) => ({
-      hash: t.hash,
-      timestamp: t.timestamp ?? null,
-    }));
-  } catch {
-    return [];
+/**
+ * A deployer's transactions, newest first.
+ *
+ * `maxPages` matters for history: one page is 50 transactions, and an active dev
+ * fills that with fee collection in days. Building a success rate off a single
+ * page found zero deploys for a dev with two known $2M runners, because their
+ * launches sat further back than the page reached. The live watcher only needs
+ * the head, so it stays on one page; the backfill walks deeper.
+ */
+export async function recentTxs(address: string, maxPages = 1): Promise<DeployerTx[]> {
+  const out: DeployerTx[] = [];
+  let params: Record<string, string> | null = null;
+
+  for (let page = 0; page < maxPages; page++) {
+    await rateLimit("robinscan");
+    try {
+      const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+      const res = await fetch(`${RH_EXPLORER}/api/v2/addresses/${address}/transactions${qs}`, {
+        headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!res.ok) break;
+      const d = await res.json();
+      const items = d?.items ?? [];
+      for (const t of items) out.push({ hash: t.hash, timestamp: t.timestamp ?? null });
+      const next = d?.next_page_params;
+      if (!next || items.length === 0) break;
+      params = Object.fromEntries(
+        Object.entries(next).map(([k, v]) => [k, String(v)])
+      ) as Record<string, string>;
+    } catch {
+      break;
+    }
   }
+  return out;
 }
 
-const ZERO = "0x0000000000000000000000000000000000000000";
-
 /**
- * Tokens newly minted inside a transaction.
+ * Token contracts created by a transaction.
  *
- * Detecting a launch by method name doesn't generalise — every launchpad names
- * its entrypoint differently, and a deployer's recent history is mostly fee
- * collection. A mint from the zero address is the same shape whoever built the
- * launchpad.
+ * Two earlier approaches failed. Matching on method name doesn't generalise —
+ * every launchpad names its entrypoint differently. Looking for a mint from the
+ * zero address seemed universal but isn't: a factory deploy creates the token
+ * without minting in the same transaction, and the deploy transactions here
+ * carry ZERO token transfers.
+ *
+ * Contract creation shows up as a create/create2 INTERNAL transaction, which is
+ * true however the launchpad is built. Each created address is then checked
+ * against the token endpoint, since a deploy can also create non-token helpers.
  */
-export async function mintedTokensInTx(
+export async function createdTokensInTx(
   txHash: string
 ): Promise<Array<{ address: string; symbol: string | null; name: string | null }>> {
   await rateLimit("robinscan");
+  let created: string[] = [];
   try {
-    const res = await fetch(`${RH_EXPLORER}/api/v2/transactions/${txHash}/token-transfers`, {
+    const res = await fetch(`${RH_EXPLORER}/api/v2/transactions/${txHash}/internal-transactions`, {
       headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
       signal: AbortSignal.timeout(20_000),
     });
     if (!res.ok) return [];
     const d = await res.json();
-    const out = new Map<string, { address: string; symbol: string | null; name: string | null }>();
-    for (const t of d?.items ?? []) {
-      const from = String(t?.from?.hash ?? "").toLowerCase();
-      if (from !== ZERO) continue;
-      const tok = t?.token ?? {};
-      const addr = String(tok.address_hash ?? tok.address ?? "").toLowerCase();
-      if (!addr) continue;
-      out.set(addr, { address: addr, symbol: tok.symbol ?? null, name: tok.name ?? null });
-    }
-    return [...out.values()];
+    created = (d?.items ?? [])
+      .map((i: { created_contract?: { hash?: string } }) => i?.created_contract?.hash)
+      .filter((h: string | undefined): h is string => !!h)
+      .map((h: string) => h.toLowerCase());
   } catch {
     return [];
   }
+  if (created.length === 0) return [];
+
+  const out: Array<{ address: string; symbol: string | null; name: string | null }> = [];
+  for (const addr of [...new Set(created)]) {
+    await rateLimit("robinscan");
+    try {
+      const r = await fetch(`${RH_EXPLORER}/api/v2/tokens/${addr}`, {
+        headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!r.ok) continue; // not a token
+      const t = await r.json();
+      if (!t?.symbol && !t?.name) continue;
+      out.push({ address: addr, symbol: t.symbol ?? null, name: t.name ?? null });
+    } catch {
+      /* skip */
+    }
+  }
+  return out;
 }
 
 export async function markDeployerChecked(id: string, lastSeenTx: string | null): Promise<void> {

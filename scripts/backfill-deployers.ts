@@ -20,7 +20,7 @@ import {
   tokensByDeployer,
   deployerSuccessRate,
   recentTxs,
-  mintedTokensInTx,
+  createdTokensInTx,
   markDeployerChecked,
   fetchAthMc,
   athMultiple,
@@ -49,11 +49,35 @@ async function main() {
       continue;
     }
 
-    // Walk their transactions and record every token they minted.
-    const txs = await recentTxs(dep.address);
+    // Their known $2M runners are deploys by definition, and they must be in
+    // the denominator even if they sit deeper than the transaction walk reaches.
+    for (const w of winners) {
+      const { data: seen } = await supabase
+        .from("deployer_launches")
+        .select("id")
+        .eq("chain", CHAIN)
+        .eq("token_address", w.tokenAddress)
+        .maybeSingle();
+      if (seen?.id) continue;
+      await supabase.from("deployer_launches").insert({
+        deployer_id: dep.id,
+        chain: CHAIN,
+        deployer_address: dep.address,
+        token_address: w.tokenAddress,
+        token_name: w.name,
+        token_symbol: w.symbol,
+        launched_at: w.launchedAt,
+        ath_mc_usd: w.athMcUsd,
+        is_success: (w.athMcUsd ?? 0) >= SUCCESS_ATH_MC_USD,
+        alerted_at: new Date().toISOString(),
+      });
+    }
+
+    // Then walk their history for everything else they shipped.
+    const txs = await recentTxs(dep.address, 20);
     let found = 0;
     for (const tx of txs) {
-      for (const token of await mintedTokensInTx(tx.hash)) {
+      for (const token of await createdTokensInTx(tx.hash)) {
         const { data: seen } = await supabase
           .from("deployer_launches")
           .select("id")
