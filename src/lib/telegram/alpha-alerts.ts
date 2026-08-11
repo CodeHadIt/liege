@@ -52,6 +52,10 @@ export interface AlphaBuyer {
   amountUsd: number | null;
   marketCapUsd: number | null;
   supplyPct: number | null;
+  /** NFT only: how many were taken in the transaction */
+  quantity?: number | null;
+  /** NFT only: minted from the contract rather than bought from a holder */
+  isMint?: boolean;
 }
 
 export interface ConfluenceToken {
@@ -63,7 +67,13 @@ export interface ConfluenceToken {
   currentMcUsd: number | null;
   /** market cap when the first alert fired — the baseline for "up N x" */
   firstAlertMcUsd: number | null;
+  assetType?: "erc20" | "erc721";
+  /** NFT only */
+  totalSupply?: number | null;
+  holders?: number | null;
 }
+
+const isNft = (t: ConfluenceToken) => t.assetType === "erc721";
 
 /**
  * $2M / $2.1M / $310K / $5K — the K/M shorthand used throughout the alerts.
@@ -91,9 +101,18 @@ function walletLink(chain: string, b: AlphaBuyer): string {
   return `<a href="https://gmgn.ai/${slug}/address/${b.address}">${escapeHtml(b.label)}</a>`;
 }
 
-function buyLine(chain: string, b: AlphaBuyer): string {
-  const bits = [`💵 ${mc(b.amountUsd)}`, `📊 at ${mc(b.marketCapUsd)} MC`];
-  if (b.supplyPct != null && b.supplyPct > 0) bits.push(`🧬 ${b.supplyPct.toFixed(2)}% supply`);
+function buyLine(chain: string, b: AlphaBuyer, nft: boolean): string {
+  const bits: string[] = [];
+  if (nft) {
+    // A free mint is the norm, so "$0" is meaningful rather than missing data —
+    // say so explicitly instead of rendering an empty price.
+    bits.push(`🖼 ${b.quantity ?? 1}x`);
+    bits.push(b.amountUsd != null && b.amountUsd > 0 ? `💵 ${mc(b.amountUsd)}` : `💵 free mint`);
+    if (b.supplyPct != null && b.supplyPct > 0) bits.push(`🧬 ${b.supplyPct.toFixed(2)}% of supply`);
+  } else {
+    bits.push(`💵 ${mc(b.amountUsd)}`, `📊 at ${mc(b.marketCapUsd)} MC`);
+    if (b.supplyPct != null && b.supplyPct > 0) bits.push(`🧬 ${b.supplyPct.toFixed(2)}% supply`);
+  }
   return `${walletLink(chain, b)}\n<code>${escapeHtml(b.address)}</code>\n   ${bits.join("  ·  ")}`;
 }
 
@@ -101,7 +120,9 @@ function footer(t: ConfluenceToken): string[] {
   const lines: string[] = [];
   lines.push("");
   lines.push(`<code>${escapeHtml(t.address)}</code>`);
-  const links = [`🟢 <a href="${gmgnUrl(t.chain, t.address)}">Buy on GMGN</a>`];
+  // GMGN indexes fungible tokens, not NFT collections — linking there for an
+  // NFT would land on an empty page, so send those to the explorer instead.
+  const links = isNft(t) ? [] : [`🟢 <a href="${gmgnUrl(t.chain, t.address)}">Buy on GMGN</a>`];
   if (t.chain === "rh") links.push(`🔭 <a href="${RH_EXPLORER}/token/${t.address}">Blockscout</a>`);
   lines.push(links.join("  ·  "));
   return lines;
@@ -113,16 +134,28 @@ function footer(t: ConfluenceToken): string[] {
  */
 export function formatConfluenceAlert(t: ConfluenceToken, buyers: AlphaBuyer[]): string {
   const lines: string[] = [];
-  lines.push(`🚨 <b>Alpha Confluence</b>  ·  ${buyers.length} wallets bought <b>$${escapeHtml(t.symbol)}</b>`);
-  lines.push(`<i>${escapeHtml(t.name || t.symbol)}</i>`);
+  const nft = isNft(t);
+  const verb = nft ? (buyers.every((b) => b.isMint) ? "minted" : "collected") : "bought";
+  lines.push(
+    `${nft ? "🖼" : "🚨"} <b>Alpha Confluence</b>  ·  ${buyers.length} wallets ${verb} ` +
+      `<b>${nft ? "" : "$"}${escapeHtml(t.symbol)}</b>`
+  );
+  lines.push(`<i>${escapeHtml(t.name || t.symbol)}${nft ? " · NFT collection" : ""}</i>`);
   lines.push("");
   for (const b of buyers) {
-    lines.push(buyLine(t.chain, b));
+    lines.push(buyLine(t.chain, b, isNft(t)));
   }
 
   const stat: string[] = [];
-  if (t.currentMcUsd != null) stat.push(`📊 MC ${mc(t.currentMcUsd)}`);
-  if (t.liquidityUsd != null) stat.push(`💧 Liq ${mc(t.liquidityUsd)}`);
+  if (nft) {
+    // An NFT has no market cap or pool; supply and holders are the equivalent
+    // sense of how big and how distributed the thing is.
+    if (t.totalSupply != null) stat.push(`🧾 Supply ${t.totalSupply.toLocaleString()}`);
+    if (t.holders != null) stat.push(`👥 ${t.holders.toLocaleString()} holders`);
+  } else {
+    if (t.currentMcUsd != null) stat.push(`📊 MC ${mc(t.currentMcUsd)}`);
+    if (t.liquidityUsd != null) stat.push(`💧 Liq ${mc(t.liquidityUsd)}`);
+  }
   if (stat.length) {
     lines.push("");
     lines.push(stat.join("  ·  "));
@@ -142,16 +175,25 @@ export function formatConfluenceFollowUp(
 ): string {
   const total = previous.length + 1;
   const lines: string[] = [];
-  lines.push(`➕ <b>Alpha #${total} bought $${escapeHtml(t.symbol)}</b>`);
+  const nft = isNft(t);
+  lines.push(
+    `➕ <b>Alpha #${total} ${nft ? (joiner.isMint ? "minted" : "collected") : "bought"} ` +
+      `${nft ? "" : "$"}${escapeHtml(t.symbol)}</b>`
+  );
   lines.push("");
-  lines.push(buyLine(t.chain, joiner));
+  lines.push(buyLine(t.chain, joiner, isNft(t)));
   lines.push("");
   lines.push(
     `🤝 Joins ${previous.map((p) => `<b>${escapeHtml(p.label)}</b>`).join(", ")} — ` +
-      `<b>${total}</b> alpha wallets now in <b>$${escapeHtml(t.symbol)}</b>`
+      `<b>${total}</b> alpha wallets now in <b>${nft ? "" : "$"}${escapeHtml(t.symbol)}</b>`
   );
 
-  if (t.currentMcUsd != null) {
+  if (nft) {
+    const bits: string[] = [];
+    if (t.totalSupply != null) bits.push(`🧾 Supply ${t.totalSupply.toLocaleString()}`);
+    if (t.holders != null) bits.push(`👥 ${t.holders.toLocaleString()} holders`);
+    if (bits.length) lines.push(bits.join("  ·  "));
+  } else if (t.currentMcUsd != null) {
     const base = t.firstAlertMcUsd;
     const move =
       base && base > 0

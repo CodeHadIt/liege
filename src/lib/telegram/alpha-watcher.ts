@@ -3,9 +3,12 @@ import { loadAlphaWallets } from "@/lib/api/alpha-wallets";
 import {
   getRhLatestBlock,
   getTransfersToWallets,
-  getTxSender,
+  getTxInfo,
   getBlockTimeMs,
   getRhTokenDecimals,
+  getEthUsdPrice,
+  getNftCollection,
+  type AssetStandard,
 } from "@/lib/api/rh-onchain";
 import { rateLimit } from "@/lib/rate-limiter";
 import {
@@ -54,6 +57,8 @@ interface TokenMarket {
   priceUsd: number | null;
   marketCapUsd: number | null;
   liquidityUsd: number | null;
+  totalSupply?: number | null;
+  holders?: number | null;
 }
 
 /** Market snapshot for a token from its deepest Robinhood-chain pool. */
@@ -94,7 +99,12 @@ interface DetectedBuy {
   txHash: string;
   blockNumber: number;
   boughtAtMs: number;
+  standard: AssetStandard;
+  /** ERC-20: token amount. ERC-721: NFT count. */
   tokensReceived: number;
+  /** ERC-721: native spend on the mint/purchase */
+  valueWei: bigint;
+  isMint: boolean;
 }
 
 /**
@@ -131,26 +141,45 @@ export async function pollAlphaConfluence(): Promise<void> {
   // Collapse to one candidate per (tx, wallet, token): a single swap routinely
   // emits several Transfers of the same token to the same wallet, and that is
   // one purchase.
-  const candidates = new Map<string, { tx: string; wallet: string; token: string; block: number; raw: bigint }>();
+  const ZERO = "0x0000000000000000000000000000000000000000";
+  const candidates = new Map<
+    string,
+    { tx: string; wallet: string; token: string; block: number; raw: bigint; standard: AssetStandard; count: number; mint: boolean }
+  >();
   for (const t of transfers) {
     const key = `${t.txHash}:${t.to}:${t.tokenAddress}`;
     const ex = candidates.get(key);
-    if (ex) ex.raw += t.rawValue;
-    else candidates.set(key, { tx: t.txHash, wallet: t.to, token: t.tokenAddress, block: t.blockNumber, raw: t.rawValue });
+    if (ex) {
+      ex.raw += t.rawValue;
+      ex.count += 1; // NFT mints arrive batched — 50 in one tx is routine
+      ex.mint = ex.mint || t.from === ZERO;
+    } else {
+      candidates.set(key, {
+        tx: t.txHash,
+        wallet: t.to,
+        token: t.tokenAddress,
+        block: t.blockNumber,
+        raw: t.rawValue,
+        standard: t.standard,
+        count: 1,
+        mint: t.from === ZERO,
+      });
+    }
   }
 
   const buys: DetectedBuy[] = [];
-  const senderCache = new Map<string, string | null>();
+  const senderCache = new Map<string, { from: string; valueWei: bigint } | null>();
   for (const c of candidates.values()) {
     const w = wallets.get(c.wallet);
     if (!w?.id) continue;
 
-    if (!senderCache.has(c.tx)) senderCache.set(c.tx, await getTxSender(c.tx));
-    const sender = senderCache.get(c.tx);
-    if (sender !== c.wallet) continue; // received, but didn't act — not a buy
+    if (!senderCache.has(c.tx)) senderCache.set(c.tx, await getTxInfo(c.tx));
+    const info = senderCache.get(c.tx);
+    if (!info || info.from !== c.wallet) continue; // received, but didn't act
 
-    const decimals = await getRhTokenDecimals(c.token);
-    const tokensReceived = Number(c.raw) / 10 ** decimals;
+    // ERC-721 has no decimals — the count of ids received IS the amount.
+    const tokensReceived =
+      c.standard === "erc721" ? c.count : Number(c.raw) / 10 ** (await getRhTokenDecimals(c.token));
     const ts = (await getBlockTimeMs(c.block)) ?? Date.now();
 
     buys.push({
@@ -161,7 +190,10 @@ export async function pollAlphaConfluence(): Promise<void> {
       txHash: c.tx,
       blockNumber: c.block,
       boughtAtMs: ts,
+      standard: c.standard,
       tokensReceived,
+      valueWei: info.valueWei,
+      isMint: c.mint,
     });
   }
   if (buys.length === 0) return;
@@ -171,14 +203,37 @@ export async function pollAlphaConfluence(): Promise<void> {
 
   const marketCache = new Map<string, TokenMarket>();
   for (const b of buys) {
-    if (!marketCache.has(b.tokenAddress)) marketCache.set(b.tokenAddress, await fetchTokenMarket(b.tokenAddress));
-    const m = marketCache.get(b.tokenAddress)!;
+    const nft = b.standard === "erc721";
 
-    const amountUsd = m.priceUsd != null ? b.tokensReceived * m.priceUsd : null;
-    const supplyPct =
-      m.marketCapUsd && m.priceUsd && m.priceUsd > 0
-        ? (b.tokensReceived / (m.marketCapUsd / m.priceUsd)) * 100
-        : null;
+    // An NFT has no pool to price against: what the wallet spent is the native
+    // value on the transaction, and supply/holders stand in for market cap.
+    let m: TokenMarket;
+    let amountUsd: number | null;
+    let supplyPct: number | null;
+    if (nft) {
+      const col = await getNftCollection(b.tokenAddress);
+      const eth = await getEthUsdPrice();
+      m = {
+        symbol: col?.symbol ?? "?",
+        name: col?.name ?? "",
+        priceUsd: null,
+        marketCapUsd: null,
+        liquidityUsd: null,
+        totalSupply: col?.totalSupply ?? null,
+        holders: col?.holders ?? null,
+      };
+      const ethSpent = Number(b.valueWei) / 1e18;
+      amountUsd = eth != null ? ethSpent * eth : null;
+      supplyPct = col?.totalSupply ? (b.tokensReceived / col.totalSupply) * 100 : null;
+    } else {
+      if (!marketCache.has(b.tokenAddress)) marketCache.set(b.tokenAddress, await fetchTokenMarket(b.tokenAddress));
+      m = marketCache.get(b.tokenAddress)!;
+      amountUsd = m.priceUsd != null ? b.tokensReceived * m.priceUsd : null;
+      supplyPct =
+        m.marketCapUsd && m.priceUsd && m.priceUsd > 0
+          ? (b.tokensReceived / (m.marketCapUsd / m.priceUsd)) * 100
+          : null;
+    }
 
     const { error } = await supabase.from("alpha_buys").upsert(
       {
@@ -194,6 +249,9 @@ export async function pollAlphaConfluence(): Promise<void> {
         market_cap_usd: m.marketCapUsd,
         supply_pct: supplyPct,
         liquidity_usd: m.liquidityUsd,
+        asset_type: b.standard,
+        quantity: nft ? b.tokensReceived : null,
+        is_mint: b.isMint,
       },
       { onConflict: "tx_hash,wallet_id,token_address", ignoreDuplicates: true }
     );
@@ -202,18 +260,23 @@ export async function pollAlphaConfluence(): Promise<void> {
       continue;
     }
 
-    // Recorded either way — the buy history stays complete — but neither dust
-    // nor anything we cannot price drives confluence. See MIN_BUY_USD.
-    if (amountUsd == null) {
-      console.log(`[alpha] ${b.label} received ${b.tokenAddress.slice(0, 10)}… with no price — not counted`);
-      continue;
-    }
-    if (amountUsd < MIN_BUY_USD) {
-      console.log(`[alpha] ${b.label} bought ${m.symbol} for $${amountUsd.toFixed(0)} — below $${MIN_BUY_USD} floor, not counted`);
-      continue;
+    // The USD floor exists to filter dust from a fungible market, and does not
+    // translate to NFTs: free mints are the norm there, and several alpha
+    // wallets minting the same collection is exactly the signal wanted. NFT
+    // noise is bounded by confluence, the 24h re-open cooldown and the 4-ping
+    // cap instead.
+    if (!nft) {
+      if (amountUsd == null) {
+        console.log(`[alpha] ${b.label} received ${b.tokenAddress.slice(0, 10)}… with no price — not counted`);
+        continue;
+      }
+      if (amountUsd < MIN_BUY_USD) {
+        console.log(`[alpha] ${b.label} bought ${m.symbol} for $${amountUsd.toFixed(0)} — below $${MIN_BUY_USD} floor, not counted`);
+        continue;
+      }
     }
 
-    await advanceConfluence(b, m);
+    await advanceConfluence(b, m, nft);
   }
 }
 
@@ -233,7 +296,7 @@ async function closeExpiredWindows(): Promise<void> {
  * alpha wallet joins. Alerts run from the 2nd distinct wallet to the 5th, after
  * which the window closes.
  */
-async function advanceConfluence(buy: DetectedBuy, market: TokenMarket): Promise<void> {
+async function advanceConfluence(buy: DetectedBuy, market: TokenMarket, nft: boolean): Promise<void> {
   const now = new Date(buy.boughtAtMs);
 
   const { data: openRows } = await supabase
@@ -270,6 +333,7 @@ async function advanceConfluence(buy: DetectedBuy, market: TokenMarket): Promise
         token_address: buy.tokenAddress,
         token_symbol: market.symbol,
         token_name: market.name,
+        asset_type: buy.standard,
         first_buy_at: now.toISOString(),
         window_expires_at: new Date(buy.boughtAtMs + CONFLUENCE_WINDOW_MS).toISOString(),
         wallet_count: 1,
@@ -289,7 +353,7 @@ async function advanceConfluence(buy: DetectedBuy, market: TokenMarket): Promise
   // Distinct wallets that have bought inside this window, in buy order.
   const { data: windowBuys } = await supabase
     .from("alpha_buys")
-    .select("wallet_id, amount_usd, market_cap_usd, supply_pct, bought_at")
+    .select("wallet_id, amount_usd, market_cap_usd, supply_pct, bought_at, quantity, is_mint")
     .eq("chain", CHAIN)
     .eq("token_address", buy.tokenAddress)
     .gte("bought_at", row.first_buy_at)
@@ -301,6 +365,8 @@ async function advanceConfluence(buy: DetectedBuy, market: TokenMarket): Promise
     market_cap_usd: number | null;
     supply_pct: number | null;
     bought_at: string;
+    quantity: number | null;
+    is_mint: boolean | null;
   }
   const order: string[] = [];
   const perWallet = new Map<string, WindowBuy>();
@@ -326,6 +392,8 @@ async function advanceConfluence(buy: DetectedBuy, market: TokenMarket): Promise
       amountUsd: r.amount_usd,
       marketCapUsd: r.market_cap_usd,
       supplyPct: r.supply_pct,
+      quantity: r.quantity,
+      isMint: r.is_mint ?? false,
     };
   };
 
@@ -337,6 +405,9 @@ async function advanceConfluence(buy: DetectedBuy, market: TokenMarket): Promise
     liquidityUsd: market.liquidityUsd,
     currentMcUsd: market.marketCapUsd,
     firstAlertMcUsd: row.first_alert_mc_usd ?? null,
+    assetType: nft ? "erc721" : "erc20",
+    totalSupply: market.totalSupply ?? null,
+    holders: market.holders ?? null,
   };
 
   const patch: Record<string, unknown> = { wallet_count: distinct };
