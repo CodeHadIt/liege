@@ -2,6 +2,7 @@ import { supabase } from "@/lib/supabase";
 import { rateLimit } from "@/lib/rate-limiter";
 import { labelToken, CHAIN_PREFIX } from "@/lib/api/alpha-wallets";
 import { RH_EXPLORER } from "@/lib/api/ath-tokens";
+import { scrapeGmgnDevTokens } from "@/lib/api/gmgn-scraper";
 
 // Alpha deployers — devs behind two or more tokens that reached a $2M ATH.
 
@@ -320,6 +321,52 @@ export async function createdTokensInTx(
     }
   }
   return out;
+}
+
+/**
+ * Replace a dev's recorded deploy history with GMGN's list.
+ *
+ * GMGN serves the dev's tokens with each one's ATH market cap already computed,
+ * which is both the authoritative set and far cheaper than the alternative —
+ * walking their transactions for create2 internals and pricing each result
+ * through GeckoTerminal was ~100 requests for what this does in one.
+ *
+ * Rows are replaced rather than merged: the list is the full truth for that dev,
+ * so anything we hold beyond it came from the older, less reliable walk.
+ */
+export async function syncDeployerTokensFromGmgn(
+  chain: string,
+  deployerId: string,
+  devAddress: string
+): Promise<{ total: number; hits: number } | null> {
+  const info = await scrapeGmgnDevTokens(chain, devAddress);
+  if (!info || info.tokens.length === 0) return null;
+
+  const addr = devAddress.toLowerCase();
+  await supabase.from("deployer_launches").delete().eq("chain", chain).eq("deployer_address", addr);
+
+  const rows = info.tokens.map((t) => ({
+    deployer_id: deployerId,
+    chain,
+    deployer_address: addr,
+    token_address: t.tokenAddress,
+    token_name: t.name,
+    token_symbol: t.symbol,
+    launched_at: t.createdAt ? new Date(t.createdAt * 1000).toISOString() : null,
+    ath_mc_usd: t.athMcUsd,
+    is_success: (t.athMcUsd ?? 0) >= SUCCESS_ATH_MC_USD,
+    // Historical rows are recorded, never announced.
+    alerted_at: new Date().toISOString(),
+  }));
+
+  const { error } = await supabase
+    .from("deployer_launches")
+    .upsert(rows, { onConflict: "chain,token_address" });
+  if (error) {
+    console.error("[deployers] gmgn sync failed:", error.message);
+    return null;
+  }
+  return { total: rows.length, hits: rows.filter((r) => r.is_success).length };
 }
 
 export async function markDeployerChecked(id: string, lastSeenTx: string | null): Promise<void> {

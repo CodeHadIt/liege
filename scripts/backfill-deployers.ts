@@ -12,6 +12,8 @@
  */
 import { config as loadEnv } from "dotenv";
 loadEnv({ path: ".env.local" });
+// Reading dev tokens goes through GMGN, which needs a real browser.
+process.env.CHROMIUM_EXECUTABLE_PATH ||= "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
 import { supabase } from "../src/lib/supabase";
 import {
@@ -20,11 +22,9 @@ import {
   tokensByDeployer,
   deployerSuccessRate,
   recentTxs,
-  createdTokensInTx,
   markDeployerChecked,
-  fetchAthMc,
+  syncDeployerTokensFromGmgn,
   athMultiple,
-  SUCCESS_ATH_MC_USD,
   SUCCESS_MULTIPLE,
 } from "../src/lib/api/alpha-deployers";
 
@@ -49,63 +49,17 @@ async function main() {
       continue;
     }
 
-    // Their known $2M runners are deploys by definition, and they must be in
-    // the denominator even if they sit deeper than the transaction walk reaches.
-    for (const w of winners) {
-      const { data: seen } = await supabase
-        .from("deployer_launches")
-        .select("id")
-        .eq("chain", CHAIN)
-        .eq("token_address", w.tokenAddress)
-        .maybeSingle();
-      if (seen?.id) continue;
-      await supabase.from("deployer_launches").insert({
-        deployer_id: dep.id,
-        chain: CHAIN,
-        deployer_address: dep.address,
-        token_address: w.tokenAddress,
-        token_name: w.name,
-        token_symbol: w.symbol,
-        launched_at: w.launchedAt,
-        ath_mc_usd: w.athMcUsd,
-        is_success: (w.athMcUsd ?? 0) >= SUCCESS_ATH_MC_USD,
-        alerted_at: new Date().toISOString(),
-      });
+    // GMGN serves the dev's full token list with each ATH already computed, so
+    // it replaces both the runner seeding and the transaction walk.
+    const synced = await syncDeployerTokensFromGmgn(CHAIN, dep.id, dep.address);
+    if (!synced) {
+      console.log("  gmgn returned no deploy list (rate limited?) — skipped\n");
+      continue;
     }
 
-    // Then walk their history for everything else they shipped.
-    const txs = await recentTxs(dep.address, 20);
-    let found = 0;
-    for (const tx of txs) {
-      for (const token of await createdTokensInTx(tx.hash)) {
-        const { data: seen } = await supabase
-          .from("deployer_launches")
-          .select("id")
-          .eq("chain", CHAIN)
-          .eq("token_address", token.address)
-          .maybeSingle();
-        if (seen?.id) continue;
-
-        const ath = await fetchAthMc(token.address);
-        await supabase.from("deployer_launches").insert({
-          deployer_id: dep.id,
-          chain: CHAIN,
-          deployer_address: dep.address,
-          token_address: token.address,
-          token_name: token.name,
-          token_symbol: token.symbol,
-          tx_hash: tx.hash,
-          launched_at: tx.timestamp,
-          ath_mc_usd: ath,
-          is_success: (ath ?? 0) >= SUCCESS_ATH_MC_USD,
-          // Historical rows are backfilled, never announced.
-          alerted_at: new Date().toISOString(),
-        });
-        found++;
-      }
-    }
-    // Start the live watcher from the current head, so the backfilled history
-    // isn't replayed as new launches.
+    // Start the live watcher at the current head so recorded history is never
+    // replayed as new launches.
+    const txs = await recentTxs(dep.address);
     if (txs[0]) await markDeployerChecked(dep.id, txs[0].hash);
 
     const rate = await deployerSuccessRate(CHAIN, dep.address);
@@ -114,7 +68,7 @@ async function main() {
       .update({ success_20x_count: rate.hits, total_deploys: rate.total })
       .eq("id", dep.id);
 
-    console.log(`  deploys recorded: ${found}  ->  ${rate.hits}/${rate.total} hit ${SUCCESS_MULTIPLE}x+ (${rate.pct.toFixed(0)}%)`);
+    console.log(`  deploys (from GMGN): ${synced.total}  ->  ${rate.hits}/${rate.total} hit ${SUCCESS_MULTIPLE}x+ (${rate.pct.toFixed(0)}%)`);
     for (const w of winners) {
       const x = athMultiple(w.athMcUsd);
       console.log(`    ${(w.symbol ?? "?").padEnd(14)} ATH $${Math.round(w.athMcUsd ?? 0).toLocaleString().padStart(12)}  ${x ? Math.round(x).toLocaleString() + "x" : "?"}`);

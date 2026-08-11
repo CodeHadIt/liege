@@ -289,8 +289,19 @@ export interface GmgnDevToken {
 
 export interface GmgnDevInfo {
   devAddress: string;
-  /** every token the dev has created, per GMGN's own counters */
+  /**
+   * How many tokens the dev actually deployed — the length of the returned
+   * list, which is the authoritative set.
+   *
+   * GMGN also reports inner_count and open_count (15 + 3 = 18 for the dev
+   * checked), but those do NOT agree with the list it serves, and the list is
+   * what the site itself shows and what a second source (basedbot) confirms.
+   * Trusting the counters would inflate every success-rate denominator.
+   */
   totalCreated: number;
+  /** GMGN's own counters, kept for reference only — not used for the rate. */
+  reportedInnerCount: number;
+  reportedOpenCount: number;
   graduatedCount: number;
   tokens: GmgnDevToken[];
   bestToken: { address: string; symbol: string | null; athMcUsd: number | null } | null;
@@ -355,18 +366,17 @@ export async function scrapeGmgnTokenDev(chain: string, tokenAddress: string): P
   const page = await context.newPage();
   let dev: string | null = null;
 
-  // The address sits at dev.creator_address, not on the row itself — `dev` is an
-  // object, so a top-level key scan silently finds nothing.
+  // The address sits at dev.creator_address — `dev` is an object, so scanning
+  // top-level keys silently finds nothing.
+  //
+  // Note what is NOT read: dev.address is the TOKEN's address, not the creator's.
+  // GMGN leaves creator_address empty when it doesn't know (NVDA and SPCX both),
+  // and falling back to dev.address there returned the token itself as its own
+  // deployer — a wrong answer that looks entirely plausible. Better to return
+  // null and let the caller fall back to the chain.
   const pick = (row: Record<string, unknown>): string | null => {
     const nested = row.dev as Record<string, unknown> | undefined;
-    const candidates = [
-      nested?.creator_address,
-      nested?.address,
-      row.creator_address,
-      row.creator,
-      row.deployer,
-    ];
-    for (const v of candidates) {
+    for (const v of [nested?.creator_address, row.creator_address, row.creator]) {
       if (typeof v === "string" && /^0x[0-9a-fA-F]{40}$/.test(v)) return v.toLowerCase();
     }
     return null;
@@ -428,10 +438,10 @@ export async function scrapeGmgnDevTokens(chain: string, devAddress: string): Pr
 
   return {
     devAddress: dev,
-    // GMGN splits its own count into bonding-curve and graduated; the sum is the
-    // dev's true output, and is larger than the token list it returns.
-    totalCreated: Math.max(inner + open, rows.length),
-    graduatedCount: open,
+    totalCreated: rows.length,
+    reportedInnerCount: inner,
+    reportedOpenCount: open,
+    graduatedCount: rows.filter((t) => t.is_open === true).length,
     bestToken: ath
       ? {
           address: String(ath.ath_token ?? ""),
