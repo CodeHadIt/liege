@@ -9,6 +9,14 @@ import type { GmgnTopTrader } from "@/lib/api/gmgn-scraper";
 
 export const RH_EXPLORER = "https://robinhoodchain.blockscout.com";
 
+// Factory → launchpad. The factory that deployed a token is deterministic per
+// launchpad, which makes it a more reliable label than anything an indexer
+// reports (DexScreener shows where liquidity currently sits, not the origin).
+const FACTORY_LAUNCHPAD: Record<string, string> = {
+  "0x000000e200088d55c39a11f609e5f667729ad49b": "pools.trade",
+  "0x3711cea4feade896c913c68f01eda97cb06d1a42": "pons",
+};
+
 export interface AthTokenInput {
   chain: string;
   tokenAddress: string;
@@ -26,35 +34,52 @@ export interface AthTokenInput {
   source: string;
 }
 
-/** Deployer + creation time for a contract, from Blockscout. */
+/**
+ * Who created a token contract.
+ *
+ * Blockscout's v1 `getcontractcreation` returns null on this chain for every
+ * token tried, so the v2 address endpoint is the source — it carries
+ * `creator_address_hash` reliably.
+ *
+ * That creator is the factory when a launchpad deployed the token, and the
+ * user's own address when it didn't. Both are wanted: the factory identifies
+ * the launchpad, while the human behind it is the deployer worth tracking. When
+ * the creator is a known factory we follow the creation transaction to its
+ * sender to recover the person.
+ */
 export async function fetchDeployer(
   tokenAddress: string
 ): Promise<{ deployer: string | null; factory: string | null }> {
   await rateLimit("robinscan");
   try {
-    const res = await fetch(
-      `${RH_EXPLORER}/api?module=contract&action=getcontractcreation&contractaddresses=${tokenAddress}`,
-      { headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(15_000) }
-    );
+    const res = await fetch(`${RH_EXPLORER}/api/v2/addresses/${tokenAddress}`, {
+      headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(15_000),
+    });
     if (!res.ok) return { deployer: null, factory: null };
     const d = await res.json();
-    const row = Array.isArray(d?.result) ? d.result[0] : null;
-    return {
-      deployer: row?.contractCreator ? String(row.contractCreator).toLowerCase() : null,
-      factory: row?.contractFactory ? String(row.contractFactory).toLowerCase() : null,
-    };
+    const creator = d?.creator_address_hash ? String(d.creator_address_hash).toLowerCase() : null;
+    if (!creator) return { deployer: null, factory: null };
+
+    const isFactory = creator in FACTORY_LAUNCHPAD;
+    if (!isFactory) return { deployer: creator, factory: null };
+
+    // Launchpad-deployed: the creation tx's sender is the actual person.
+    const txHash = d?.creation_transaction_hash;
+    if (!txHash) return { deployer: null, factory: creator };
+    await rateLimit("robinscan");
+    const txRes = await fetch(`${RH_EXPLORER}/api/v2/transactions/${txHash}`, {
+      headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!txRes.ok) return { deployer: null, factory: creator };
+    const tx = await txRes.json();
+    const from = tx?.from?.hash ? String(tx.from.hash).toLowerCase() : null;
+    return { deployer: from, factory: creator };
   } catch {
     return { deployer: null, factory: null };
   }
 }
-
-// Factory → launchpad. The factory that deployed a token is deterministic per
-// launchpad, which makes it a more reliable label than anything an indexer
-// reports (DexScreener shows where liquidity currently sits, not the origin).
-const FACTORY_LAUNCHPAD: Record<string, string> = {
-  "0x000000e200088d55c39a11f609e5f667729ad49b": "pools.trade",
-  "0x3711cea4feade896c913c68f01eda97cb06d1a42": "pons",
-};
 
 export function launchpadFromFactory(factory: string | null): string | null {
   if (!factory) return null;
@@ -111,25 +136,32 @@ export async function upsertAthToken(t: AthTokenInput): Promise<string | null> {
   return data?.id ?? null;
 }
 
-/** Record a deployer, incrementing its token count when already known. */
+/**
+ * Record a deployer, with its token count DERIVED from ath_tokens rather than
+ * incremented. Incrementing looks simpler but is wrong under replay: a re-run of
+ * the backfill, or a token re-scanned on a later day, would inflate the count
+ * and make a one-hit deployer look prolific. Counting the rows is idempotent.
+ */
 export async function upsertDeployer(chain: string, address: string | null): Promise<void> {
   if (!address) return;
   const addr = address.toLowerCase();
-  const { data } = await supabase
-    .from("token_deployers")
-    .select("id, token_count")
-    .eq("chain", chain)
-    .eq("address", addr)
-    .maybeSingle();
 
-  if (data?.id) {
-    await supabase
-      .from("token_deployers")
-      .update({ token_count: (data.token_count ?? 1) + 1, last_seen_at: new Date().toISOString() })
-      .eq("id", data.id);
-    return;
-  }
-  await supabase.from("token_deployers").insert({ chain, address: addr, token_count: 1 });
+  const { count } = await supabase
+    .from("ath_tokens")
+    .select("*", { count: "exact", head: true })
+    .eq("chain", chain)
+    .eq("deployer_address", addr);
+
+  const { error } = await supabase.from("token_deployers").upsert(
+    {
+      chain,
+      address: addr,
+      token_count: count ?? 1,
+      last_seen_at: new Date().toISOString(),
+    },
+    { onConflict: "chain,address" }
+  );
+  if (error) console.error("[ath] upsert deployer failed:", error.message);
 }
 
 const iso = (s: number | null) => (s && s > 0 ? new Date(s * 1000).toISOString() : null);
