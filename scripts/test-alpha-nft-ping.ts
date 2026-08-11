@@ -30,6 +30,7 @@ import {
 } from "../src/lib/telegram/alpha-alerts";
 import { alertRecipients, hasAlertsBot } from "../src/lib/telegram/alerts-bot";
 import { loadAlphaWallets } from "../src/lib/api/alpha-wallets";
+import { getOpenSeaCollectionStats } from "../src/lib/api/opensea";
 
 const DEFAULT_COLLECTION = "0xd6577124f96394faee65afd2408f2ffa88445f63"; // Spritehood Wisp
 const ZERO = "0x0000000000000000000000000000000000000000";
@@ -91,14 +92,18 @@ async function main() {
 
   const col = await getNftCollection(collection);
   const eth = await getEthUsdPrice();
-  const sales = await getNftSaleStats(collection, latest);
+  const os = await getOpenSeaCollectionStats("rh", collection);
+  const sales = os?.floorNative == null ? await getNftSaleStats(collection, latest) : null;
+  const floorEth = os?.floorNative ?? sales?.lowEth ?? null;
   console.log(
     `collection: ${col?.name} (${col?.symbol}) supply=${col?.totalSupply} holders=${col?.holders}  ETH=$${eth}`
   );
   console.log(
-    sales
-      ? `floor (lowest of ${sales.sales} recent fills): ${sales.lowEth.toFixed(4)} ETH  median ${sales.medianEth.toFixed(4)} ETH\n`
-      : `no priced secondary sales found — floor omitted\n`
+    os?.floorNative != null
+      ? `floor (OpenSea lowest ask): ${os.floorNative} ${os.floorSymbol}  ·  ${os.sales} sales  ${os.owners} owners  ·  ${os.url}\n`
+      : sales
+        ? `floor (derived, lowest of ${sales.sales} fills): ${sales.lowEth.toFixed(4)} ETH\n`
+        : `no floor available\n`
   );
 
   const buyers: AlphaBuyer[] = [];
@@ -127,9 +132,11 @@ async function main() {
     assetType: "erc721",
     totalSupply: col?.totalSupply ?? null,
     holders: col?.holders ?? null,
-    floorEth: sales?.lowEth ?? null,
-    floorUsd: sales && eth != null ? sales.lowEth * eth : null,
+    floorEth,
+    floorUsd: floorEth != null && eth != null ? floorEth * eth : null,
     floorSales: sales?.sales ?? null,
+    floorSource: os?.floorNative != null ? "opensea" : sales ? "onchain" : null,
+    openSeaUrl: os?.url ?? null,
   };
 
   const first = buyers.slice(0, MIN_WALLETS_TO_ALERT);

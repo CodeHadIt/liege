@@ -68,6 +68,8 @@ const API_RATE_LIMITS: Record<string, RateLimiterConfig> = {
   // block number plus one getLogs; only a detected buy adds calls, and those are
   // rare, so this is generous headroom.
   rhrpc: { maxTokens: 20, refillRate: 5 },
+  // OpenSea's public v2 endpoints — a couple of calls per NFT alert.
+  opensea: { maxTokens: 10, refillRate: 1 },
   jupiter: { maxTokens: 30, refillRate: 0.5 },
   moralis: { maxTokens: 20, refillRate: 0.33 },
 };

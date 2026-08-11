@@ -12,6 +12,7 @@ import {
   type AssetStandard,
 } from "@/lib/api/rh-onchain";
 import { rateLimit } from "@/lib/rate-limiter";
+import { getOpenSeaCollectionStats } from "@/lib/api/opensea";
 import {
   sendConfluenceAlert,
   sendConfluenceFollowUp,
@@ -63,6 +64,8 @@ interface TokenMarket {
   floorUsd?: number | null;
   floorEth?: number | null;
   floorSales?: number | null;
+  floorSource?: "opensea" | "onchain" | null;
+  openSeaUrl?: string | null;
 }
 
 /** Market snapshot for a token from its deepest Robinhood-chain pool. */
@@ -217,18 +220,24 @@ export async function pollAlphaConfluence(): Promise<void> {
     if (nft) {
       const col = await getNftCollection(b.tokenAddress);
       const eth = await getEthUsdPrice();
-      const sales = await getNftSaleStats(b.tokenAddress, b.blockNumber);
+      // Prefer OpenSea's real floor (lowest ask). Only pay for the on-chain
+      // scan when the collection isn't listed there — it costs ~25 RPC calls.
+      const os = await getOpenSeaCollectionStats(CHAIN, b.tokenAddress);
+      const sales = os?.floorNative == null ? await getNftSaleStats(b.tokenAddress, b.blockNumber) : null;
+      const floorEth = os?.floorNative ?? sales?.lowEth ?? null;
       m = {
         symbol: col?.symbol ?? "?",
-        name: col?.name ?? "",
+        name: col?.name ?? os?.name ?? "",
         priceUsd: null,
         marketCapUsd: null,
         liquidityUsd: null,
         totalSupply: col?.totalSupply ?? null,
-        holders: col?.holders ?? null,
-        floorEth: sales?.lowEth ?? null,
-        floorUsd: sales && eth != null ? sales.lowEth * eth : null,
+        holders: col?.holders ?? os?.owners ?? null,
+        floorEth,
+        floorUsd: floorEth != null && eth != null ? floorEth * eth : null,
         floorSales: sales?.sales ?? null,
+        floorSource: os?.floorNative != null ? "opensea" : sales ? "onchain" : null,
+        openSeaUrl: os?.url ?? null,
       };
       const ethSpent = Number(b.valueWei) / 1e18;
       amountUsd = eth != null ? ethSpent * eth : null;
@@ -419,6 +428,8 @@ async function advanceConfluence(buy: DetectedBuy, market: TokenMarket, nft: boo
     floorUsd: market.floorUsd ?? null,
     floorEth: market.floorEth ?? null,
     floorSales: market.floorSales ?? null,
+    floorSource: market.floorSource ?? null,
+    openSeaUrl: market.openSeaUrl ?? null,
   };
 
   const patch: Record<string, unknown> = { wallet_count: distinct };

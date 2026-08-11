@@ -71,10 +71,13 @@ export interface ConfluenceToken {
   /** NFT only */
   totalSupply?: number | null;
   holders?: number | null;
-  /** NFT only: lowest recent on-chain fill, the closest available thing to a floor */
+  /** NFT only: floor price */
   floorUsd?: number | null;
   floorEth?: number | null;
   floorSales?: number | null;
+  /** "opensea" = real lowest ask; "onchain" = lowest recent fill, a proxy */
+  floorSource?: "opensea" | "onchain" | null;
+  openSeaUrl?: string | null;
 }
 
 const isNft = (t: ConfluenceToken) => t.assetType === "erc721";
@@ -122,15 +125,17 @@ function buyLine(chain: string, b: AlphaBuyer, nft: boolean): string {
 
 function footer(t: ConfluenceToken): string[] {
   const lines: string[] = [];
-  if (isNft(t) && t.floorUsd != null) {
+  // Only the derived figure needs qualifying — an OpenSea floor is a real ask.
+  if (isNft(t) && t.floorUsd != null && t.floorSource === "onchain") {
     lines.push("");
-    lines.push(`<i>Floor = lowest of ${t.floorSales ?? "recent"} on-chain sales; this chain has no orderbook to quote asks from.</i>`);
+    lines.push(`<i>Floor derived from ${t.floorSales ?? "recent"} on-chain sales — not listed on OpenSea.</i>`);
   }
   lines.push("");
   lines.push(`<code>${escapeHtml(t.address)}</code>`);
   // GMGN indexes fungible tokens, not NFT collections — linking there for an
   // NFT would land on an empty page, so send those to the explorer instead.
   const links = isNft(t) ? [] : [`🟢 <a href="${gmgnUrl(t.chain, t.address)}">Buy on GMGN</a>`];
+  if (isNft(t) && t.openSeaUrl) links.push(`⛵ <a href="${escapeHtml(t.openSeaUrl)}">OpenSea</a>`);
   if (t.chain === "rh") links.push(`🔭 <a href="${RH_EXPLORER}/token/${t.address}">Blockscout</a>`);
   lines.push(links.join("  ·  "));
   return lines;
