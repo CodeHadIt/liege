@@ -173,7 +173,7 @@ export async function upsertDeployer(chain: string, address: string | null): Pro
     {
       chain,
       address: addr,
-      token_count: count ?? 1,
+      ath_token_count: count ?? 1,
       last_seen_at: new Date().toISOString(),
     },
     { onConflict: "chain,address" }

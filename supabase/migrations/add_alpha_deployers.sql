@@ -10,6 +10,15 @@
 -- its curve the deepest pool opens long after launch (CASHCAT read as launching
 -- at $117M). A fixed base makes "20x" mean exactly $100k ATH for every token.
 
+-- Two counts live on this table and they must never be confused:
+--
+--   ath_token_count  — deploys that reached the $2M ATH bar (the runners)
+--   total_deploys    — every token this dev has ever shipped (the denominator)
+--
+-- The original column was called token_count, which reads like the second but
+-- holds the first. Renamed so the distinction is visible at the schema level.
+ALTER TABLE token_deployers RENAME COLUMN token_count TO ath_token_count;
+
 ALTER TABLE token_deployers
   -- Convention: <CHAIN>_<coin1>_<coin2>_Dep  e.g. RH_sestri_frong_Dep
   ADD COLUMN label text UNIQUE,
@@ -19,7 +28,8 @@ ALTER TABLE token_deployers
   ADD COLUMN success_20x_count integer NOT NULL DEFAULT 0,
   -- Every token this dev has deployed, successful or not — the denominator.
   ADD COLUMN total_deploys integer NOT NULL DEFAULT 0,
-  ADD COLUMN tokens text[] NOT NULL DEFAULT '{}',
+  -- Symbols of the $2M runners only, matching ath_token_count.
+  ADD COLUMN ath_token_symbols text[] NOT NULL DEFAULT '{}',
   -- Newest transaction already examined, so the watcher only inspects new ones.
   ADD COLUMN last_seen_tx text,
   ADD COLUMN last_checked_at timestamptz;

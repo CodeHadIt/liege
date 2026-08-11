@@ -42,9 +42,14 @@ export interface AlphaDeployer {
   id: string;
   address: string;
   label: string | null;
-  tokenCount: number;
+  /** deploys that reached the $2M ATH bar — the runners */
+  athTokenCount: number;
+  /** deploys that reached $100k ATH */
   success20xCount: number;
-  tokens: string[];
+  /** every token ever shipped — the success-rate denominator */
+  totalDeploys: number;
+  /** symbols of the $2M runners */
+  athTokenSymbols: string[];
   lastSeenTx: string | null;
 }
 
@@ -172,8 +177,8 @@ export async function refreshAlphaDeployers(chain: string): Promise<AlphaDeploye
         {
           chain,
           address,
-          token_count: count,
-          tokens: symbols,
+          ath_token_count: count,
+          ath_token_symbols: symbols,
           label,
           is_alpha: true,
           promoted_at: new Date().toISOString(),
@@ -183,7 +188,7 @@ export async function refreshAlphaDeployers(chain: string): Promise<AlphaDeploye
         },
         { onConflict: "chain,address" }
       )
-      .select("id, address, label, token_count, success_20x_count, tokens, last_seen_tx")
+      .select("id, address, label, ath_token_count, success_20x_count, total_deploys, ath_token_symbols, last_seen_tx")
       .single();
     if (error) {
       console.error("[deployers] promote failed:", error.message);
@@ -193,9 +198,10 @@ export async function refreshAlphaDeployers(chain: string): Promise<AlphaDeploye
       id: data.id,
       address: data.address,
       label: data.label,
-      tokenCount: data.token_count,
+      athTokenCount: data.ath_token_count,
       success20xCount: data.success_20x_count,
-      tokens: data.tokens ?? [],
+      totalDeploys: data.total_deploys ?? 0,
+      athTokenSymbols: data.ath_token_symbols ?? [],
       lastSeenTx: data.last_seen_tx ?? null,
     });
   }
@@ -205,7 +211,7 @@ export async function refreshAlphaDeployers(chain: string): Promise<AlphaDeploye
 export async function loadAlphaDeployers(chain: string): Promise<AlphaDeployer[]> {
   const { data, error } = await supabase
     .from("token_deployers")
-    .select("id, address, label, token_count, success_20x_count, tokens, last_seen_tx")
+    .select("id, address, label, ath_token_count, success_20x_count, total_deploys, ath_token_symbols, last_seen_tx")
     .eq("chain", chain)
     .eq("is_alpha", true);
   if (error) return [];
@@ -213,9 +219,10 @@ export async function loadAlphaDeployers(chain: string): Promise<AlphaDeployer[]
     id: r.id,
     address: r.address,
     label: r.label,
-    tokenCount: r.token_count,
+    athTokenCount: r.ath_token_count,
     success20xCount: r.success_20x_count,
-    tokens: r.tokens ?? [],
+    totalDeploys: r.total_deploys ?? 0,
+    athTokenSymbols: r.ath_token_symbols ?? [],
     lastSeenTx: r.last_seen_tx ?? null,
   }));
 }
