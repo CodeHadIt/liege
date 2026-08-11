@@ -5,8 +5,25 @@ import { RH_EXPLORER } from "@/lib/api/ath-tokens";
 
 // Alpha deployers — devs behind two or more tokens that reached a $2M ATH.
 
-/** A token only counts as a hit if it ran this far from its launch market cap. */
+/**
+ * Launch market cap is a constant, not a measurement.
+ *
+ * Deriving it per token was unreliable — it came from a pool's first candle, and
+ * any token that migrated off its bonding curve has a deeper pool that opens
+ * long after launch (CASHCAT read as launching at $117M, so a 4,000x run looked
+ * like 1.8x). Bonding curves here start around $5k, so fixing the base makes
+ * "20x" mean exactly $100k ATH for every token, comparably.
+ */
+export const LAUNCH_MC_USD = 5_000;
 export const SUCCESS_MULTIPLE = 20;
+/** A deploy counts as a hit at or above this ATH market cap. */
+export const SUCCESS_ATH_MC_USD = LAUNCH_MC_USD * SUCCESS_MULTIPLE; // $100k
+
+/** Multiple achieved from the fixed launch base. */
+export function athMultiple(athMcUsd: number | null | undefined): number | null {
+  if (athMcUsd == null || !Number.isFinite(athMcUsd)) return null;
+  return athMcUsd / LAUNCH_MC_USD;
+}
 /** Deployers need at least this many ATH tokens to be tracked. */
 export const MIN_ATH_TOKENS = 2;
 
@@ -16,9 +33,9 @@ export interface DeployerToken {
   name: string | null;
   athMcUsd: number | null;
   currentMcUsd: number | null;
-  deployMcUsd: number | null;
-  athMultiple: number | null;
   launchedAt: string | null;
+  /** reached $100k ATH */
+  isSuccess: boolean;
 }
 
 export interface AlphaDeployer {
@@ -43,57 +60,11 @@ export function buildDeployerLabel(chain: string, tokens: string[]): string {
   return `${prefix}_${picked.join("_")}_Dep`;
 }
 
-/**
- * Market cap a token launched at, taken from its EARLIEST pool.
- *
- * Using the deepest pool — the obvious choice — is wrong here: a token that
- * migrated off its bonding curve has a deeper post-migration pool whose first
- * candle opens well after launch. Measured that way CASHCAT appeared to launch
- * at $117M and therefore to have gone 1.8x, when the number that matters is
- * what it opened at on its original pool.
- */
-export async function fetchDeployMc(tokenAddress: string, supply: number): Promise<number | null> {
-  await rateLimit("geckoterminal");
-  try {
-    const infoRes = await fetch(
-      `https://api.geckoterminal.com/api/v2/networks/robinhood/tokens/${tokenAddress}?include=top_pools`,
-      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(20_000) }
-    );
-    if (!infoRes.ok) return null;
-    const info = await infoRes.json();
-    const pools = (info?.included ?? []).filter((x: { type?: string }) => x.type === "pool");
-    if (pools.length === 0) return null;
-
-    const earliest = pools.sort(
-      (a: { attributes: { pool_created_at?: string } }, b: { attributes: { pool_created_at?: string } }) =>
-        new Date(a.attributes.pool_created_at ?? 0).getTime() - new Date(b.attributes.pool_created_at ?? 0).getTime()
-    )[0];
-
-    await rateLimit("geckoterminal");
-    const ohlcvRes = await fetch(
-      `https://api.geckoterminal.com/api/v2/networks/robinhood/pools/${earliest.attributes.address}/ohlcv/hour?limit=1000&currency=usd`,
-      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(20_000) }
-    );
-    if (!ohlcvRes.ok) return null;
-    const o = await ohlcvRes.json();
-    const list: number[][] = o?.data?.attributes?.ohlcv_list ?? [];
-    if (list.length === 0) return null;
-
-    // Hourly rather than daily: a bonding curve can run several multiples inside
-    // its first day, and a daily open would already reflect that.
-    const open = list[list.length - 1][1];
-    if (!(open > 0)) return null;
-    return open * supply;
-  } catch {
-    return null;
-  }
-}
-
 /** Every ATH token attributed to a deployer. */
 export async function tokensByDeployer(chain: string, deployer: string): Promise<DeployerToken[]> {
   const { data, error } = await supabase
     .from("ath_tokens")
-    .select("token_address, symbol, name, ath_mc_usd, current_mc_usd, deploy_mc_usd, ath_multiple, launched_at")
+    .select("token_address, symbol, name, ath_mc_usd, current_mc_usd, launched_at")
     .eq("chain", chain)
     .eq("deployer_address", deployer.toLowerCase())
     .order("ath_mc_usd", { ascending: false });
@@ -104,19 +75,69 @@ export async function tokensByDeployer(chain: string, deployer: string): Promise
     name: r.name,
     athMcUsd: r.ath_mc_usd,
     currentMcUsd: r.current_mc_usd,
-    deployMcUsd: r.deploy_mc_usd,
-    athMultiple: r.ath_multiple,
     launchedAt: r.launched_at,
+    isSuccess: (r.ath_mc_usd ?? 0) >= SUCCESS_ATH_MC_USD,
   }));
 }
 
-export function successRate(tokens: DeployerToken[]): { hits: number; total: number; pct: number } {
-  // Only tokens we can measure count toward the denominator — an unknown launch
-  // market cap is not a failure, and treating it as one would understate every
-  // deployer with a migrated pool.
-  const measurable = tokens.filter((t) => t.athMultiple != null);
-  const hits = measurable.filter((t) => (t.athMultiple ?? 0) >= SUCCESS_MULTIPLE).length;
-  return { hits, total: measurable.length, pct: measurable.length ? (hits / measurable.length) * 100 : 0 };
+/**
+ * Success rate over EVERY token a dev deployed, from deployer_launches.
+ *
+ * Computing it from ath_tokens would always return 100%: a token only enters
+ * that table by clearing $2M, so the failures — which are the whole point of a
+ * rate — are missing by construction.
+ */
+export async function deployerSuccessRate(
+  chain: string,
+  deployer: string
+): Promise<{ hits: number; total: number; pct: number }> {
+  const addr = deployer.toLowerCase();
+  const { count: total } = await supabase
+    .from("deployer_launches")
+    .select("*", { count: "exact", head: true })
+    .eq("chain", chain)
+    .eq("deployer_address", addr);
+  const { count: hits } = await supabase
+    .from("deployer_launches")
+    .select("*", { count: "exact", head: true })
+    .eq("chain", chain)
+    .eq("deployer_address", addr)
+    .eq("is_success", true);
+  const t = total ?? 0;
+  return { hits: hits ?? 0, total: t, pct: t ? ((hits ?? 0) / t) * 100 : 0 };
+}
+
+/** Peak market cap for any token, on the fixed supply convention. */
+export async function fetchAthMc(tokenAddress: string): Promise<number | null> {
+  await rateLimit("geckoterminal");
+  try {
+    const infoRes = await fetch(
+      `https://api.geckoterminal.com/api/v2/networks/robinhood/tokens/${tokenAddress}?include=top_pools`,
+      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(20_000) }
+    );
+    if (!infoRes.ok) return null;
+    const info = await infoRes.json();
+    const pools = (info?.included ?? []).filter((x: { type?: string }) => x.type === "pool");
+    if (pools.length === 0) return null;
+    const deepest = pools.sort(
+      (a: { attributes: { reserve_in_usd?: string } }, b: { attributes: { reserve_in_usd?: string } }) =>
+        parseFloat(b.attributes.reserve_in_usd ?? "0") - parseFloat(a.attributes.reserve_in_usd ?? "0")
+    )[0];
+
+    await rateLimit("geckoterminal");
+    const o = await fetch(
+      `https://api.geckoterminal.com/api/v2/networks/robinhood/pools/${deepest.attributes.address}/ohlcv/day?limit=1000&currency=usd`,
+      { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(20_000) }
+    );
+    if (!o.ok) return null;
+    const j = await o.json();
+    const list: number[][] = j?.data?.attributes?.ohlcv_list ?? [];
+    if (list.length === 0) return null;
+    const high = Math.max(...list.map((c) => c[2]));
+    return high > 0 ? high * 1_000_000_000 : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -141,7 +162,7 @@ export async function refreshAlphaDeployers(chain: string): Promise<AlphaDeploye
     if (count < MIN_ATH_TOKENS) continue;
 
     const tokens = await tokensByDeployer(chain, address);
-    const { hits } = successRate(tokens);
+    const { hits, total } = await deployerSuccessRate(chain, address);
     const symbols = tokens.map((t) => t.symbol ?? "?");
     const label = buildDeployerLabel(chain, symbols);
 
@@ -157,6 +178,7 @@ export async function refreshAlphaDeployers(chain: string): Promise<AlphaDeploye
           is_alpha: true,
           promoted_at: new Date().toISOString(),
           success_20x_count: hits,
+          total_deploys: total,
           last_seen_at: new Date().toISOString(),
         },
         { onConflict: "chain,address" }

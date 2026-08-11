@@ -2,11 +2,14 @@ import { supabase } from "@/lib/supabase";
 import {
   loadAlphaDeployers,
   tokensByDeployer,
-  successRate,
+  deployerSuccessRate,
+  athMultiple,
   recentTxs,
   mintedTokensInTx,
   markDeployerChecked,
   SUCCESS_MULTIPLE,
+  SUCCESS_ATH_MC_USD,
+  LAUNCH_MC_USD,
   type AlphaDeployer,
   type DeployerToken,
 } from "@/lib/api/alpha-deployers";
@@ -32,18 +35,19 @@ export interface NewLaunch {
 }
 
 function multipleLabel(t: DeployerToken): string {
-  if (t.athMultiple == null) return "—";
-  const x = t.athMultiple;
+  const x = athMultiple(t.athMcUsd);
+  if (x == null) return "—";
   const hit = x >= SUCCESS_MULTIPLE ? " ✅" : "";
-  return `${x >= 100 ? Math.round(x) : x.toFixed(1)}x${hit}`;
+  return `${x >= 100 ? Math.round(x).toLocaleString() : x.toFixed(1)}x${hit}`;
 }
 
 export function formatDeployerLaunchAlert(
   deployer: AlphaDeployer,
   launch: NewLaunch,
-  history: DeployerToken[]
+  history: DeployerToken[],
+  rate: { hits: number; total: number; pct: number }
 ): string {
-  const { hits, total, pct } = successRate(history);
+  const { hits, total, pct } = rate;
   const lines: string[] = [];
 
   lines.push(`🏗️ <b>ALPHA DEV DEPLOYED</b> 🔨`);
@@ -65,17 +69,18 @@ export function formatDeployerLaunchAlert(
   lines.push(`⚒️ <b>TRACK RECORD</b>`);
   // The success rate is the headline: two runners could be two lucky launches
   // among fifty, and the ratio is what separates that from a real hit rate.
+  // Rate is over EVERY token the dev shipped, not just the winners — otherwise
+  // it is 100% by construction and says nothing.
   lines.push(
     total > 0
-      ? `🎯 <b>${hits}/${total} went ${SUCCESS_MULTIPLE}x+ from launch</b> (${pct.toFixed(0)}%)`
-      : `🎯 <i>Launch market caps unavailable — success rate not measurable.</i>`
+      ? `🎯 <b>${hits}/${total} deploys hit ${SUCCESS_MULTIPLE}x+</b> (${pct.toFixed(0)}%)  ·  <i>${SUCCESS_MULTIPLE}x = ${mc(SUCCESS_ATH_MC_USD)} ATH from a ${mc(LAUNCH_MC_USD)} launch</i>`
+      : `🎯 <i>Deploy history still being indexed.</i>`
   );
   lines.push("");
 
   for (const t of history) {
     const bits = [`ATH ${mc(t.athMcUsd)}`];
     if (t.currentMcUsd != null) bits.push(`now ${mc(t.currentMcUsd)}`);
-    if (t.deployMcUsd != null) bits.push(`from ${mc(t.deployMcUsd)}`);
     bits.push(multipleLabel(t));
     lines.push(`• <b>$${escapeHtml(t.symbol ?? "?")}</b> — ${bits.join("  ·  ")}`);
   }
@@ -155,11 +160,13 @@ export async function pollDeployerLaunches(): Promise<void> {
         if (error) continue; // already recorded
 
         const history = await tokensByDeployer(CHAIN, dep.address);
+        const rate = await deployerSuccessRate(CHAIN, dep.address);
         const mcUsd = await fetchMc(token.address);
         const text = formatDeployerLaunchAlert(
           dep,
           { tokenAddress: token.address, symbol: token.symbol, name: token.name, txHash: tx.hash, mcUsd },
-          history
+          history,
+          rate
         );
         await broadcastAlert((chatId) => send(chatId, text));
         await supabase

@@ -1,50 +1,109 @@
 /**
- * Backfill launch market caps and promote alpha deployers.
+ * Promote alpha deployers and build their full deploy history.
  *
- * deploy_mc_usd is what makes a "20x success rate" meaningful — without it a
- * token's ATH says nothing about whether the dev delivered.
+ * The history is the point. A success rate measured only against ath_tokens
+ * would always be 100%, because a token only enters that table by clearing $2M
+ * — the failures, which are what a rate is for, are missing by construction. So
+ * every token a dev has shipped is enumerated from their transactions and
+ * scored against the fixed $100k bar.
  *
- *   npx tsx scripts/backfill-deployers.ts
+ *   npx tsx scripts/backfill-deployers.ts            # preview
+ *   npx tsx scripts/backfill-deployers.ts --write
  */
 import { config as loadEnv } from "dotenv";
 loadEnv({ path: ".env.local" });
 
 import { supabase } from "../src/lib/supabase";
-import { fetchDeployMc, refreshAlphaDeployers, tokensByDeployer, successRate } from "../src/lib/api/alpha-deployers";
+import {
+  refreshAlphaDeployers,
+  loadAlphaDeployers,
+  tokensByDeployer,
+  deployerSuccessRate,
+  recentTxs,
+  mintedTokensInTx,
+  markDeployerChecked,
+  fetchAthMc,
+  athMultiple,
+  SUCCESS_ATH_MC_USD,
+  SUCCESS_MULTIPLE,
+} from "../src/lib/api/alpha-deployers";
 
 const CHAIN = "rh";
 
 async function main() {
-  const { data: tokens } = await supabase
-    .from("ath_tokens")
-    .select("id, token_address, symbol, ath_mc_usd, total_supply, deploy_mc_usd")
-    .eq("chain", CHAIN);
+  const write = process.argv.includes("--write");
 
-  const todo = (tokens ?? []).filter((t) => t.deploy_mc_usd == null);
-  console.log(`tokens needing a launch market cap: ${todo.length}/${tokens?.length ?? 0}`);
+  // Promote first so the deployers exist; counts are corrected at the end once
+  // their deploy histories are known.
+  const promoted = write ? await refreshAlphaDeployers(CHAIN) : await loadAlphaDeployers(CHAIN);
+  console.log(`alpha deployers (2+ $2M runners): ${promoted.length}\n`);
 
-  let done = 0;
-  for (const t of todo) {
-    const supply = Number(t.total_supply) || 1_000_000_000;
-    const deployMc = await fetchDeployMc(t.token_address, supply);
-    if (deployMc == null || deployMc <= 0) continue;
-    const multiple = t.ath_mc_usd ? t.ath_mc_usd / deployMc : null;
+  for (const dep of promoted) {
+    const winners = await tokensByDeployer(CHAIN, dep.address);
+    console.log(`${dep.label ?? dep.address}`);
+    console.log(`  ${dep.address}`);
+    console.log(`  $2M runners: ${winners.map((w) => w.symbol).join(", ")}`);
+
+    if (!write) {
+      console.log("");
+      continue;
+    }
+
+    // Walk their transactions and record every token they minted.
+    const txs = await recentTxs(dep.address);
+    let found = 0;
+    for (const tx of txs) {
+      for (const token of await mintedTokensInTx(tx.hash)) {
+        const { data: seen } = await supabase
+          .from("deployer_launches")
+          .select("id")
+          .eq("chain", CHAIN)
+          .eq("token_address", token.address)
+          .maybeSingle();
+        if (seen?.id) continue;
+
+        const ath = await fetchAthMc(token.address);
+        await supabase.from("deployer_launches").insert({
+          deployer_id: dep.id,
+          chain: CHAIN,
+          deployer_address: dep.address,
+          token_address: token.address,
+          token_name: token.name,
+          token_symbol: token.symbol,
+          tx_hash: tx.hash,
+          launched_at: tx.timestamp,
+          ath_mc_usd: ath,
+          is_success: (ath ?? 0) >= SUCCESS_ATH_MC_USD,
+          // Historical rows are backfilled, never announced.
+          alerted_at: new Date().toISOString(),
+        });
+        found++;
+      }
+    }
+    // Start the live watcher from the current head, so the backfilled history
+    // isn't replayed as new launches.
+    if (txs[0]) await markDeployerChecked(dep.id, txs[0].hash);
+
+    const rate = await deployerSuccessRate(CHAIN, dep.address);
     await supabase
-      .from("ath_tokens")
-      .update({ deploy_mc_usd: deployMc, ath_multiple: multiple })
-      .eq("id", t.id);
-    done++;
-    console.log(`  ${(t.symbol ?? "?").padEnd(14)} launch $${Math.round(deployMc).toLocaleString().padStart(12)}  ->  ${multiple ? multiple.toFixed(1) + "x" : "?"}`);
-  }
-  console.log(`\nlaunch market caps written: ${done}`);
+      .from("token_deployers")
+      .update({ success_20x_count: rate.hits, total_deploys: rate.total })
+      .eq("id", dep.id);
 
-  const promoted = await refreshAlphaDeployers(CHAIN);
-  console.log(`\nalpha deployers (2+ ATH tokens): ${promoted.length}`);
-  for (const d of promoted) {
-    const hist = await tokensByDeployer(CHAIN, d.address);
-    const { hits, total, pct } = successRate(hist);
-    console.log(`  ${(d.label ?? "?").padEnd(30)} ${d.address}  ${d.tokenCount} tokens  ${hits}/${total} 20x+ (${pct.toFixed(0)}%)`);
+    console.log(`  deploys recorded: ${found}  ->  ${rate.hits}/${rate.total} hit ${SUCCESS_MULTIPLE}x+ (${rate.pct.toFixed(0)}%)`);
+    for (const w of winners) {
+      const x = athMultiple(w.athMcUsd);
+      console.log(`    ${(w.symbol ?? "?").padEnd(14)} ATH $${Math.round(w.athMcUsd ?? 0).toLocaleString().padStart(12)}  ${x ? Math.round(x).toLocaleString() + "x" : "?"}`);
+    }
+    console.log("");
   }
+
+  if (!write) console.log("PREVIEW ONLY — re-run with --write.");
 }
 
-main().then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); });
+main()
+  .then(() => process.exit(0))
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
