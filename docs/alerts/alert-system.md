@@ -107,7 +107,9 @@ be bundled for the Edge runtime.
 | BNB Chain on-chain launches | 20s |
 
 Catalog polls are slow (assets are added on the order of days); launch watchers
-are fast, and short-circuit entirely while nothing is being watched.
+are fast, and short-circuit entirely while nothing is being watched — the one
+exception is Pump.fun's launch window, which always polls because its filter is
+on the quote rather than on a watchlist (§7).
 
 ### Chain labelling
 
@@ -478,16 +480,48 @@ pulled whole and matched locally.
 That is affordable because the firehose is slower than it looks — measured at
 **~21 coins/minute**, and one page (the server caps `limit` at 70) covers a
 little over three minutes. A 60s poll therefore carries roughly 3× headroom. If
-the cursor is further back than one page covers — a delayed pass, or a window
-that just opened — the reader pages back up to 4 pages so the gap is genuinely
-covered rather than skipped.
+the cursor is further back than one page covers — a delayed or failed pass — the
+reader pages back up to 4 pages so the gap is genuinely covered rather than
+skipped.
 
-The pass **short-circuits before any network call while no window is open**,
-which is the normal state. Until a stock is listed, this poller costs nothing.
+### The filter is on the quote, not on a watchlist
+
+**This is the load-bearing decision in the feed.** A coin is reported when its
+quote is *not* one of the baseline assets — not when its quote matches a window
+we already opened.
+
+The difference matters because pump.fun only lets you launch against SOL
+(native or wrapped) and stablecoins. A coin quoted in anything else is, by
+construction, paired to a newly-listed asset, and is interesting **on its own
+evidence** — whether or not the catalog poller has noticed the listing yet.
+
+The first implementation had it the other way round: launches were only matched
+against an already-open window, which made this feed a strict dependent of the
+catalog read. That lost every launch in the gap between a listing appearing and
+the catalog poll seeing it — and the first coin against a new stock quote is
+exactly the one worth having. Filtering on the quote removes the dependency
+entirely.
+
+So there are now **two independent discovery paths** for the same event — the
+on-chain whitelist and the launch feed — and whichever sees it first announces
+the quote (once) and opens the window. Verified against a fixture built on the
+real NVIDIA xStock mint: the launch feed discovered and announced the quote with
+that mint **absent from the on-chain whitelist**, then numbered launches in
+order while ignoring SOL-quoted noise.
+
+The cost of dropping the short-circuit is one request a minute, and the filter
+is near-pure signal: across **1,230 unique coins** sampled over four orderings,
+every single one was quoted in SOL, wrapped SOL or USDC. Until a stock is
+listed, this filter matches nothing.
 
 SOL appears in the feed under two spellings — the system-program sentinel
-`111…111` (native) and the wrapped-SOL mint. Both are treated as SOL; neither is
-ever watched.
+`111…111` (native) and the wrapped-SOL mint. Both are baseline; neither is ever
+watched. Coins predating the field entirely (`quote_mint` absent) are treated as
+SOL.
+
+Once a quote's 36h window closes it is recorded as closed, so a later launch
+cannot reopen it — otherwise a quote that stayed popular would restart its own
+window indefinitely.
 
 ### RPC failover
 
@@ -514,8 +548,9 @@ its metadata account exists from mint.
 - **Window state is in-memory.** A redeploy mid-window loses the open watch and
   the launch cursor. Same as every other platform here; noted rather than fixed.
 - **No stock quote has ever been listed**, so the launch half of this feed has
-  been verified against USDC-quoted coins (which do exist and do flow through the
-  same path) rather than against a real stock listing.
+  been verified against USDC-quoted coins (which do exist and flow through the
+  same path) and against a fixture using the real NVIDIA xStock mint — not
+  against a live listing.
 
 ---
 

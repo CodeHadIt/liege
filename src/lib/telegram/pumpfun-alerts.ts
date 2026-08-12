@@ -50,6 +50,51 @@ interface WatchedQuote {
 /** Quote mint -> open launch window. */
 const watchedQuotes = new Map<string, WatchedQuote>();
 
+/**
+ * Quotes whose window has already run its course.
+ *
+ * Needed because a window can now be opened by a launch as well as by the
+ * catalog (see `ensureQuoteWatched`). Without this, the first launch after a
+ * window expired would reopen it, and a quote that stayed popular would restart
+ * its own 36h window indefinitely.
+ */
+const closedQuotes = new Set<string>();
+
+/**
+ * Make sure a non-baseline quote is being watched, announcing it if this is the
+ * first we've heard of it.
+ *
+ * Both discovery paths funnel through here — the catalog read and the launch
+ * feed — so whichever notices a new quote first announces it exactly once, and
+ * the other finds it already known.
+ *
+ * Returns null when the quote is baseline or its window has already closed.
+ */
+async function ensureQuoteWatched(mint: string, announce: boolean): Promise<WatchedQuote | null> {
+  const open = watchedQuotes.get(mint);
+  if (open) return open;
+  if (BASELINE_QUOTE_MINTS.has(mint)) return null;
+  if (closedQuotes.has(mint)) return null;
+
+  const meta = await fetchQuoteMintMeta(mint);
+  const watch: WatchedQuote = { quote: meta, openedAt: Date.now(), launchCount: 0 };
+  watchedQuotes.set(mint, watch);
+  console.log(`[pumpfun] watching ${meta.symbol} for launches over ${LAUNCH_WINDOW_LABEL}`);
+
+  if (!seenQuotes.has(mint)) {
+    seenQuotes.add(mint);
+    if (announce) {
+      try {
+        await broadcastAlert((chatId) => sendQuoteAlert(chatId, meta));
+        console.log(`[pumpfun] alerted new quote asset: ${meta.symbol} (${mint})`);
+      } catch (err) {
+        console.error("[pumpfun] failed to send quote-asset alert:", err);
+      }
+    }
+  }
+  return watch;
+}
+
 export function formatPumpQuoteAlert(q: QuoteMintMeta): string {
   const lines: string[] = [];
   lines.push(`✨ <b>New Quote Asset on ${escapeHtml(PLATFORM)}</b>  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
@@ -102,27 +147,14 @@ export async function pollPumpFunQuoteMints(): Promise<void> {
 
   const fresh = mints.filter((m) => !seenQuotes.has(m));
   for (const mint of fresh) {
-    // Recorded either way, so a suppressed asset isn't re-evaluated every pass.
-    seenQuotes.add(mint);
     if (BASELINE_QUOTE_MINTS.has(mint)) {
+      // Recorded so a suppressed asset isn't re-evaluated every pass.
+      seenQuotes.add(mint);
       console.log(`[pumpfun] skipping baseline quote ${mint} — not a new listing`);
       continue;
     }
-    try {
-      const meta = await fetchQuoteMintMeta(mint);
-      startQuoteWatch(meta);
-      await broadcastAlert((chatId) => sendQuoteAlert(chatId, meta));
-      console.log(`[pumpfun] alerted new quote asset: ${meta.symbol} (${mint})`);
-    } catch (err) {
-      console.error("[pumpfun] failed to send quote-asset alert:", err);
-    }
+    await ensureQuoteWatched(mint, true);
   }
-}
-
-function startQuoteWatch(q: QuoteMintMeta): void {
-  if (watchedQuotes.has(q.mint)) return;
-  watchedQuotes.set(q.mint, { quote: q, openedAt: Date.now(), launchCount: 0 });
-  console.log(`[pumpfun] watching ${q.symbol} for launches over ${LAUNCH_WINDOW_LABEL}`);
 }
 
 // ── Launches inside the window ───────────────────────────────────────────────
@@ -214,28 +246,42 @@ async function sendLaunchAlert(
 }
 
 /**
- * One launch pass: report new coins paired against a quote we're watching.
+ * One launch pass: report new coins paired against anything that isn't a
+ * baseline asset.
  *
- * Short-circuits before touching the network while no window is open, which is
- * the normal state — pump.fun has whitelisted one non-SOL quote in its history,
- * so this poller should cost nothing until the day a stock is listed.
+ * The filter is on the QUOTE, not on a list of quotes we happen to be watching,
+ * and that difference is the whole point. Pump.fun lets you launch against SOL
+ * (native or wrapped) and stablecoins; a coin quoted in anything else is by
+ * definition paired to a newly-listed asset, and is interesting on its own
+ * evidence — whether or not the catalog poller has noticed the listing yet.
+ *
+ * The earlier design only reported launches against an already-open window,
+ * which made this feed a strict dependent of the catalog read. That lost the
+ * launches in the gap between a listing and our seeing it — and the first coin
+ * against a new stock quote is the one worth having. Filtering on the quote
+ * removes the dependency: the two paths now discover the same event
+ * independently, and whichever gets there first announces it.
+ *
+ * The cost of running unconditionally is one request a minute, and it is
+ * near-pure signal: across 1,230 unique coins sampled over four orderings,
+ * every single one was quoted in SOL, wrapped SOL or USDC. Until a stock is
+ * listed this filter matches nothing.
  */
 export async function pollPumpFunLaunches(): Promise<void> {
   const now = Date.now();
   for (const [mint, w] of watchedQuotes) {
     if (now - w.openedAt > LAUNCH_WINDOW_MS) {
       watchedQuotes.delete(mint);
+      closedQuotes.add(mint);
       console.log(
         `[pumpfun] ${LAUNCH_WINDOW_LABEL} window closed for ${w.quote.symbol} — ${w.launchCount} launch(es) reported`
       );
     }
   }
-  if (watchedQuotes.size === 0) return;
 
   // One page spans roughly three minutes of creations at the observed rate. If
-  // the cursor is further back than that — a delayed pass, or a window that has
-  // only just opened — pull more pages so the gap is actually covered instead of
-  // being silently skipped.
+  // the cursor is further back than that — a delayed or failed pass — pull more
+  // pages so the gap is actually covered instead of being silently skipped.
   const gapMs = lastSeenCreatedAt > 0 ? now - lastSeenCreatedAt : 0;
   const pages = Math.min(4, Math.max(1, Math.ceil(gapMs / (3 * 60 * 1000))));
 
@@ -247,8 +293,8 @@ export async function pollPumpFunLaunches(): Promise<void> {
   const newest = Math.max(...coins.map((c) => c.createdTimestamp));
 
   if (!launchesSeeded) {
-    // Start from the present. Coins minted before the watcher came up are not
-    // launches against the new quote in any meaningful sense.
+    // Start from the present, matching every other feed's silent first pass, so
+    // a redeploy can't replay recent launches into the channel.
     lastSeenCreatedAt = newest;
     launchesSeeded = true;
     console.log(`[pumpfun] seeded launch cursor at ${new Date(newest).toISOString()}`);
@@ -261,9 +307,15 @@ export async function pollPumpFunLaunches(): Promise<void> {
     .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 
   for (const coin of fresh) {
-    const w = watchedQuotes.get(coinQuoteMint(coin));
-    if (!w) continue; // paired against something we're not watching
+    const quoteMint = coinQuoteMint(coin);
+    // Baseline-quoted coins are the entire firehose and are dropped here,
+    // before any metadata lookup or window bookkeeping.
+    if (BASELINE_QUOTE_MINTS.has(quoteMint)) continue;
     if (coin.createdTimestamp > 0 && now - coin.createdTimestamp > MAX_ALERT_AGE_MS) continue;
+
+    // Opens the window (and announces the quote) if the catalog hasn't already.
+    const w = await ensureQuoteWatched(quoteMint, true);
+    if (!w) continue; // window already closed for this quote
 
     if (w.launchCount >= MAX_LAUNCHES_PER_WINDOW) {
       if (w.launchCount === MAX_LAUNCHES_PER_WINDOW) {
