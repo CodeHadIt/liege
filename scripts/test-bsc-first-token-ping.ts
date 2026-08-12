@@ -171,6 +171,7 @@ async function main() {
       const w: FirstTokenWatch = {
         platform,
         stockAddress,
+        launchCount: 1,
         symbol: stock.symbol,
         name: stock.name,
         addedAt: Date.now(),
@@ -221,6 +222,7 @@ async function main() {
       symbol: stock.symbol,
       name: stock.name,
       addedAt: Date.now(),
+      launchCount: 1,
     };
     const stats = await fetchBscTokenStats(first.tokenAddress);
     console.log("\n" + formatBscFirstTokenAlert(w, { launch: first, ...stats }) + "\n");

@@ -9,7 +9,7 @@ import { config as loadEnv } from "dotenv";
 loadEnv({ path: ".env.local" });
 
 import { fetchQuoteTokens, fetchRecentCreations, enrichCreation } from "../src/lib/api/stonkfun";
-import { formatQuoteTokenAlert, formatStonkFunFirstTokenAlert } from "../src/lib/telegram/stonkfun-alerts";
+import { formatQuoteTokenAlert, formatStonkFunLaunchAlert } from "../src/lib/telegram/stonkfun-alerts";
 import { fetchFlapPaymentTokens, FLAP_BSC_CHAIN_ID, FLAP_ROBINHOOD_CHAIN_ID } from "../src/lib/api/flap";
 import { formatStockQuoteAlert, type StockQuote } from "../src/lib/telegram/bsc-stock-alerts";
 import { formatFlapRhStockAlert } from "../src/lib/telegram/long-alerts";
@@ -54,11 +54,15 @@ async function main() {
   const stockQuote = quotes.find((x) => x.category === "xstock") ?? quotes[0];
   console.log(formatQuoteTokenAlert(stockQuote));
 
-  hr("STONKFUN · Solana — new quote token (custom on-chain asset)");
+  hr("STONKFUN · Solana — custom on-chain assets are NOT alerted");
   const customQuote = quotes.find((x) => x.category === "custom");
-  console.log(customQuote ? formatQuoteTokenAlert(customQuote) : "(no custom-category quote listed right now)");
+  console.log(
+    customQuote
+      ? `Would be skipped: ${customQuote.symbol} (category "custom") — a memecoin paired against another memecoin is not the signal this feed is for.`
+      : "(no custom-category quote listed right now)"
+  );
 
-  hr("STONKFUN · Solana — first token vs a newly-added quote");
+  hr("STONKFUN · Solana — launch against a newly-added quote");
   const creations = await fetchRecentCreations(10);
   let rendered = false;
   for (const c of creations) {
@@ -66,7 +70,7 @@ async function main() {
     if (!d.pairedAddress) continue;
     const quote = quotes.find((x) => x.quoteMint === d.pairedAddress);
     if (!quote) continue;
-    console.log(formatStonkFunFirstTokenAlert(quote, d));
+    console.log(formatStonkFunLaunchAlert(quote, d, 1));
     rendered = true;
     break;
   }

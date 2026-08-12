@@ -22,6 +22,12 @@ import {
   type FlapPaymentToken,
 } from "@/lib/api/flap";
 import { getAlertsBot, broadcastAlert } from "./alerts-bot";
+import {
+  LAUNCH_WINDOW_MS,
+  LAUNCH_WINDOW_LABEL,
+  MAX_LAUNCHES_PER_WINDOW,
+  ordinal,
+} from "./launch-window";
 import { escapeHtml, formatCompact, formatPrice } from "./utils/format";
 
 // Currency symbols that indicate a stock's own price pool (not a token launched
@@ -99,7 +105,7 @@ export async function pollLongStocks(): Promise<void> {
     seen.add(s.contractAddress);
     // Begin watching this newly-added stock (by lowercase address, to match
     // on-chain event topics) for its inaugural token launch.
-    awaitingFirstToken.set(s.contractAddress.toLowerCase(), { symbol: s.symbol, addedAt: Date.now() });
+    watchedStocks.set(s.contractAddress.toLowerCase(), { symbol: s.symbol, openedAt: Date.now(), launchCount: 0 });
     try {
       await broadcastAlert((chatId) => sendAlert(chatId, s));
       console.log(`[long] alerted new stock: ${s.symbol} (${s.name})`);
@@ -111,12 +117,14 @@ export async function pollLongStocks(): Promise<void> {
 
 // ── First token launched against a newly-added stock ──────────────────────────
 
-interface FirstTokenWatch {
+interface WatchedStock {
   symbol: string;
-  addedAt: number;
+  openedAt: number;
+  launchCount: number;
 }
-const awaitingFirstToken = new Map<string, FirstTokenWatch>(); // key: lowercase stock contract
-const WATCH_TTL_MS = 14 * 24 * 60 * 60 * 1000; // stop watching after 14 days with no launch
+// Every launch against a newly-added stock is reported for a fixed window, not
+// just the inaugural one — the burst that follows a new pair is the signal.
+const watchedStocks = new Map<string, WatchedStock>(); // key: lowercase stock contract
 // Never scan more than this many blocks in one pass (after downtime, skip the gap).
 const MAX_BLOCK_SPAN = 100_000;
 let lastScannedBlock: number | null = null;
@@ -129,10 +137,23 @@ function formatLaunchpadLine(p: Launchpad): string {
   return `🚀 ${verb} ${label}`;
 }
 
-export function formatFirstTokenAlert(stockSymbol: string, t: CreatedToken, platform?: Launchpad): string {
+export function formatFirstTokenAlert(
+  stockSymbol: string,
+  t: CreatedToken,
+  platform?: Launchpad,
+  launchNumber = 1
+): string {
   const lines: string[] = [];
-  lines.push(`🥇 <b>First token vs $${escapeHtml(stockSymbol)}</b>  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
-  lines.push(`<i>Inaugural launch paired to the newly-added stock on ${escapeHtml(CHAIN_LABEL)}.</i>`);
+  const first = launchNumber <= 1;
+  lines.push(
+    `${first ? "🥇" : "🔁"} <b>${first ? "First" : ordinal(launchNumber)} token vs $${escapeHtml(stockSymbol)}</b>` +
+      `  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`
+  );
+  lines.push(
+    first
+      ? `<i>Inaugural launch paired to the newly-added stock on ${escapeHtml(CHAIN_LABEL)}.</i>`
+      : `<i>Launch ${launchNumber} against this stock, inside the ${LAUNCH_WINDOW_LABEL} window.</i>`
+  );
   if (platform) lines.push(`${formatLaunchpadLine(platform)}  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
   lines.push("");
   lines.push(`<b>${escapeHtml(t.name || t.symbol)}</b>  ·  <code>$${escapeHtml(t.symbol)}</code>`);
@@ -153,9 +174,15 @@ export function formatFirstTokenAlert(stockSymbol: string, t: CreatedToken, plat
   return lines.join("\n");
 }
 
-async function sendFirstTokenAlert(chatId: string, stockSymbol: string, t: CreatedToken, platform?: Launchpad): Promise<void> {
+async function sendLaunchAlert(
+  chatId: string,
+  stockSymbol: string,
+  t: CreatedToken,
+  launchNumber: number,
+  platform?: Launchpad
+): Promise<void> {
   const bot = await getAlertsBot();
-  const text = formatFirstTokenAlert(stockSymbol, t, platform);
+  const text = formatFirstTokenAlert(stockSymbol, t, platform, launchNumber);
   if (t.imageUrl) {
     await bot.api
       .sendPhoto(chatId, t.imageUrl, { caption: text, parse_mode: "HTML" })
@@ -183,7 +210,7 @@ export async function pollLongOnchainCreations(): Promise<void> {
 
   // Baseline on first run; also advance the cursor when nothing is being watched
   // so we never backfill a huge history once a stock is added.
-  if (lastScannedBlock == null || awaitingFirstToken.size === 0) {
+  if (lastScannedBlock == null || watchedStocks.size === 0) {
     lastScannedBlock = latest;
     return;
   }
@@ -196,8 +223,11 @@ export async function pollLongOnchainCreations(): Promise<void> {
 
   // Drop stale watches once per pass (not per event).
   const now = Date.now();
-  for (const [addr, w] of awaitingFirstToken) {
-    if (now - w.addedAt > WATCH_TTL_MS) awaitingFirstToken.delete(addr);
+  for (const [addr, w] of watchedStocks) {
+    if (now - w.openedAt > LAUNCH_WINDOW_MS) {
+      watchedStocks.delete(addr);
+      console.log(`[long] ${LAUNCH_WINDOW_LABEL} window closed for ${w.symbol} — ${w.launchCount} launch(es) reported`);
+    }
   }
 
   // Every stock we know of on this chain, from either source — a pool pairing
@@ -205,9 +235,9 @@ export async function pollLongOnchainCreations(): Promise<void> {
   const stockSet = new Set([...seen, ...flapStockAddresses].map((a) => a.toLowerCase()));
 
   for (const ev of events) {
-    const watchedStock = awaitingFirstToken.has(ev.currency0)
+    const watchedStock = watchedStocks.has(ev.currency0)
       ? ev.currency0
-      : awaitingFirstToken.has(ev.currency1)
+      : watchedStocks.has(ev.currency1)
         ? ev.currency1
         : null;
     if (!watchedStock) continue;
@@ -218,8 +248,15 @@ export async function pollLongOnchainCreations(): Promise<void> {
     const meta = await getTokenMeta(other);
     if (!meta || QUOTE_SYMBOLS.has(meta.symbol.toUpperCase())) continue; // a currency pool
 
-    const w = awaitingFirstToken.get(watchedStock)!;
-    awaitingFirstToken.delete(watchedStock); // one ping per new stock
+    const w = watchedStocks.get(watchedStock)!;
+    if (w.launchCount >= MAX_LAUNCHES_PER_WINDOW) {
+      if (w.launchCount === MAX_LAUNCHES_PER_WINDOW) {
+        w.launchCount++;
+        console.log(`[long] ${w.symbol} hit the ${MAX_LAUNCHES_PER_WINDOW}-launch cap — muting`);
+      }
+      continue;
+    }
+    w.launchCount++;
 
     try {
       const token: CreatedToken = {
@@ -239,8 +276,8 @@ export async function pollLongOnchainCreations(): Promise<void> {
       const platform = await resolveLaunchpad(ev.hooks, ev.txHash, other);
       // best-effort market stats (may be empty for a brand-new pool)
       const enriched = await enrichCreatedToken(token);
-      await broadcastAlert((chatId) => sendFirstTokenAlert(chatId, w.symbol, enriched, platform));
-      console.log(`[long] alerted first token ${meta.symbol} vs ${w.symbol} on ${platform.name} (onchain)`);
+      await broadcastAlert((chatId) => sendLaunchAlert(chatId, w.symbol, enriched, w.launchCount, platform));
+      console.log(`[long] alerted launch #${w.launchCount} ${meta.symbol} vs ${w.symbol} on ${platform.name}`);
     } catch (err) {
       console.error("[long] failed to send first-token alert:", err);
     }
@@ -327,7 +364,7 @@ export async function pollFlapRobinhoodStocks(): Promise<void> {
 
     if (s.address) {
       // Watch for the inaugural launch, same as a registry-sourced stock.
-      awaitingFirstToken.set(s.address.toLowerCase(), { symbol: s.symbol, addedAt: Date.now() });
+      watchedStocks.set(s.address.toLowerCase(), { symbol: s.symbol, openedAt: Date.now(), launchCount: 0 });
     }
     try {
       await broadcastAlert((chatId) => sendFlapRhAlert(chatId, s));
@@ -381,7 +418,7 @@ export async function sendOnchainFirstTokenTest(
       marketCap: null, pairUrl: null, imageUrl: meta.iconUrl,
     };
     const platform = await resolveLaunchpad(ev.hooks, ev.txHash, other);
-    await sendFirstTokenAlert(chatId, stock.symbol, await enrichCreatedToken(token), platform);
+    await sendLaunchAlert(chatId, stock.symbol, await enrichCreatedToken(token), 1, platform);
     console.log(`[long] (test) first onchain token ${meta.symbol} vs ${stock.symbol} on ${platform.name} at block ${ev.blockNumber}`);
     return true;
   }
@@ -406,6 +443,6 @@ export async function sendFirstTokenTestPing(chatId: string, stockSymbol: string
   const tokens = await fetchTokensCreatedAgainst(stock.contractAddress, excl);
   if (tokens.length === 0) return false;
   // fetchTokensCreatedAgainst returns oldest-first → [0] is the first launch
-  await sendFirstTokenAlert(chatId, stock.symbol, await enrichCreatedToken(tokens[0]));
+  await sendLaunchAlert(chatId, stock.symbol, await enrichCreatedToken(tokens[0]), 1);
   return true;
 }

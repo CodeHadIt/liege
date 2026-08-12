@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-12
+**Last updated:** 2026-08-12 (launch window)
 
 ---
 
@@ -25,12 +25,18 @@ Every feed follows the same two-stage shape:
 
 1. **A pairing asset is added** — a tokenized stock, or any other asset a
    launchpad lets you price a new token against. Ping.
-2. **The first token is launched against it** — one ping per asset, then that
-   watch stops.
+2. **Tokens are launched against it** — every launch inside a **36h window**
+   gets a ping, numbered, not only the first.
 
 The second stage is the valuable one. It answers "someone just added NVIDIA as a
-quote — what is the first thing anyone launched against it?", which is only
-interesting once.
+quote — what is being built against it?" The window exists because the burst that
+follows a new pair is the signal; reporting only the inaugural launch threw away
+everything after it. `MAX_LAUNCHES_PER_WINDOW` (25) is a safety valve for a
+runaway pair, and the watcher logs when it trips rather than going quiet.
+
+Both constants live in [`launch-window.ts`](../../src/lib/telegram/launch-window.ts)
+so every platform — StonkFun, Long, Pons, Flap, pools.trade, Four.meme, and
+anything added later — shares one definition instead of inventing its own.
 
 Deliberately **not** covered: pinging on every launch. That was the original
 StonkFun behaviour and it buried the signal (see §3).
@@ -50,7 +56,8 @@ came online. This is why a redeploy never floods the channel.
 
 ### Watch lifetime
 
-A first-token watch expires after **14 days** with no launch, on every chain.
+A launch watch runs for **36 hours** from the moment the quote asset is seen,
+on every chain, then closes whether or not anything launched.
 
 ---
 
@@ -125,8 +132,13 @@ filters those out.
 
 ### Alerts
 
-**New quote token** — any category, since the ask covers stocks *and* custom
-on-chain assets:
+**New quote token** — every category except `custom`, which is a creator-
+nominated on-chain token (a memecoin paired against another memecoin). That
+category dominates the catalog at 140 of 185 listed quotes and buried the stock
+listings this feed exists for. Expressed as a denylist rather than an allowlist,
+because the catalog carries categories beyond the obvious ones — `leverage` and
+`solana` among them — and an allowlist would silently drop those and anything
+StonkFun adds later.
 
 | Category | Label |
 |---|---|
@@ -137,7 +149,8 @@ on-chain assets:
 | `tessera` | 🧩 Tessera |
 | `custom` | 🪙 On-chain Asset |
 
-**First token vs that quote** — one ping, then the watch closes.
+**Launches against that quote** — every token launched inside the 36h window,
+numbered, not just the first.
 
 ### Pair resolution — the hard part
 

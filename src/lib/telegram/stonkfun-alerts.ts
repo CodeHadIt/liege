@@ -9,6 +9,12 @@ import {
   type QuoteToken,
 } from "@/lib/api/stonkfun";
 import { getAlertsBot, broadcastAlert } from "./alerts-bot";
+import {
+  LAUNCH_WINDOW_MS,
+  LAUNCH_WINDOW_LABEL,
+  MAX_LAUNCHES_PER_WINDOW,
+  ordinal,
+} from "./launch-window";
 import { escapeHtml, formatCompact, formatPrice, formatTimeAgo } from "./utils/format";
 
 // StonkFun runs on Solana; every alert here is labelled with that so the feed
@@ -163,6 +169,26 @@ export async function sendStonkFunTestPing(chatId: string): Promise<boolean> {
 const seenQuotes = new Set<string>();
 let quotesSeeded = false;
 
+/**
+ * Quote categories NOT worth alerting on.
+ *
+ * `custom` is any on-chain token a creator nominates as a pairing asset — a
+ * memecoin paired against another memecoin. It is not the signal this feed
+ * exists for, and it dominates the catalog: 140 of 185 listed quotes. Including
+ * it buried the stock listings the feed was built to surface.
+ *
+ * Expressed as a denylist rather than an allowlist on purpose. The catalog holds
+ * categories beyond the obvious ones — `leverage` and `solana` alongside
+ * xstock, prestock, currency, backpack and tessera — and an allowlist would have
+ * silently dropped those, and would drop any category StonkFun adds later.
+ * Everything that isn't a creator-nominated token is worth knowing about.
+ */
+const SUPPRESSED_CATEGORIES = new Set(["custom"]);
+
+function isAlertableQuote(category: string): boolean {
+  return !SUPPRESSED_CATEGORIES.has((category ?? "").toLowerCase());
+}
+
 const CATEGORY_LABEL: Record<string, string> = {
   xstock:   "📈 Tokenized Stock",
   prestock: "🌅 Pre-Market Stock",
@@ -221,8 +247,14 @@ export async function pollStonkFunQuoteTokens(): Promise<void> {
   if (fresh.length === 0) return;
 
   for (const q of fresh) {
+    // Recorded either way, so a later listing of the same asset isn't treated as
+    // new — but only stock-like assets are announced or watched.
     seenQuotes.add(q.quoteMint);
-    startFirstTokenWatch(q);
+    if (!isAlertableQuote(q.category)) {
+      console.log(`[stonkfun] skipping quote ${q.symbol} — category "${q.category}" is not alertable`);
+      continue;
+    }
+    startQuoteWatch(q);
     try {
       await broadcastAlert((chatId) => sendQuoteAlert(chatId, q));
       console.log(`[stonkfun] alerted new quote token: ${q.symbol} (${q.category})`);
@@ -266,12 +298,12 @@ export async function sendQuoteTokenTestPing(chatId: string): Promise<boolean> {
 //     and stops at the first unresolved creation, so a token can never be
 //     announced as "first" while an older launch's pair is still unknown.
 
-interface QuoteWatch {
+interface WatchedQuote {
   quote: QuoteToken;
-  addedAt: number;
+  openedAt: number;
+  launchCount: number;
 }
-const awaitingFirstToken = new Map<string, QuoteWatch>(); // key: quote mint
-const WATCH_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+const watchedQuotes = new Map<string, WatchedQuote>(); // key: quote mint
 
 /** Creations seen but not yet matched to a pair, with how many passes we've tried. */
 interface PendingCreation {
@@ -283,16 +315,28 @@ const pending = new Map<string, PendingCreation>(); // key: mint
 // before dropping the creation, but don't hold mints forever.
 const MAX_RESOLVE_ATTEMPTS = 10;
 
-function startFirstTokenWatch(q: QuoteToken): void {
-  if (awaitingFirstToken.has(q.quoteMint)) return;
-  awaitingFirstToken.set(q.quoteMint, { quote: q, addedAt: Date.now() });
-  console.log(`[stonkfun] watching ${q.symbol} (${q.category}) for its first launch`);
+function startQuoteWatch(q: QuoteToken): void {
+  if (watchedQuotes.has(q.quoteMint)) return;
+  watchedQuotes.set(q.quoteMint, { quote: q, openedAt: Date.now(), launchCount: 0 });
+  console.log(`[stonkfun] watching ${q.symbol} (${q.category}) for launches over ${LAUNCH_WINDOW_LABEL}`);
 }
 
-export function formatStonkFunFirstTokenAlert(q: QuoteToken, d: StonkFunTokenDetails): string {
+export function formatStonkFunLaunchAlert(
+  q: QuoteToken,
+  d: StonkFunTokenDetails,
+  launchNumber: number
+): string {
   const lines: string[] = [];
-  lines.push(`🥇 <b>First token vs $${escapeHtml(q.symbol)} on StonkFun</b>  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
-  lines.push(`<i>Inaugural launch paired to the newly-added quote asset.</i>`);
+  const first = launchNumber <= 1;
+  lines.push(
+    `${first ? "🥇" : "🔁"} <b>${first ? "First" : ordinal(launchNumber)} token vs $${escapeHtml(q.symbol)} on StonkFun</b>` +
+      `  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`
+  );
+  lines.push(
+    first
+      ? `<i>Inaugural launch paired to the newly-added quote asset.</i>`
+      : `<i>Launch ${launchNumber} against this quote, inside the ${LAUNCH_WINDOW_LABEL} window.</i>`
+  );
   lines.push(`${escapeHtml(CATEGORY_LABEL[q.category] ?? q.category)}  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
   lines.push("");
   lines.push(`<b>${escapeHtml(d.name)}</b>  ·  <code>$${escapeHtml(d.symbol)}</code>`);
@@ -322,9 +366,14 @@ export function formatStonkFunFirstTokenAlert(q: QuoteToken, d: StonkFunTokenDet
   return lines.join("\n");
 }
 
-async function sendFirstTokenAlert(chatId: string, q: QuoteToken, d: StonkFunTokenDetails): Promise<void> {
+async function sendLaunchAlert(
+  chatId: string,
+  q: QuoteToken,
+  d: StonkFunTokenDetails,
+  launchNumber: number
+): Promise<void> {
   const bot = await getAlertsBot();
-  const text = formatStonkFunFirstTokenAlert(q, d);
+  const text = formatStonkFunLaunchAlert(q, d, launchNumber);
   if (d.imageUrl) {
     await bot.api
       .sendPhoto(chatId, d.imageUrl, { caption: text, parse_mode: "HTML" })
@@ -343,10 +392,12 @@ async function sendFirstTokenAlert(chatId: string, q: QuoteToken, d: StonkFunTok
  */
 export async function pollStonkFunFirstTokens(): Promise<void> {
   const now = Date.now();
-  for (const [mint, w] of awaitingFirstToken) {
-    if (now - w.addedAt > WATCH_TTL_MS) {
-      awaitingFirstToken.delete(mint);
-      console.log(`[stonkfun] stopped watching ${w.quote.symbol} — no launch in 14 days`);
+  for (const [mint, w] of watchedQuotes) {
+    if (now - w.openedAt > LAUNCH_WINDOW_MS) {
+      watchedQuotes.delete(mint);
+      console.log(
+        `[stonkfun] ${LAUNCH_WINDOW_LABEL} window closed for ${w.quote.symbol} — ${w.launchCount} launch(es) reported`
+      );
     }
   }
 
@@ -388,7 +439,7 @@ export async function pollStonkFunFirstTokens(): Promise<void> {
   // Resolving a pair costs an indexer lookup per creation, so only do it when
   // there is actually a quote to match against. The queue above still filled, so
   // the moment a quote IS added its recent launches are already waiting.
-  if (awaitingFirstToken.size === 0) return;
+  if (watchedQuotes.size === 0) return;
 
   const queued = [...pending.values()].sort((a, b) => a.creation.timestamp - b.creation.timestamp);
   for (const p of queued) {
@@ -411,12 +462,21 @@ export async function pollStonkFunFirstTokens(): Promise<void> {
       }
 
       pending.delete(mint); // pair known — this creation is settled either way
-      const w = awaitingFirstToken.get(details.pairedAddress);
+      const w = watchedQuotes.get(details.pairedAddress);
       if (!w) continue; // paired against something we're not watching
 
-      awaitingFirstToken.delete(details.pairedAddress); // one ping per quote
-      await broadcastAlert((chatId) => sendFirstTokenAlert(chatId, w.quote, details));
-      console.log(`[stonkfun] alerted first token ${details.symbol} vs ${w.quote.symbol}`);
+      // Every launch in the window is reported, not only the first — but a
+      // runaway pair is capped rather than allowed to flood the feed.
+      if (w.launchCount >= MAX_LAUNCHES_PER_WINDOW) {
+        if (w.launchCount === MAX_LAUNCHES_PER_WINDOW) {
+          w.launchCount++;
+          console.log(`[stonkfun] ${w.quote.symbol} hit the ${MAX_LAUNCHES_PER_WINDOW}-launch cap — muting`);
+        }
+        continue;
+      }
+      w.launchCount++;
+      await broadcastAlert((chatId) => sendLaunchAlert(chatId, w.quote, details, w.launchCount));
+      console.log(`[stonkfun] alerted launch #${w.launchCount} ${details.symbol} vs ${w.quote.symbol}`);
     } catch (err) {
       pending.delete(mint);
       console.error("[stonkfun] first-token check failed:", err);
@@ -436,7 +496,7 @@ export async function sendStonkFunFirstTokenTestPing(chatId: string, symbol?: st
     const quote = quotes.find((q) => q.quoteMint === details.pairedAddress);
     if (!quote) continue;
     if (symbol && quote.symbol.toLowerCase() !== symbol.toLowerCase()) continue;
-    await sendFirstTokenAlert(chatId, quote, details);
+    await sendLaunchAlert(chatId, quote, details, 1);
     return true;
   }
   return false;

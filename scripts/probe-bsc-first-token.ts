@@ -78,6 +78,7 @@ async function main() {
       symbol: s.symbol,
       name: s.name,
       addedAt: Date.now(),
+      launchCount: 1,
     };
     const stats = await fetchBscTokenStats(l.tokenAddress);
     console.log("\n" + formatBscFirstTokenAlert(w, { launch: l, ...stats }) + "\n");

@@ -17,6 +17,12 @@ import {
 } from "@/lib/api/bsc-onchain";
 import { fetchBscTokenStats, bscExplorerTokenUrl } from "@/lib/api/bsc-launches";
 import { getAlertsBot, broadcastAlert } from "./alerts-bot";
+import {
+  LAUNCH_WINDOW_MS,
+  LAUNCH_WINDOW_LABEL,
+  MAX_LAUNCHES_PER_WINDOW,
+  ordinal,
+} from "./launch-window";
 import { escapeHtml, formatCompact, formatPrice } from "./utils/format";
 
 // ── Tokenized-stock quote assets on BNB Chain ─────────────────────────────────
@@ -164,10 +170,15 @@ export interface FirstTokenWatch {
   stockAddress: string;
   symbol: string;
   name: string;
+  /** when the window opened */
   addedAt: number;
+  /** launches reported so far in this window */
+  launchCount: number;
 }
+// Every launch against a newly-live stock is reported for a fixed window, per
+// platform — the burst after a new pair appears is the signal, not just its
+// first token.
 const awaitingFirstToken = new Map<string, FirstTokenWatch>();
-const WATCH_TTL_MS = 14 * 24 * 60 * 60 * 1000; // give up after 14 quiet days
 
 function watchKey(platform: Platform, stockAddress: string): string {
   return `${platform}:${stockAddress.toLowerCase()}`;
@@ -217,13 +228,25 @@ export interface LaunchAlertData {
   imageUrl: string | null;
 }
 
-export function formatBscFirstTokenAlert(w: FirstTokenWatch, d: LaunchAlertData): string {
+export function formatBscFirstTokenAlert(
+  w: FirstTokenWatch,
+  d: LaunchAlertData,
+  launchNumber = 1
+): string {
   const platform = PLATFORM_LABEL[w.platform];
   const t = d.launch;
   const lines: string[] = [];
+  const first = launchNumber <= 1;
 
-  lines.push(`🥇 <b>First token vs $${escapeHtml(w.symbol)} on ${escapeHtml(platform)}</b>  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
-  lines.push(`<i>Inaugural launch against this stock on ${escapeHtml(platform)} (${escapeHtml(CHAIN_LABEL)}).</i>`);
+  lines.push(
+    `${first ? "🥇" : "🔁"} <b>${first ? "First" : ordinal(launchNumber)} token vs $${escapeHtml(w.symbol)} ` +
+      `on ${escapeHtml(platform)}</b>  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`
+  );
+  lines.push(
+    first
+      ? `<i>Inaugural launch against this stock on ${escapeHtml(platform)} (${escapeHtml(CHAIN_LABEL)}).</i>`
+      : `<i>Launch ${launchNumber} against this stock on ${escapeHtml(platform)}, inside the ${LAUNCH_WINDOW_LABEL} window.</i>`
+  );
   lines.push(
     `🚀 <a href="${escapeHtml(PLATFORM_URL[w.platform])}">${escapeHtml(platform)}</a>` +
       `  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}  ·  🌱 Bonding curve just created`
@@ -260,9 +283,14 @@ async function sendQuoteAlert(chatId: string, q: StockQuote, event: "listed" | "
   }
 }
 
-async function sendFirstTokenAlert(chatId: string, w: FirstTokenWatch, d: LaunchAlertData): Promise<void> {
+async function sendFirstTokenAlert(
+  chatId: string,
+  w: FirstTokenWatch,
+  d: LaunchAlertData,
+  launchNumber = 1
+): Promise<void> {
   const bot = await getAlertsBot();
-  const text = formatBscFirstTokenAlert(w, d);
+  const text = formatBscFirstTokenAlert(w, d, launchNumber);
   if (d.imageUrl) {
     await bot.api
       .sendPhoto(chatId, d.imageUrl, { caption: text, parse_mode: "HTML" })
@@ -332,8 +360,9 @@ function startFirstTokenWatch(q: StockQuote): void {
     symbol: q.symbol,
     name: q.name,
     addedAt: Date.now(),
+    launchCount: 0,
   });
-  console.log(`[bsc-stocks] watching ${q.symbol} on ${q.platform} for its first launch`);
+  console.log(`[bsc-stocks] watching ${q.symbol} on ${q.platform} for launches over ${LAUNCH_WINDOW_LABEL}`);
 }
 
 // ── On-chain first-token watcher ──────────────────────────────────────────────
@@ -366,9 +395,11 @@ export async function pollBscOnchainLaunches(): Promise<void> {
   // Drop stale watches once per pass.
   const now = Date.now();
   for (const [key, w] of awaitingFirstToken) {
-    if (now - w.addedAt > WATCH_TTL_MS) {
+    if (now - w.addedAt > LAUNCH_WINDOW_MS) {
       awaitingFirstToken.delete(key);
-      console.log(`[bsc-stocks] stopped watching ${w.symbol} on ${w.platform} — no launch in 14 days`);
+      console.log(
+        `[bsc-stocks] ${LAUNCH_WINDOW_LABEL} window closed for ${w.symbol} on ${w.platform} — ${w.launchCount} launch(es)`
+      );
     }
   }
 
@@ -414,7 +445,14 @@ export async function pollBscOnchainLaunches(): Promise<void> {
       const w = awaitingFirstToken.get(key);
       if (!w) continue;
 
-      awaitingFirstToken.delete(key); // one ping per stock per platform
+      if (w.launchCount >= MAX_LAUNCHES_PER_WINDOW) {
+        if (w.launchCount === MAX_LAUNCHES_PER_WINDOW) {
+          w.launchCount++;
+          console.log(`[bsc-stocks] ${w.symbol} on ${w.platform} hit the ${MAX_LAUNCHES_PER_WINDOW}-launch cap — muting`);
+        }
+        continue;
+      }
+      w.launchCount++;
 
       // Flap's event carries no metadata; read it from the token itself.
       if (!launch.symbol && !launch.name) {
@@ -424,9 +462,9 @@ export async function pollBscOnchainLaunches(): Promise<void> {
       }
 
       const stats = await fetchBscTokenStats(launch.tokenAddress);
-      await broadcastAlert((chatId) => sendFirstTokenAlert(chatId, w, { launch, ...stats }));
+      await broadcastAlert((chatId) => sendFirstTokenAlert(chatId, w, { launch, ...stats }, w.launchCount));
       console.log(
-        `[bsc-stocks] alerted first token ${launch.symbol || launch.tokenAddress} vs ${w.symbol} on ${w.platform} (block ${launch.blockNumber})`
+        `[bsc-stocks] alerted launch #${w.launchCount} ${launch.symbol || launch.tokenAddress} vs ${w.symbol} on ${w.platform}`
       );
     } catch (err) {
       console.error("[bsc-stocks] failed to handle launch:", err);
@@ -488,6 +526,7 @@ export async function sendBscFirstTokenTestPing(
       symbol: stock.symbol,
       name: stock.name,
       addedAt: Date.now(),
+      launchCount: 1,
     };
     const stats = await fetchBscTokenStats(launch.tokenAddress);
     await sendFirstTokenAlert(chatId, w, { launch, ...stats });
