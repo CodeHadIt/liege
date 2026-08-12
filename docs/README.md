@@ -8,9 +8,10 @@ renders it as the repository landing page.
 
 How the Liège Alerts bot's push feeds work, per chain.
 
-- [**Alert system**](alerts/alert-system.md) — the granular reference: what is
-  watched on each chain, how launches are detected, what triggers a ping, and
-  where each feed's accuracy ends.
+- [**Alert system**](alerts/alert-system.md) — the granular reference. Covers
+  both families: the launch feeds (StonkFun, Sunrise, Robinhood Chain, BNB
+  Chain), which watch platforms, and the alpha feeds (wallet confluence, the
+  daily ATH scan, deployer alerts), which watch people.
 
 > This file is kept in step with the code. When a change to alert behaviour is
 > settled and accepted, update it in the same commit.

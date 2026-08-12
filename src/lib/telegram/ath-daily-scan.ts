@@ -575,6 +575,33 @@ export async function maybeRunDailyScan(): Promise<void> {
   }
 }
 
+/** Hour and weekday (UTC) for the weekly market-cap refresh. */
+export const REFRESH_HOUR_UTC = 23;
+export const REFRESH_WEEKDAY_UTC = 0; // Sunday
+
+let lastRefreshDate: string | null = null;
+
+/**
+ * Weekly refresh of every recorded token's current market cap, Sunday 23:00 UTC.
+ *
+ * Guarded in memory rather than in the database: the operation only overwrites a
+ * price and a timestamp, so running it twice after a restart costs a few
+ * requests and changes nothing. That is a better trade than a table write for
+ * something this cheap and this idempotent.
+ */
+export async function maybeRefreshMarketCaps(): Promise<void> {
+  const now = new Date();
+  if (now.getUTCDay() !== REFRESH_WEEKDAY_UTC || now.getUTCHours() !== REFRESH_HOUR_UTC) return;
+
+  const date = now.toISOString().slice(0, 10);
+  if (lastRefreshDate === date) return;
+  lastRefreshDate = date;
+
+  console.log(`[ath-scan] weekly market-cap refresh starting (${date})`);
+  const n = await refreshAthTokenMarketCaps(500);
+  console.log(`[ath-scan] weekly refresh updated ${n} tokens`);
+}
+
 /** Refresh current market caps for recorded tokens — cheap, run weekly. */
 export async function refreshAthTokenMarketCaps(limit = 200): Promise<number> {
   const { data } = await supabase

@@ -15,7 +15,7 @@ export async function register() {
     const { pollLongStocks, pollLongOnchainCreations, pollFlapRobinhoodStocks } = await import("@/lib/telegram/long-alerts");
     const { pollBscStockQuotes, pollBscOnchainLaunches } = await import("@/lib/telegram/bsc-stock-alerts");
     const { pollAlphaConfluence } = await import("@/lib/telegram/alpha-watcher");
-    const { maybeRunDailyScan } = await import("@/lib/telegram/ath-daily-scan");
+    const { maybeRunDailyScan, maybeRefreshMarketCaps } = await import("@/lib/telegram/ath-daily-scan");
     const { pollDeployerLaunches } = await import("@/lib/telegram/deployer-alerts");
 
     console.log("[instrumentation] Starting dex-profiles background poller (every 30s)");
@@ -155,9 +155,15 @@ export async function register() {
     // date in the database, so repeated checks — and multiple instances — still
     // produce exactly one run.
     console.log("[instrumentation] Starting daily ATH scan scheduler (23:00 UTC)");
+    console.log("[instrumentation] Starting weekly market-cap refresh (Sun 23:00 UTC)");
     setInterval(() => {
       maybeRunDailyScan().catch((err) =>
         console.error("[instrumentation] Daily ATH scan error:", err)
+      );
+      // Shares the same minute tick — both are clock-checked rather than timed,
+      // so neither drifts and a redeploy can't skip the slot.
+      maybeRefreshMarketCaps().catch((err) =>
+        console.error("[instrumentation] Weekly MC refresh error:", err)
       );
     }, 60_000);
 

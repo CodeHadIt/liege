@@ -8,9 +8,16 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-09
+**Last updated:** 2026-08-12
 
 ---
+
+There are two families of feed here, and they answer different questions:
+
+- **§3–§6 — launch feeds.** A new pairing asset appears on a launchpad; the first
+  token launched against it gets a ping. These watch *platforms*.
+- **§9–§11 — alpha feeds.** Wallets and devs with a track record get watched, and
+  their next move gets a ping. These watch *people*.
 
 ## 1. The shared model
 
@@ -410,3 +417,215 @@ None of these send to Telegram unless stated. All load `.env.local` where needed
 | [`probe-stonkfun-pair.ts`](../../scripts/probe-stonkfun-pair.ts) | Show whether a StonkFun mint tx reveals its quote (it does not) |
 | [`probe-alert-formats.ts`](../../scripts/probe-alert-formats.ts) | Render every alert format against live data |
 | [`test-bsc-first-token-ping.ts`](../../scripts/test-bsc-first-token-ping.ts) | Find the first token vs a stock and **send** it, if the bot is configured |
+| [`probe-alpha-buys.ts`](../../scripts/probe-alpha-buys.ts) | Dry-run alpha-wallet buy detection over recent blocks |
+| [`test-alpha-confluence-ping.ts`](../../scripts/test-alpha-confluence-ping.ts) | **Send** a mock confluence sequence using real wallet labels |
+| [`test-alpha-nft-ping.ts`](../../scripts/test-alpha-nft-ping.ts) | **Send** an NFT confluence ping built from real on-chain mints |
+| [`run-ath-scan.ts`](../../scripts/run-ath-scan.ts) | Run the daily scan manually (`--dry`, `--hours N`, `--refresh-mc`) |
+| [`backfill-ath-tokens.ts`](../../scripts/backfill-ath-tokens.ts) | Seed ath_tokens + traders from the research dataset |
+| [`backfill-deployers.ts`](../../scripts/backfill-deployers.ts) | Promote alpha deployers and build their deploy histories |
+| [`seed-alpha-wallets.ts`](../../scripts/seed-alpha-wallets.ts) | Seed alpha_wallets from the research dataset |
+
+
+---
+
+## 9. Robinhood Chain — alpha wallet confluence
+
+| | |
+|---|---|
+| Code | [`alpha-watcher.ts`](../../src/lib/telegram/alpha-watcher.ts), [`alpha-alerts.ts`](../../src/lib/telegram/alpha-alerts.ts), [`api/rh-onchain.ts`](../../src/lib/api/rh-onchain.ts) |
+| Tables | `alpha_wallets`, `alpha_buys`, `alpha_confluence` |
+| Poll | 30s |
+
+**Alpha wallets** are addresses that were top-30 traders on two or more tokens
+which reached a $2M ATH market cap, with automated wallets excluded. They are
+labelled `<CHAIN>_<coin1>_<coin2>_<pnl>` — e.g. `RH_cashcat_tendies_1.7M` — where
+the two coins are the wallet's biggest winners, so the label says what the wallet
+is known for.
+
+**One wallet buying is not the signal.** Nothing fires on a first buy. The first
+alert goes out when a SECOND alpha wallet buys the same token, and wallets 3, 4
+and 5 each get a follow-up carrying the move since the first ping. Four pings
+maximum, then the token stops being watched.
+
+### Detection
+
+One `eth_getLogs` per poll: ERC-20 `Transfer` with the indexed recipient
+OR-filtered across every alpha wallet. Cost does not grow with the watchlist,
+which is what allows a 30s poll. Blockscout's REST API cannot express that
+filter, so this uses the chain's JSON-RPC — which 403s without browser
+`Origin`/`Referer` headers.
+
+A transfer IN is not a buy. Each candidate is confirmed by checking the alpha
+wallet **sent** the transaction that delivered the asset; otherwise airdrops and
+transfers between a user's own addresses would count toward confluence.
+
+### NFTs
+
+ERC-721 shares ERC-20's `Transfer` topic0 exactly — they differ only in arity
+(3 topics vs 4, with the id indexed). Conflating them made an NFT collection read
+as a token every alpha wallet was "buying" for $0: 452 phantom buys and 31
+alerts. They are now told apart and both are tracked, on their own terms:
+
+- Count of ids received IS the amount; mints arrive batched (50 in one tx is routine)
+- No pool, so cost is the native value on the transaction, and supply/holders
+  stand in for market cap
+- Floor comes from OpenSea's public per-collection v2 endpoints, which do index
+  this chain. Collections OpenSea doesn't list fall back to the lowest recent
+  on-chain fill, and only that path is captioned as derived
+
+### Thresholds
+
+| | | |
+|---|---|---|
+| `MIN_BUY_USD` | $250 | Buys below this don't drive confluence |
+| `CONFLUENCE_WINDOW_MS` | 4h | Measured from the first alpha buy |
+| `WINDOW_REOPEN_COOLDOWN_MS` | 24h | After a window closes |
+| `MAX_WALLETS_TO_ALERT` | 5 | Four pings maximum |
+
+The size floor is load-bearing, not a nicety. Robinhood Chain runs 0.1s blocks
+and these wallets trade constantly, so two of them touching the same token is
+ordinary: unfiltered, the feed fires ~173 times a day. Measured rates by floor —
+$0 → ~173/day, $250 → ~58, $500 → ~29. **NFTs are exempt**, because free mints
+are the norm and a USD floor would suppress every one; their noise is bounded by
+confluence, the cooldown and the ping cap instead.
+
+Unpriced buys are recorded but never counted. They used to count, on the
+reasoning that an unpriced token is the earliest case worth catching — in
+practice it meant anything unpriceable bypassed the floor entirely.
+
+### Known limitations
+
+- **A transient RPC failure is indistinguishable from a quiet range.** `getLogs`
+  returning null holds the cursor, but a partial read cannot be detected.
+- The node caps `getLogs` at 10,000 matches and returns an ERROR. That error is
+  deterministic, so a naive retry loops forever — ranges split in half instead.
+
+---
+
+## 10. Robinhood Chain — daily ATH scan
+
+| | |
+|---|---|
+| Code | [`ath-daily-scan.ts`](../../src/lib/telegram/ath-daily-scan.ts), [`api/ath-tokens.ts`](../../src/lib/api/ath-tokens.ts) |
+| Tables | `ath_tokens`, `ath_token_traders`, `token_deployers`, `ath_scan_runs` |
+| Runs | 23:00 UTC daily |
+
+Finds tokens that reached a $2M ATH market cap in the last 24h, records them with
+their top 30 traders, then cross-references those traders against **every ATH
+token ever recorded**. A wallet that was a top trader on two or more separate
+runners has repeated across independent winners, so it is promoted to the alpha
+list automatically and announced in caps — reserved for this because it is the
+rarest and highest-value message the bot sends. A normal-tone digest of the day's
+runners follows.
+
+`ath_token_traders` is the load-bearing table: cross-referencing today's traders
+against past winners is impossible without storing the past winners, so the
+corpus IS the mechanism rather than a record of it.
+
+### Scheduling
+
+The clock is checked every minute rather than a timer being set once — a long
+timer drifts over days, and a redeploy at the wrong moment would skip the day
+entirely. Runs are claimed by UTC date in `ath_scan_runs`, so repeated checks and
+multiple instances still produce exactly one run.
+
+**Weekly market-cap refresh** runs Sunday 23:00 UTC on the same minute tick,
+updating `current_mc_usd` for recorded tokens. Guarded in memory rather than the
+database: it only overwrites a price and a timestamp, so a duplicate run after a
+restart costs a few requests and changes nothing.
+
+### Filters, and why each exists
+
+| Filter | Reason |
+|---|---|
+| Candidate FDV ≥ $100k | Without it the scan prices thousands of dust pools nightly. A heuristic — the first thing to revisit if a known runner is missed. |
+| ATH ≤ $500M | Thin pools print absurd daily highs. A dry run produced "Cashcow, ATH $1,876,560,000,000". Held back and logged. |
+| Not WETH/USDG/USDe/Index… | They trade here but weren't launched here, and clear $2M every day by definition. |
+| Contracts excluded from promotion | GMGN's trader list is flow-derived, so the V4 PoolManager appears in nearly every token. It **was** promoted once, as `RH_pipedog_dogo_17.8B` on $17.8B of "PnL". |
+| ≥1,000 trades on a token | Automation. Median top-30 trader makes ~23. |
+
+The contract guard lives in `ath-tokens.ts` and is shared by all three paths that
+write to `alpha_wallets`, rather than each carrying its own copy.
+
+---
+
+## 11. Robinhood Chain — alpha deployer alerts
+
+| | |
+|---|---|
+| Code | [`deployer-alerts.ts`](../../src/lib/telegram/deployer-alerts.ts), [`api/alpha-deployers.ts`](../../src/lib/api/alpha-deployers.ts) |
+| Tables | `token_deployers`, `deployer_launches` |
+| Poll | 120s |
+
+A repeat deployer is a different signal to a repeat trader: the trader found the
+winner, the deployer made it. Devs behind two or more $2M runners are labelled
+`<CHAIN>_<coin1>_<coin2>_Dep` — the trailing `Dep` is constant, so the two lists
+never read alike — and watched for their next launch. Alerts use builder emojis
+(🏗️ 🔨 ⚒️ 🧱 👷) to distinguish them at a glance.
+
+The alert carries the new token plus the dev's full track record: every previous
+runner with ATH and current market cap, and a **20x success rate**.
+
+### The success rate
+
+Launch market cap is a **constant $5k** — the bonding-curve start on this chain —
+so 20x means exactly **$100k ATH**, comparably, for every token. Deriving launch
+cap per token was tried and rejected: it came from a pool's first candle, and any
+token that migrated off its curve has a deeper pool opening long after launch, so
+CASHCAT read as launching at $117M and a ~4,000x run looked like 1.8x.
+
+Two counts live on `token_deployers` and must never be confused:
+
+| Column | Meaning |
+|---|---|
+| `ath_token_count` | Deploys that reached $2M ATH — the runners |
+| `total_deploys` | **Every** token shipped — the rate's denominator |
+
+Measuring hits against `ath_tokens` alone would always return 100%, since a token
+only enters that table by clearing $2M. The failures are the entire point of a
+rate.
+
+### Where dev data comes from
+
+GMGN resolves a token's creator and that dev's full token list, each with its ATH
+market cap and launchpad — two calls replacing a Blockscout creation-tx trace, a
+paginated walk for `create2` internal transactions, and a GeckoTerminal lookup
+per deploy.
+
+Two traps worth remembering:
+
+- **The returned list is authoritative, not the counters.** GMGN reports
+  `inner_count + open_count` = 18 for a dev whose list holds 7; the 7 is what the
+  site shows and what basedbot confirms.
+- **`dev.creator_address` is empty when GMGN doesn't know**, and `dev.address` is
+  the TOKEN's address. Reading the latter as a fallback returned a token as its
+  own deployer — wrong, and indistinguishable from right. Unknown returns null
+  and falls back to the chain.
+
+### Detection
+
+A launch is a **create/create2 internal transaction**, not a method name and not
+a mint. Method names don't generalise across launchpads. Mints looked universal
+but aren't: a factory creates the token without minting in the same transaction,
+and the deploy transactions here carry zero token transfers.
+
+### Known limitations
+
+- Tokenized stocks (NVDA, SPCX) have no GMGN dev record, since they aren't
+  launched coins. Those fall back to the chain, where the deployer resolves but
+  means something different — see the note in §12.
+- A transient API failure reads as "no history", which would understate a
+  denominator and overstate a rate.
+
+---
+
+## 12. Open items
+
+- **Tokenized stocks are in `ath_tokens`.** NVDA and SPCX qualify on market cap
+  but are tokenized equities, not launched coins — the same category as the
+  WETH/USDG exclusions. They currently produce the only alpha deployer
+  (`RH_nvda_spcx_Dep`), whose "dev" is whoever deployed the stock contract rather
+  than a memecoin dev. Worth excluding by the same rule.
+- **Deployer resolution is not unified.** The daily scan still resolves creators
+  via Blockscout while the backfill uses GMGN. Both are needed — GMGN has no
+  creator for tokenized stocks — but the split is incidental rather than designed.
