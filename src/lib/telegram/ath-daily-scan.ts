@@ -10,6 +10,8 @@ import {
   fetchDeployer,
   fetchHolders,
   launchpadFromFactory,
+  isContractAddress,
+  KNOWN_INFRA,
   RH_EXPLORER,
 } from "@/lib/api/ath-tokens";
 import {
@@ -449,7 +451,21 @@ export async function promoteRepeatTraders(wallets: string[]): Promise<number> {
   if (wallets.length === 0) return 0;
 
   const existing = await loadAlphaWallets(CHAIN);
-  const fresh = wallets.filter((w) => !existing.has(w));
+  let fresh = wallets.filter((w) => !existing.has(w));
+  if (fresh.length === 0) return 0;
+
+  // Contracts are not traders. Without this the V4 PoolManager qualifies on
+  // nearly every token and gets promoted — it did, with $17.8B of "PnL".
+  const checked: string[] = [];
+  for (const w of fresh) {
+    if (KNOWN_INFRA.has(w)) continue;
+    if (await isContractAddress(w)) {
+      console.log(`[ath-scan] skipping ${w} — contract, not a trader`);
+      continue;
+    }
+    checked.push(w);
+  }
+  fresh = checked;
   if (fresh.length === 0) return 0;
 
   const appearances = await appearancesForWallets(CHAIN, fresh);

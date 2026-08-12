@@ -17,6 +17,53 @@ const FACTORY_LAUNCHPAD: Record<string, string> = {
   "0x3711cea4feade896c913c68f01eda97cb06d1a42": "pons",
 };
 
+/**
+ * Addresses that are infrastructure, not traders.
+ *
+ * GMGN's top-trader list is derived from token flow, so contracts that hold or
+ * route a token appear in it — the V4 PoolManager shows up in essentially every
+ * token on the chain and will otherwise be promoted as the most prolific trader
+ * alive. It was filtered out of the research pipeline for exactly this reason;
+ * the daily scan is a second path to the same table and needs the same guard.
+ */
+export const KNOWN_INFRA = new Set(
+  [
+    "0x0000000000000000000000000000000000000000", // zero
+    "0x000000000000000000000000000000000000dead", // burn
+    "0x8366a39cc670b4001a1121b8f6a443a643e40951", // Uniswap V4 PoolManager
+    "0x000000e200088d55c39a11f609e5f667729ad49b", // UERC20Factory (pools.trade)
+    "0x22e99278308b393ea1260859b181ad7e78f5eeed", // LongLauncher
+    "0x26605f322f7ff986f381bb9a6e3f5dab0beaeb09", // Flap portal
+    "0x3711cea4feade896c913c68f01eda97cb06d1a42", // Pons factory
+    "0x0000000068f116a894984e2db1123eb395",       // Seaport (truncated form guard)
+  ].map((a) => a.toLowerCase())
+);
+
+const contractCache = new Map<string, boolean>();
+
+/** Whether an address has code — i.e. is a contract rather than a wallet. */
+export async function isContractAddress(address: string): Promise<boolean> {
+  const addr = address.toLowerCase();
+  if (KNOWN_INFRA.has(addr)) return true;
+  const cached = contractCache.get(addr);
+  if (cached !== undefined) return cached;
+
+  await rateLimit("robinscan");
+  try {
+    const res = await fetch(`${RH_EXPLORER}/api/v2/addresses/${addr}`, {
+      headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return false;
+    const d = await res.json();
+    const isContract = d?.is_contract === true;
+    contractCache.set(addr, isContract);
+    return isContract;
+  } catch {
+    return false; // unknown -> treat as a wallet, and say so where it matters
+  }
+}
+
 export interface AthTokenInput {
   chain: string;
   tokenAddress: string;
