@@ -14,6 +14,7 @@ loadEnv({ path: ".env.local" });
 
 import { readFileSync } from "fs";
 import {
+  isContractAddress,
   upsertAthToken,
   upsertDeployer,
   saveTokenTraders,
@@ -89,7 +90,17 @@ async function main() {
     tokensWritten++;
     await upsertDeployer(CHAIN, deployer);
 
-    const raw = cache[t.tokenAddress] ?? [];
+    // Contracts are removed BEFORE taking the top 30, matching how the research
+    // dataset was built. Slicing the raw list first produced a different top 30,
+    // which made ath_token_traders disagree with the dataset about who a token's
+    // top traders were — and anything reasoning off that table inherited the gap.
+    const rawAll = cache[t.tokenAddress] ?? [];
+    const raw: typeof rawAll = [];
+    for (const r of rawAll) {
+      if (raw.length >= 30) break;
+      if (await isContractAddress(r.walletAddress)) continue;
+      raw.push(r);
+    }
     if (raw.length > 0) {
       // Same bot rule as the research pipeline and the daily scan.
       const bots = new Map<string, { bot: boolean; reason: string | null }>();
@@ -105,7 +116,7 @@ async function main() {
         CHAIN,
         t.tokenAddress,
         t.symbol,
-        raw.slice(0, 30),
+        raw,
         t.totalSupply,
         (addr) => bots.get(addr) ?? { bot: false, reason: null }
       );

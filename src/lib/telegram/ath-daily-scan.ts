@@ -11,6 +11,7 @@ import {
   fetchHolders,
   launchpadFromFactory,
   isContractAddress,
+  isTokenizedStock,
   KNOWN_INFRA,
   RH_EXPLORER,
 } from "@/lib/api/ath-tokens";
@@ -351,6 +352,11 @@ export async function runAthScan(opts: { windowHours?: number; dryRun?: boolean 
 
   for (const c of worth) {
     if (NOT_LAUNCHES.has((c.symbol || "").toLowerCase())) continue;
+    // Tokenized equities clear $2M on market cap alone and are not launches.
+    if (isTokenizedStock(c.symbol, c.name)) {
+      console.log(`[ath-scan] skipping ${c.symbol} — tokenized stock, not a launch`);
+      continue;
+    }
 
     const peak = await resolvePeak(c);
     if (!peak || peak.athMcUsd < ATH_THRESHOLD_USD) continue;

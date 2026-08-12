@@ -64,6 +64,32 @@ export async function isContractAddress(address: string): Promise<boolean> {
   }
 }
 
+/**
+ * Tokenized equities — real-world stocks issued on-chain, not launched coins.
+ *
+ * They clear a $2M market cap trivially (NVDA sat at $3.9M, SPCX at $2.4M with
+ * 38k and 31k holders weeks after issue) but nothing about them is a launch:
+ * their ATH equals their current cap because the price tracks an underlying
+ * share, and their "deployer" is whoever issued the stock contract, not a dev.
+ * Left in, they pollute the runner list, the trader corpus and the deployer
+ * list all at once.
+ *
+ * Matched on the issuer's naming convention rather than a symbol denylist, so
+ * every future tokenized stock is excluded automatically instead of needing a
+ * new entry each time. Robinhood names these "NVIDIA • Robinhood Token"; the
+ * bullet is part of the convention but is not required to match, since a
+ * unicode character is a fragile thing to depend on.
+ */
+export function isTokenizedStock(symbol: string | null, name: string | null): boolean {
+  const n = (name ?? "").toLowerCase();
+  if (n.includes("robinhood token")) return true;
+  // Other issuers' conventions seen on this chain and on BNB Chain's bStocks.
+  if (/\b(tokenized|xstock|backed by)\b/.test(n)) return true;
+  if (/•\s*(robinhood|ondo|backed)/i.test(name ?? "")) return true;
+  const s = (symbol ?? "").toUpperCase();
+  return ["NVDA", "SPCX", "AAPL", "TSLA", "MSFT", "META", "GOOGL", "AMZN", "SPY", "QQQ", "GME", "HOOD", "PLTR"].includes(s);
+}
+
 export interface AthTokenInput {
   chain: string;
   tokenAddress: string;
