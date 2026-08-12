@@ -15,6 +15,7 @@ export async function register() {
     const { pollLongStocks, pollLongOnchainCreations, pollFlapRobinhoodStocks } = await import("@/lib/telegram/long-alerts");
     const { pollBscStockQuotes, pollBscOnchainLaunches } = await import("@/lib/telegram/bsc-stock-alerts");
     const { pollPumpFunQuoteMints, pollPumpFunLaunches } = await import("@/lib/telegram/pumpfun-alerts");
+    const { pollPoolsFunQuoteAssets, pollPoolsFunLaunches } = await import("@/lib/telegram/poolsfun-alerts");
     const { pollAlphaConfluence } = await import("@/lib/telegram/alpha-watcher");
     const { maybeRunDailyScan, maybeRefreshMarketCaps } = await import("@/lib/telegram/ath-daily-scan");
     const { pollDeployerLaunches } = await import("@/lib/telegram/deployer-alerts");
@@ -164,6 +165,36 @@ export async function register() {
         console.error("[instrumentation] Pump.fun launch poll error:", err)
       );
     }, PUMPFUN_LAUNCH_INTERVAL);
+
+    // pools.fun — SushiSwap's launchpad on Robinhood Chain (NOT pools.trade).
+    // Both halves read the verified PartyFactory's own events, so a listing and
+    // a launch are each one getLogs. New pairing assets are rare (the factory
+    // shipped with WETH and USDG and has added none since), so 60s is ample.
+    console.log("[instrumentation] Starting pools.fun quote-asset poller (every 60s)");
+    const POOLSFUN_QUOTE_INTERVAL = 60_000;
+    pollPoolsFunQuoteAssets().catch((err) =>
+      console.error("[instrumentation] Initial pools.fun quote poll error:", err)
+    );
+    setInterval(() => {
+      pollPoolsFunQuoteAssets().catch((err) =>
+        console.error("[instrumentation] pools.fun quote poll error:", err)
+      );
+    }, POOLSFUN_QUOTE_INTERVAL);
+
+    // Launches against a newly-added pools.fun quote. TokenLaunched carries the
+    // paired asset with the token, so a launch is caught in the block it happens
+    // — no pool to wait on. Runs tighter than the catalog poll, and makes no
+    // request at all while nothing is being watched.
+    console.log("[instrumentation] Starting pools.fun launch watcher (every 30s)");
+    const POOLSFUN_LAUNCH_INTERVAL = 30_000;
+    pollPoolsFunLaunches().catch((err) =>
+      console.error("[instrumentation] Initial pools.fun launch poll error:", err)
+    );
+    setInterval(() => {
+      pollPoolsFunLaunches().catch((err) =>
+        console.error("[instrumentation] pools.fun launch poll error:", err)
+      );
+    }, POOLSFUN_LAUNCH_INTERVAL);
 
     // Alpha wallet confluence on Robinhood Chain. A poll is one block number
     // plus one getLogs covering EVERY alpha wallet (OR-filtered on the Transfer

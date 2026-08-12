@@ -8,15 +8,15 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-12 (pump.fun on-chain launch detection; StonkFun creation-scan fix)
+**Last updated:** 2026-08-12 (pools.fun added)
 
 ---
 
 There are two families of feed here, and they answer different questions:
 
-- **§3–§7 — launch feeds.** A new pairing asset appears on a launchpad; the first
+- **§3–§8 — launch feeds.** A new pairing asset appears on a launchpad; the first
   token launched against it gets a ping. These watch *platforms*.
-- **§10–§12 — alpha feeds.** Wallets and devs with a track record get watched, and
+- **§11–§13 — alpha feeds.** Wallets and devs with a track record get watched, and
   their next move gets a ping. These watch *people*.
 
 ## 1. The shared model
@@ -36,7 +36,7 @@ runaway pair, and the watcher logs when it trips rather than going quiet.
 
 Both constants live in [`launch-window.ts`](../../src/lib/telegram/launch-window.ts)
 so every platform — StonkFun, Pump.fun, Long, Pons, Flap, pools.trade,
-Four.meme, and anything added later — shares one definition instead of inventing its own.
+pools.fun, Four.meme, and anything added later — shares one definition instead of inventing its own.
 
 Deliberately **not** covered: pinging on every launch. That was the original
 StonkFun behaviour and it buried the signal (see §3).
@@ -105,6 +105,8 @@ be bundled for the Edge runtime.
 | Flap Robinhood-chain quotes | 120s |
 | BNB Chain stock quotes | 120s |
 | BNB Chain on-chain launches | 20s |
+| pools.fun quote assets | 60s |
+| pools.fun launches | 30s |
 
 Catalog polls are slow (assets are added on the order of days); launch watchers
 are fast, and short-circuit entirely while nothing is being watched.
@@ -570,7 +572,103 @@ know about it.
 
 ---
 
-## 8. Rate limits
+## 8. Robinhood Chain — pools.fun
+
+SushiSwap's launchpad on Robinhood Chain. **Not pools.trade**, which is a
+different platform on the same chain.
+
+| | |
+|---|---|
+| Code | [`poolsfun-alerts.ts`](../../src/lib/telegram/poolsfun-alerts.ts), [`api/pools-fun.ts`](../../src/lib/api/pools-fun.ts) |
+| Factory | `PartyFactory` `0x626c3d09b65bf5d1d40e0d5f25e19fa49783b3d4` (verified) |
+| Deployed | 2026-08-11 09:55:56 UTC, block 33,570,152 |
+| Quote catalog | `PairedAssetCurveSet` / `PairedAssetCurveRemoved` events |
+| Launch detection | `TokenLaunched` event |
+
+pools.fun has no public API and no UI listing launches, so everything is read
+from the chain. That is the ideal case rather than a limitation here, because
+the factory is verified and its events carry exactly what both stages need.
+
+### Why this is the strongest feed of the set
+
+```
+TokenLaunched(address indexed token, address indexed pool, address pairedAsset,
+              address indexed creator, address deployer, address feeRecipient,
+              int24 startTick, string metadataUri, uint256 devBuyAmountOut)
+```
+
+The token **and** its paired asset arrive together, atomically, in the launch
+transaction. Compare:
+
+- **StonkFun** (§3) — the pair only resolves once an indexer catches up to a pool
+  created in a *later* transaction, needing a retry queue and strict ordering.
+- **Pump.fun** (§7) — detection had to move on-chain after the HTTP feed blocked
+  us.
+- **pools.fun** — one `getLogs`, no indexer, no HTTP dependency, no inference.
+
+`pairedAsset` is the first non-indexed word of the event data; token, pool and
+creator come from the indexed topics.
+
+### Baseline assets
+
+The factory shipped with exactly two pairing currencies, both set in its
+deployment block, and has added none since:
+
+| Asset | Address | Launches (first 28h) |
+|---|---|---|
+| WETH | `0x0bd7d308f8e1639fab988df18a8011f41eacad73` | 731 |
+| USDG (Global Dollar) | `0x5fc5360d0400a0fd4f2af552add042d716f1d168` | 27 |
+
+Both are suppressed by name — they are the platform's base currencies, not
+listings. **A stock quote would be a third asset**, added via
+`setPairedAssetCurve` by the factory owner
+(`0xd86ec279ad4871483f6c3d7ce54ad00067f120e9`). That is the event this feed
+exists for, and it has not happened yet.
+
+Classification is a denylist for the same reason as everywhere else: the event
+carries no category, and an allowlist of expected stock symbols would silently
+swallow the first listing that didn't match it.
+
+### The two-cursor gap, and the backfill that closes it
+
+The catalog and launch pollers keep independent cursors, so by the time a listing
+is noticed the launch cursor may already have advanced past the block that
+listed it — and the inaugural launch, the most interesting one, would fall in
+that gap. When a window opens, the listing's own block is recorded as a pending
+backfill and the next launch pass reaches back to it.
+
+`setPairedAssetCurve` followed by a removal inside one scan range is also
+handled: `allowedPairedAsset` is checked before announcing, so a window is never
+opened for an asset that no longer stands.
+
+### Hostile token names
+
+Names and symbols are chosen by whoever launches the token, and a real pools.fun
+launch was observed with a **newline inside its name**. `escapeHtml` stops tags
+but not layout — a name containing `\n📊 Market Cap: $10M` would render as its
+own line and read as a field the bot produced. All token-supplied strings are
+whitespace-collapsed and length-capped before formatting.
+
+### Volume, and why the launch watcher short-circuits
+
+The factory averaged **648 launches/day in its first 28 hours** (a launch-day
+rush), settling to **247 in the following 24h** — essentially all against WETH.
+Scanning that unconditionally would be pointless work, so the launch pass makes
+no request at all while no non-baseline asset is watched, which is the normal
+state. `MAX_LAUNCHES_PER_WINDOW` (25) bounds a busy window.
+
+### Known limitations
+
+- **Windows are in-memory**, as everywhere else — a redeploy mid-window loses it.
+- **`MAX_BLOCK_SPAN` is 200,000 blocks** (~5.5h at this chain's ~0.1s blocks).
+  An outage longer than that skips the gap rather than replaying it, so a listing
+  during a long outage would be missed entirely.
+- Market stats are best-effort: a token seconds old is usually not indexed yet,
+  and the alert is sent without price/liquidity/market cap rather than delayed.
+
+---
+
+## 9. Rate limits
 
 Token-bucket per upstream, in
 [`src/lib/rate-limiter.ts`](../../src/lib/rate-limiter.ts):
@@ -591,7 +689,7 @@ quote assets are listed on the order of days, not seconds.
 
 ---
 
-## 9. Verification scripts
+## 10. Verification scripts
 
 None of these send to Telegram unless stated. All load `.env.local` where needed.
 
@@ -613,7 +711,7 @@ None of these send to Telegram unless stated. All load `.env.local` where needed
 
 ---
 
-## 10. Robinhood Chain — alpha wallet confluence
+## 11. Robinhood Chain — alpha wallet confluence
 
 | | |
 |---|---|
@@ -687,7 +785,7 @@ practice it meant anything unpriceable bypassed the floor entirely.
 
 ---
 
-## 11. Robinhood Chain — daily ATH scan
+## 12. Robinhood Chain — daily ATH scan
 
 | | |
 |---|---|
@@ -734,7 +832,7 @@ write to `alpha_wallets`, rather than each carrying its own copy.
 
 ---
 
-## 12. Robinhood Chain — alpha deployer alerts
+## 13. Robinhood Chain — alpha deployer alerts
 
 | | |
 |---|---|
@@ -798,13 +896,13 @@ and the deploy transactions here carry zero token transfers.
 
 - Tokenized stocks (NVDA, SPCX) have no GMGN dev record, since they aren't
   launched coins. Those fall back to the chain, where the deployer resolves but
-  means something different — see the note in §13.
+  means something different — see the note in §14.
 - A transient API failure reads as "no history", which would understate a
   denominator and overstate a rate.
 
 ---
 
-## 13. Open items
+## 14. Open items
 
 - **Tokenized stocks are in `ath_tokens`.** NVDA and SPCX qualify on market cap
   but are tokenized equities, not launched coins — the same category as the
