@@ -8,15 +8,15 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-12 (launch window)
+**Last updated:** 2026-08-12 (pump.fun quote monitoring)
 
 ---
 
 There are two families of feed here, and they answer different questions:
 
-- **§3–§6 — launch feeds.** A new pairing asset appears on a launchpad; the first
+- **§3–§7 — launch feeds.** A new pairing asset appears on a launchpad; the first
   token launched against it gets a ping. These watch *platforms*.
-- **§9–§11 — alpha feeds.** Wallets and devs with a track record get watched, and
+- **§10–§12 — alpha feeds.** Wallets and devs with a track record get watched, and
   their next move gets a ping. These watch *people*.
 
 ## 1. The shared model
@@ -35,8 +35,8 @@ everything after it. `MAX_LAUNCHES_PER_WINDOW` (25) is a safety valve for a
 runaway pair, and the watcher logs when it trips rather than going quiet.
 
 Both constants live in [`launch-window.ts`](../../src/lib/telegram/launch-window.ts)
-so every platform — StonkFun, Long, Pons, Flap, pools.trade, Four.meme, and
-anything added later — shares one definition instead of inventing its own.
+so every platform — StonkFun, Pump.fun, Long, Pons, Flap, pools.trade,
+Four.meme, and anything added later — shares one definition instead of inventing its own.
 
 Deliberately **not** covered: pinging on every launch. That was the original
 StonkFun behaviour and it buried the signal (see §3).
@@ -97,6 +97,8 @@ be bundled for the Edge runtime.
 |---|---|
 | StonkFun quote tokens | 60s |
 | StonkFun first token | 30s |
+| Pump.fun quote assets | 60s |
+| Pump.fun launch window | 60s |
 | Sunrise stock pairs | 60s |
 | Robinhood registry stocks | 60s |
 | Robinhood on-chain first token | 30s |
@@ -399,7 +401,125 @@ Bytecode is the reliable fingerprint:
 
 ---
 
-## 7. Rate limits
+## 7. Solana — Pump.fun
+
+Watches pump.fun's quote-asset whitelist and reports coins launched against a
+newly-added one. Same two-stage shape as every other platform; what is unusual
+is that both stages read from different worlds — the catalog from the chain, the
+launches from an HTTP API.
+
+Code: [`src/lib/api/pumpfun-quotes.ts`](../../src/lib/api/pumpfun-quotes.ts),
+[`src/lib/telegram/pumpfun-alerts.ts`](../../src/lib/telegram/pumpfun-alerts.ts).
+
+### The quote catalog is on-chain, not an API
+
+Unlike StonkFun, Flap and Four.meme, pump.fun serves no catalog. `/create` is
+client-rendered, and every plausible route on `frontend-api-v3.pump.fun`
+(`/quote-tokens`, `/pairs`, `/config`, `/coins/quote-mints`, …) returns 404. The
+frontend bundle explained why: the list is never fetched. It is read from the
+chain into a `supportedCurrencies` array on a program account.
+
+The pump program publishes its **Anchor IDL on-chain**, which settles the layout
+exactly rather than by guesswork:
+
+| | |
+|---|---|
+| Program | `6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P` |
+| Global PDA | seeds `["global"]` → `4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf` |
+| Field | `Global.whitelisted_quote_mints` |
+| Offset | **1013** bytes |
+| Instructions | `add_quote_mint` / `remove_quote_mint` |
+
+The offset is computed by summing every field ahead of it after the 8-byte
+discriminator, and then **confirmed against the live account**: it is 1045 bytes
+with USDC occupying the final 32. Computed and observed agree, so the reader
+isn't trusting an IDL that could describe a different deployed version.
+
+Reading the account beats watching `add_quote_mint` calls: it is one
+`getAccountInfo`, there is no history to replay, and a restart re-reads the truth
+instead of reconstructing it.
+
+The field is `[pubkey; 1]` today, but the program has an `extend_account`
+instruction — adding a quote grows the account. The reader therefore parses from
+the offset to the **end of the account**, so a longer array is picked up
+automatically rather than silently truncated to the first entry.
+
+**Current state:** the whitelist holds exactly one mint, USDC. No stock quote
+exists on pump.fun yet, which is precisely what this feed is waiting for.
+
+### Alerts
+
+1. **Quote asset added** — a mint appears in `whitelisted_quote_mints` that
+   wasn't there before. Names the asset, links Solscan and `/create`, and states
+   that the 36h window has opened.
+2. **Coin launched against it** — every launch inside the window, numbered
+   (`🥇 First`, `🔁 3rd`), capped at 25.
+
+### Asset classification
+
+There is **no category field on-chain**, so a stock cannot be distinguished from
+anything else by inspection. Rather than invent an allowlist of expected stock
+symbols — which would silently swallow the first listing that didn't match it —
+the feed reports every newly-whitelisted mint and suppresses a small explicit
+**baseline** set (SOL, wrapped SOL, USDC, USDT, USD1). Those are the assets the
+program shipped with, not listings.
+
+Seeding already prevents the baseline from alerting; naming it explicitly means a
+redeploy can't announce the existing catalog as a fresh listing either. This is
+the same denylist reasoning as StonkFun's `custom` suppression (§3).
+
+### Launch detection — pull and filter
+
+Pump.fun's `/coins` endpoint carries `quote_mint` on every coin but **will not
+filter by it**: `quoteMint`, `quote_mint`, `quoteMints` and `quote` are all
+ignored and the response comes back all-SOL. So the recent-creations feed is
+pulled whole and matched locally.
+
+That is affordable because the firehose is slower than it looks — measured at
+**~21 coins/minute**, and one page (the server caps `limit` at 70) covers a
+little over three minutes. A 60s poll therefore carries roughly 3× headroom. If
+the cursor is further back than one page covers — a delayed pass, or a window
+that just opened — the reader pages back up to 4 pages so the gap is genuinely
+covered rather than skipped.
+
+The pass **short-circuits before any network call while no window is open**,
+which is the normal state. Until a stock is listed, this poller costs nothing.
+
+SOL appears in the feed under two spellings — the system-program sentinel
+`111…111` (native) and the wrapped-SOL mint. Both are treated as SOL; neither is
+ever watched.
+
+### RPC failover
+
+Both reads here are `getAccountInfo` against known accounts, and they try Helius
+first, then the public endpoint. The fallback is not decoration: Helius returns
+HTTP 429 *"max usage reached"* once the account's credits are spent, and with a
+single endpoint the catalog read would fail indefinitely — **the feature going
+quiet while looking healthy**. This was observed during development, not
+theorised: the first end-to-end run returned no catalog for exactly that reason.
+
+A failed read returns `null`, never an empty array. The distinction matters: a
+caller treating a failed read as "the catalog is empty" would re-announce every
+quote as newly added the moment the node recovered.
+
+### Naming a new quote
+
+Metaplex metadata is read **from the chain first**, with an indexer (Jupiter)
+only as fallback. A stock quote is interesting on the day it lists, which is
+exactly when a third-party token list is least likely to know about it — whereas
+its metadata account exists from mint.
+
+### Known limitations
+
+- **Window state is in-memory.** A redeploy mid-window loses the open watch and
+  the launch cursor. Same as every other platform here; noted rather than fixed.
+- **No stock quote has ever been listed**, so the launch half of this feed has
+  been verified against USDC-quoted coins (which do exist and do flow through the
+  same path) rather than against a real stock listing.
+
+---
+
+## 8. Rate limits
 
 Token-bucket per upstream, in
 [`src/lib/rate-limiter.ts`](../../src/lib/rate-limiter.ts):
@@ -409,7 +529,8 @@ Token-bucket per upstream, in
 | `bscrpc` | 20 | 5 | BNB Chain launch watcher |
 | `robinscan` | 10 | 2 | Robinhood Blockscout |
 | `dexscreener` | 60 | 1 | Market stats everywhere |
-| `helius` | 20 | 8 | StonkFun mints + metadata |
+| `helius` | 20 | 8 | StonkFun mints + metadata, Pump.fun account reads |
+| `pumpfun` | 10 | 0.5 | Pump.fun `/coins` launch feed |
 | `stonkfun` / `sunrise` / `robinhood` | 10 | 0.5 | Catalog polls |
 | `flap` | 6 | 0.2 | Launch page + app bundle |
 | `fourmeme` | 5 | 0.2 | Create-page scrape |
@@ -419,7 +540,7 @@ quote assets are listed on the order of days, not seconds.
 
 ---
 
-## 8. Verification scripts
+## 9. Verification scripts
 
 None of these send to Telegram unless stated. All load `.env.local` where needed.
 
@@ -441,7 +562,7 @@ None of these send to Telegram unless stated. All load `.env.local` where needed
 
 ---
 
-## 9. Robinhood Chain — alpha wallet confluence
+## 10. Robinhood Chain — alpha wallet confluence
 
 | | |
 |---|---|
@@ -515,7 +636,7 @@ practice it meant anything unpriceable bypassed the floor entirely.
 
 ---
 
-## 10. Robinhood Chain — daily ATH scan
+## 11. Robinhood Chain — daily ATH scan
 
 | | |
 |---|---|
@@ -562,7 +683,7 @@ write to `alpha_wallets`, rather than each carrying its own copy.
 
 ---
 
-## 11. Robinhood Chain — alpha deployer alerts
+## 12. Robinhood Chain — alpha deployer alerts
 
 | | |
 |---|---|
@@ -626,13 +747,21 @@ and the deploy transactions here carry zero token transfers.
 
 - Tokenized stocks (NVDA, SPCX) have no GMGN dev record, since they aren't
   launched coins. Those fall back to the chain, where the deployer resolves but
-  means something different — see the note in §12.
+  means something different — see the note in §13.
 - A transient API failure reads as "no history", which would understate a
   denominator and overstate a rate.
 
 ---
 
-## 12. Open items
+## 13. Open items
+
+- **The Helius account is over quota.** Every request returns HTTP 429 *"max
+  usage reached"*. Pump.fun's reads fall back to the public Solana endpoint and
+  are unaffected (§7), but the heavier Helius-only consumers — StonkFun mint
+  detection and the enhanced-transaction readers — have no such fallback and are
+  degraded until the plan is topped up. `HELIUS_RPC_URL` is also set to a
+  malformed value ending in `api-key=` with no key; the code already ignores it
+  in favour of `HELIUS_API_KEY`, so this is untidy rather than broken.
 
 - **Tokenized stocks are in `ath_tokens`.** NVDA and SPCX qualify on market cap
   but are tokenized equities, not launched coins — the same category as the

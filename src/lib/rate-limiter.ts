@@ -70,6 +70,11 @@ const API_RATE_LIMITS: Record<string, RateLimiterConfig> = {
   rhrpc: { maxTokens: 20, refillRate: 5 },
   // OpenSea's public v2 endpoints — a couple of calls per NFT alert.
   opensea: { maxTokens: 10, refillRate: 1 },
+  // Pump.fun's frontend API, used by the launch-window watcher. A pass is
+  // normally a single /coins page every 60s; the burst allowance covers the
+  // extra pages pulled when a poll has been delayed and one page no longer
+  // spans the gap.
+  pumpfun: { maxTokens: 10, refillRate: 0.5 },
   jupiter: { maxTokens: 30, refillRate: 0.5 },
   moralis: { maxTokens: 20, refillRate: 0.33 },
 };

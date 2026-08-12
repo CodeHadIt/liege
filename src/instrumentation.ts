@@ -14,6 +14,7 @@ export async function register() {
     const { pollSunriseStocks } = await import("@/lib/telegram/sunrise-alerts");
     const { pollLongStocks, pollLongOnchainCreations, pollFlapRobinhoodStocks } = await import("@/lib/telegram/long-alerts");
     const { pollBscStockQuotes, pollBscOnchainLaunches } = await import("@/lib/telegram/bsc-stock-alerts");
+    const { pollPumpFunQuoteMints, pollPumpFunLaunches } = await import("@/lib/telegram/pumpfun-alerts");
     const { pollAlphaConfluence } = await import("@/lib/telegram/alpha-watcher");
     const { maybeRunDailyScan, maybeRefreshMarketCaps } = await import("@/lib/telegram/ath-daily-scan");
     const { pollDeployerLaunches } = await import("@/lib/telegram/deployer-alerts");
@@ -133,6 +134,35 @@ export async function register() {
         console.error("[instrumentation] BSC launch poll error:", err)
       );
     }, BSC_LAUNCH_INTERVAL);
+
+    // Pump.fun quote assets. The catalog is a single getAccountInfo against the
+    // pump program's Global account, so this is one cheap RPC call per pass and
+    // an addition is seen as soon as the chain accepts it.
+    console.log("[instrumentation] Starting Pump.fun quote-asset poller (every 60s)");
+    const PUMPFUN_QUOTE_INTERVAL = 60_000;
+    pollPumpFunQuoteMints().catch((err) =>
+      console.error("[instrumentation] Initial Pump.fun quote poll error:", err)
+    );
+    setInterval(() => {
+      pollPumpFunQuoteMints().catch((err) =>
+        console.error("[instrumentation] Pump.fun quote poll error:", err)
+      );
+    }, PUMPFUN_QUOTE_INTERVAL);
+
+    // Launches against a newly-added Pump.fun quote. Pump.fun's API won't filter
+    // by quote mint, so this pulls the recent-creations feed and matches locally
+    // — but only while a window is open, which is the rare case. With none open
+    // the pass returns before making any request at all.
+    console.log("[instrumentation] Starting Pump.fun launch-window watcher (every 60s)");
+    const PUMPFUN_LAUNCH_INTERVAL = 60_000;
+    pollPumpFunLaunches().catch((err) =>
+      console.error("[instrumentation] Initial Pump.fun launch poll error:", err)
+    );
+    setInterval(() => {
+      pollPumpFunLaunches().catch((err) =>
+        console.error("[instrumentation] Pump.fun launch poll error:", err)
+      );
+    }, PUMPFUN_LAUNCH_INTERVAL);
 
     // Alpha wallet confluence on Robinhood Chain. A poll is one block number
     // plus one getLogs covering EVERY alpha wallet (OR-filtered on the Transfer
