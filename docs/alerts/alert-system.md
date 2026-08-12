@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-12 (pump.fun quote monitoring)
+**Last updated:** 2026-08-12 (pump.fun on-chain launch detection; StonkFun creation-scan fix)
 
 ---
 
@@ -107,9 +107,7 @@ be bundled for the Edge runtime.
 | BNB Chain on-chain launches | 20s |
 
 Catalog polls are slow (assets are added on the order of days); launch watchers
-are fast, and short-circuit entirely while nothing is being watched — the one
-exception is Pump.fun's launch window, which always polls because its filter is
-on the quote rather than on a watchlist (§7).
+are fast, and short-circuit entirely while nothing is being watched.
 
 ### Chain labelling
 
@@ -126,13 +124,36 @@ reserved for the chain marker and used for nothing else.
 |---|---|
 | Code | [`stonkfun-alerts.ts`](../../src/lib/telegram/stonkfun-alerts.ts), [`api/stonkfun.ts`](../../src/lib/api/stonkfun.ts) |
 | Quote catalog | `GET https://www.stonkfun.xyz/api/quote-tokens` (public JSON) |
-| Launch detection | Helius enhanced API, `TOKEN_MINT` from the platform deployer |
+| Launch detection | Helius enhanced API, deployer transactions filtered locally for `TOKEN_MINT` |
 | Deployer | `5CEbueQnq1Ym2uSSx2xXds3jQAqT1BDnkA59RZobSPAG` |
 
 StonkFun is custodial: every token is minted by one deployer wallet. A genuine
 launch mints **exactly 1,000,000,000** units — the deployer also does fee and
 utility mints with odd amounts and no metadata, and the supply check is what
 filters those out.
+
+#### Why the `type=TOKEN_MINT` filter is not used
+
+Asking Helius for `type=TOKEN_MINT` directly is the obvious implementation and it
+was the original one. It is wrong: Helius answers that filter with **HTTP 404**
+and `{"error":"Failed to find events within the search period"}` whenever it
+cannot fill the requested count inside its scan window — which for this deployer
+is most of the time, since mints are sparse against a constant stream of
+transfers and swaps. Paired with a `!res.ok → []` guard, an ordinary 404 was
+indistinguishable from "nothing launched", so **the feed went quiet at random**.
+Observed directly: one call 404'd while the very next unfiltered call showed a
+real mint.
+
+The fetch is now unfiltered (always 200) and filtered in code. The trade-off is
+lookback depth — at a measured **10.4 tx/min** for this deployer, 100
+transactions covers about **10 minutes**, where the type filter reached back
+hours. That is still ~20× headroom for a 30s poll, and `MAX_ALERT_AGE_SECONDS`
+(15 min) means older launches wouldn't be alerted on anyway; but an outage longer
+than ~10 minutes now drops a launch rather than catching up.
+
+Note that **zero creations is usually the correct answer**, not a failure:
+genuine launches are sparse — one in the last 1,200 transactions when this was
+measured — while the deployer mints `amount=1` utility tokens constantly.
 
 ### Alerts
 
@@ -470,58 +491,49 @@ Seeding already prevents the baseline from alerting; naming it explicitly means 
 redeploy can't announce the existing catalog as a fresh listing either. This is
 the same denylist reasoning as StonkFun's `custom` suppression (§3).
 
-### Launch detection — pull and filter
+### Launch detection — on-chain, by quote
 
-Pump.fun's `/coins` endpoint carries `quote_mint` on every coin but **will not
-filter by it**: `quoteMint`, `quote_mint`, `quoteMints` and `quote` are all
-ignored and the response comes back all-SOL. So the recent-creations feed is
-pulled whole and matched locally.
+Launches are found with a **memcmp query against `BondingCurve.quote_mint`**,
+not by scanning pump.fun's recent-creations feed.
 
-That is affordable because the firehose is slower than it looks — measured at
-**~21 coins/minute**, and one page (the server caps `limit` at 70) covers a
-little over three minutes. A 60s poll therefore carries roughly 3× headroom. If
-the cursor is further back than one page covers — a delayed or failed pass — the
-reader pages back up to 4 pages so the gap is genuinely covered rather than
-skipped.
+| | |
+|---|---|
+| Method | `getProgramAccountsV2` (plain `getProgramAccounts` is refused — the program has ~10M accounts) |
+| Filters | `dataSize: 115` + `memcmp` at offset **83** = the quote mint |
+| Curve → mint | `getTokenAccountsByOwner(curve)` — BondingCurve has no mint field and its PDA is one-way, so the link comes from the token account the curve holds |
 
-### The filter is on the quote, not on a watchlist
+The first implementation scanned `frontend-api-v3.pump.fun/coins` and filtered
+client-side. **That endpoint sits behind a WAF and started returning 403 to this
+machine after a burst of requests — a block that persisted across headers and
+retries.** A feed whose entire job is to not miss a launch cannot have its only
+detection path behind something that can lock us out silently, so detection moved
+to the chain and the HTTP feed was demoted to optional enrichment.
 
-**This is the load-bearing decision in the feed.** A coin is reported when its
-quote is *not* one of the baseline assets — not when its quote matches a window
-we already opened.
+The on-chain query is also better on the property that matters. It returns
+**every** curve for a quote, including ones created before we noticed the quote
+existed, where the HTTP feed could only ever show a rolling window of recent
+creations. There is no detection gap to reason about.
 
-The difference matters because pump.fun only lets you launch against SOL
-(native or wrapped) and stablecoins. A coin quoted in anything else is, by
-construction, paired to a newly-listed asset, and is interesting **on its own
-evidence** — whether or not the catalog poller has noticed the listing yet.
+That is also why keying off the watched quotes is *complete* rather than a
+dependency — the earlier concern that motivated filtering on the quote instead of
+a watchlist. The pump program **enforces** the whitelist, so a coin's quote is
+necessarily one of the whitelisted mints; enumerating the non-baseline ones
+therefore covers every launch that could interest us, by construction.
 
-The first implementation had it the other way round: launches were only matched
-against an already-open window, which made this feed a strict dependent of the
-catalog read. That lost every launch in the gap between a listing appearing and
-the catalog poll seeing it — and the first coin against a new stock quote is
-exactly the one worth having. Filtering on the quote removes the dependency
-entirely.
+With no window open, the pass makes **no request at all**.
 
-So there are now **two independent discovery paths** for the same event — the
-on-chain whitelist and the launch feed — and whichever sees it first announces
-the quote (once) and opens the window. Verified against a fixture built on the
-real NVIDIA xStock mint: the launch feed discovered and announced the quote with
-that mint **absent from the on-chain whitelist**, then numbered launches in
-order while ignoring SOL-quoted noise.
+### Naming a launched coin
 
-The cost of dropping the short-circuit is one request a minute, and the filter
-is near-pure signal: across **1,230 unique coins** sampled over four orderings,
-every single one was quoted in SOL, wrapped SOL or USDC. Until a stock is
-listed, this filter matches nothing.
+Metadata comes from **Helius DAS (`getAsset`)**, not Metaplex. Pump.fun mints
+under **Token-2022 and stores metadata in the mint's own metadata extension**, so
+a Metaplex metadata account does not exist — reading Metaplex first returned
+nothing for every pump coin tested, and alerts rendered with a truncated mint
+where the name should be. DAS resolves both schemes and supplies the image too.
 
-SOL appears in the feed under two spellings — the system-program sentinel
-`111…111` (native) and the wrapped-SOL mint. Both are baseline; neither is ever
-watched. Coins predating the field entirely (`quote_mint` absent) are treated as
-SOL.
-
-Once a quote's 36h window closes it is recorded as closed, so a later launch
-cannot reopen it — otherwise a quote that stayed popular would restart its own
-window indefinitely.
+Enrichment from the frontend API (market cap, socials, creation time) is strictly
+optional and every alert degrades cleanly without it: when it is unavailable the
+age line is omitted rather than faked, and name, symbol, image, dev and the
+pairing all still come from the chain.
 
 ### RPC failover
 
@@ -538,19 +550,23 @@ quote as newly added the moment the node recovered.
 
 ### Naming a new quote
 
-Metaplex metadata is read **from the chain first**, with an indexer (Jupiter)
-only as fallback. A stock quote is interesting on the day it lists, which is
-exactly when a third-party token list is least likely to know about it — whereas
-its metadata account exists from mint.
+Same order as above — DAS, then Metaplex, then Jupiter as a last resort. Reading
+the chain before an indexer is deliberate: a stock quote is interesting on the
+day it lists, which is exactly when a third-party token list is least likely to
+know about it.
 
 ### Known limitations
 
 - **Window state is in-memory.** A redeploy mid-window loses the open watch and
   the launch cursor. Same as every other platform here; noted rather than fixed.
 - **No stock quote has ever been listed**, so the launch half of this feed has
-  been verified against USDC-quoted coins (which do exist and flow through the
-  same path) and against a fixture using the real NVIDIA xStock mint — not
-  against a live listing.
+  been verified against USDC-quoted coins — 158 real bonding curves enumerated,
+  resolved to mints and rendered as alerts — and against a fixture using the real
+  NVIDIA xStock mint. Not against a live listing.
+- **Creation time depends on the frontend API**, which is currently blocked from
+  at least one of our egress addresses. When it is unavailable the alert omits
+  the age line, and launch ordering within a batch falls back to enumeration
+  order rather than true launch order.
 
 ---
 
@@ -789,14 +805,6 @@ and the deploy transactions here carry zero token transfers.
 ---
 
 ## 13. Open items
-
-- **The Helius account is over quota.** Every request returns HTTP 429 *"max
-  usage reached"*. Pump.fun's reads fall back to the public Solana endpoint and
-  are unaffected (§7), but the heavier Helius-only consumers — StonkFun mint
-  detection and the enhanced-transaction readers — have no such fallback and are
-  degraded until the plan is topped up. `HELIUS_RPC_URL` is also set to a
-  malformed value ending in `api-key=` with no key; the code already ignores it
-  in favour of `HELIUS_API_KEY`, so this is untidy rather than broken.
 
 - **Tokenized stocks are in `ath_tokens`.** NVDA and SPCX qualify on market cap
   but are tokenized equities, not launched coins — the same category as the

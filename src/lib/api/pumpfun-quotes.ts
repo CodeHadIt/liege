@@ -96,6 +96,38 @@ function rpcEndpoints(): string[] {
 }
 
 /**
+ * Generic Solana RPC call with endpoint failover.
+ *
+ * Returns `{ ok: false }` when no endpoint could answer, so callers can tell an
+ * outage from a legitimate empty result.
+ */
+async function rpc<T>(
+  method: string,
+  // Positional array for core JSON-RPC methods; named object for the DAS
+  // methods (getAsset), which reject the array form.
+  params: unknown
+): Promise<{ ok: true; result: T } | { ok: false }> {
+  for (const endpoint of rpcEndpoints()) {
+    await rateLimit("helius");
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      });
+      // Rate limited or over quota — try the next endpoint rather than give up.
+      if (!res.ok) continue;
+      const json = await res.json();
+      if (json?.error) continue;
+      return { ok: true, result: json?.result as T };
+    } catch {
+      continue;
+    }
+  }
+  return { ok: false };
+}
+
+/**
  * Raw account data.
  *
  * Returns null only when no endpoint could answer. An account that genuinely
@@ -104,33 +136,13 @@ function rpcEndpoints(): string[] {
  * through to the next naming source.
  */
 async function getAccountData(pubkey: string): Promise<Buffer | null> {
-  for (const endpoint of rpcEndpoints()) {
-    await rateLimit("helius");
-    try {
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "getAccountInfo",
-          params: [pubkey, { encoding: "base64" }],
-        }),
-      });
-      // Rate limited or over quota — try the next endpoint rather than give up.
-      if (!res.ok) continue;
-      const json = await res.json();
-      if (json?.error) continue;
-      const value = json?.result?.value;
-      // A successful response with no account is an answer, not a failure.
-      if (!value) return null;
-      if (!value?.data?.[0]) return null;
-      return Buffer.from(value.data[0], "base64");
-    } catch {
-      continue;
-    }
-  }
-  return null;
+  const res = await rpc<{ value?: { data?: string[] } }>("getAccountInfo", [
+    pubkey,
+    { encoding: "base64" },
+  ]);
+  if (!res.ok) return null;
+  const data = res.result?.value?.data?.[0];
+  return data ? Buffer.from(data, "base64") : null;
 }
 
 /**
@@ -186,6 +198,9 @@ export async function fetchQuoteMintMeta(mint: string): Promise<QuoteMintMeta> {
   const known = KNOWN_SYMBOLS[mint];
   if (known) return { mint, ...known };
 
+  const das = await fetchDasMeta(mint);
+  if (das) return { mint, symbol: das.symbol, name: das.name };
+
   const onchain = await fetchMetaplexMeta(mint);
   if (onchain) return { mint, ...onchain };
 
@@ -194,6 +209,37 @@ export async function fetchQuoteMintMeta(mint: string): Promise<QuoteMintMeta> {
 
   const short = `${mint.slice(0, 4)}…${mint.slice(-4)}`;
   return { mint, symbol: short, name: short };
+}
+
+/**
+ * Token metadata via Helius DAS.
+ *
+ * This is the primary source, ahead of Metaplex, because pump.fun mints under
+ * **Token-2022 and stores metadata in the mint's own metadata extension** rather
+ * than in a Metaplex metadata account. Reading Metaplex first returned nothing
+ * for every pump coin tested, so alerts rendered with a truncated mint where the
+ * name should be. DAS resolves both schemes and also yields the image.
+ */
+async function fetchDasMeta(
+  mint: string
+): Promise<{ symbol: string; name: string; imageUrl: string | null } | null> {
+  const res = await rpc<{
+    content?: {
+      metadata?: { name?: string; symbol?: string };
+      links?: { image?: string };
+      files?: Array<{ uri?: string }>;
+    };
+  }>("getAsset", { id: mint });
+  if (!res.ok) return null;
+  const content = res.result?.content;
+  const name = content?.metadata?.name?.trim();
+  const symbol = content?.metadata?.symbol?.trim();
+  if (!name && !symbol) return null;
+  return {
+    symbol: symbol || name || "?",
+    name: name || symbol || "?",
+    imageUrl: content?.links?.image ?? content?.files?.[0]?.uri ?? null,
+  };
 }
 
 async function fetchMetaplexMeta(mint: string): Promise<{ symbol: string; name: string } | null> {
@@ -355,4 +401,165 @@ function normaliseCoin(c: Record<string, unknown>): PumpCoin {
 /** True when a coin's quote is one of the assets we're watching. */
 export function coinQuoteMint(coin: PumpCoin): string {
   return coin.quoteMint ?? SOL_SENTINEL;
+}
+
+// ── On-chain launch detection ────────────────────────────────────────────────
+//
+// The frontend API is a convenience, not a foundation: it sits behind a WAF and
+// will answer 403 to an address it dislikes (observed — a burst of catalog
+// requests got this machine blocked outright, and the block persisted). Basing
+// the only detection path on an endpoint that can lock us out with no warning
+// and no error we can act on is not acceptable for a feed whose whole job is to
+// not miss a launch.
+//
+// Every pump.fun coin has a BondingCurve account owned by the pump program, and
+// `quote_mint` sits at a FIXED offset inside it — so one memcmp-filtered query
+// returns exactly the coins launched against a given quote and nothing else.
+// That is authoritative, served by our own RPC plan, and complete: it returns
+// every curve for the quote, including ones created before we noticed the quote
+// existed. There is no detection gap to reason about at all.
+//
+// Layout, from the on-chain IDL (offsets after the 8-byte discriminator):
+//
+//   @48  complete    bool
+//   @49  creator     pubkey
+//   @83  quote_mint  pubkey
+//   =115 total size
+
+/** Byte offset of BondingCurve.quote_mint. */
+export const CURVE_QUOTE_MINT_OFFSET = 83;
+/** Total size of a BondingCurve account, used to exclude other account types. */
+export const CURVE_ACCOUNT_SIZE = 115;
+
+const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+
+export interface PumpCurve {
+  curve: string;
+  creator: string;
+  complete: boolean;
+}
+
+interface GpaAccount {
+  pubkey: string;
+  account: { data: string[] };
+}
+
+/**
+ * Every bonding curve launched against a given quote mint.
+ *
+ * Uses `getProgramAccountsV2`: the pump program has ~10M accounts and plain
+ * `getProgramAccounts` is refused outright for it, even with filters. V2 applies
+ * the filters and pages the result.
+ *
+ * Returns null on failure so a caller can hold state rather than read an outage
+ * as "nothing has launched".
+ */
+export async function fetchCurvesForQuote(quoteMint: string): Promise<PumpCurve[] | null> {
+  const { PublicKey } = await import("@solana/web3.js");
+  const out: PumpCurve[] = [];
+  let paginationKey: string | undefined;
+  // Bounded so a quote that somehow attracts thousands of launches can't turn
+  // one poll into an unbounded crawl; far above MAX_LAUNCHES_PER_WINDOW.
+  for (let page = 0; page < 10; page++) {
+    const res = await rpc<{ accounts?: GpaAccount[]; paginationKey?: string } | GpaAccount[]>(
+      "getProgramAccountsV2",
+      [
+        PUMP_PROGRAM_ID,
+        {
+          encoding: "base64",
+          limit: 100,
+          ...(paginationKey ? { paginationKey } : {}),
+          filters: [
+            { dataSize: CURVE_ACCOUNT_SIZE },
+            { memcmp: { offset: CURVE_QUOTE_MINT_OFFSET, bytes: quoteMint } },
+          ],
+        },
+      ]
+    );
+    if (!res.ok) return out.length > 0 ? out : null;
+
+    const body = res.result;
+    const accounts: GpaAccount[] = Array.isArray(body) ? body : (body?.accounts ?? []);
+    for (const a of accounts) {
+      try {
+        const data = Buffer.from(a.account.data[0], "base64");
+        if (data.length < CURVE_ACCOUNT_SIZE) continue;
+        out.push({
+          curve: a.pubkey,
+          creator: new PublicKey(data.subarray(49, 81)).toBase58(),
+          complete: data[48] === 1,
+        });
+      } catch {
+        continue;
+      }
+    }
+    paginationKey = Array.isArray(body) ? undefined : body?.paginationKey;
+    if (!paginationKey || accounts.length === 0) break;
+  }
+  return out;
+}
+
+/**
+ * The token a bonding curve was created for.
+ *
+ * BondingCurve carries no mint field and its PDA derivation is one-way, so the
+ * link is recovered from the token account the curve owns — the curve holds the
+ * coin's supply. Pump.fun mints under Token-2022, with the original token
+ * program tried as a fallback for older coins.
+ */
+export async function resolveCurveMint(curve: string): Promise<string | null> {
+  for (const programId of [TOKEN_2022_PROGRAM, TOKEN_PROGRAM]) {
+    const res = await rpc<{
+      value?: Array<{ account: { data: { parsed: { info: { mint?: string } } } } }>;
+    }>("getTokenAccountsByOwner", [curve, { programId }, { encoding: "jsonParsed" }]);
+    if (!res.ok) continue;
+    const mint = res.result?.value?.[0]?.account?.data?.parsed?.info?.mint;
+    if (mint) return mint;
+  }
+  return null;
+}
+
+/**
+ * Name and picture a launched coin from the chain alone.
+ *
+ * DAS first (pump.fun uses Token-2022 metadata extensions, which Metaplex
+ * reads miss entirely), Metaplex second for anything older.
+ */
+export async function fetchTokenMeta(
+  mint: string
+): Promise<{ symbol: string; name: string; imageUrl: string | null }> {
+  const das = await fetchDasMeta(mint);
+  if (das) return das;
+  const mpl = await fetchMetaplexMeta(mint);
+  if (mpl) return { ...mpl, imageUrl: null };
+  const short = `${mint.slice(0, 4)}…${mint.slice(-4)}`;
+  return { symbol: short, name: short, imageUrl: null };
+}
+
+/**
+ * Best-effort enrichment for a single coin from the frontend API.
+ *
+ * Strictly optional: returns null when the API is unreachable or blocked, and
+ * every caller must work without it. It only ever adds image, socials, market
+ * cap and creation time on top of what the chain already established.
+ */
+export async function fetchPumpCoin(mint: string): Promise<PumpCoin | null> {
+  await rateLimit("pumpfun");
+  try {
+    const res = await fetch(`${PUMP_API}/coins/${mint}`, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36",
+        Origin: "https://pump.fun",
+        Referer: "https://pump.fun/",
+      },
+    });
+    if (!res.ok) return null;
+    const raw = await res.json();
+    if (!raw || typeof raw !== "object" || !("mint" in raw)) return null;
+    return normaliseCoin(raw as Record<string, unknown>);
+  } catch {
+    return null;
+  }
 }

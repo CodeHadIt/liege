@@ -109,15 +109,43 @@ interface HeliusTx {
 /**
  * Fetch the most recent StonkFun token creations (newest first) by reading the
  * deployer's TOKEN_MINT transactions from the Helius enhanced API.
+ *
+ * The `type=TOKEN_MINT` server-side filter is deliberately NOT used, despite
+ * being the obvious way to ask this question. Helius answers that filter with
+ * **HTTP 404** and `{"error":"Failed to find events within the search period"}`
+ * whenever it can't fill the requested count inside its scan window — which for
+ * this deployer is most of the time, since mints are sparse against a stream of
+ * transfers and swaps. Combined with a `!res.ok` guard that returned an empty
+ * array, an ordinary 404 was indistinguishable from "nothing launched", so the
+ * feed went quiet at random. Observed directly: one call 404'd while the very
+ * next unfiltered call showed a real mint.
+ *
+ * Fetching unfiltered and filtering here is deterministic — the raw endpoint
+ * always answers 200.
+ *
+ * The trade-off is lookback depth. Measured at **10.4 tx/min** for this
+ * deployer, 100 transactions covers roughly **10 minutes**, where the type
+ * filter reached back hours. That is still large headroom for a 30s poll, and
+ * `MAX_ALERT_AGE_SECONDS` (15 min) means anything older wouldn't be alerted on
+ * anyway — but it does mean an outage longer than ~10 minutes can drop a launch
+ * rather than catching up on restart.
+ *
+ * Note that returning zero here is usually correct, not a failure: genuine
+ * launches are sparse (one in the last 1,200 transactions when this was
+ * measured), while the deployer mints amount=1 utility tokens constantly. The
+ * 1B supply check below is what separates them.
  */
 export async function fetchRecentCreations(limit = 25): Promise<StonkFunCreation[]> {
   const key = heliusKey();
   if (!key) return [];
   await rateLimit("helius");
   try {
+    // `limit` is the number of CREATIONS wanted; the raw stream needs a much
+    // wider scan than that to contain them.
+    const scan = Math.min(100, Math.max(limit * 4, 100));
     const res = await fetch(
       `https://api.helius.xyz/v0/addresses/${STONKFUN_DEPLOYER}/transactions` +
-        `?api-key=${key}&type=TOKEN_MINT&limit=${limit}`,
+        `?api-key=${key}&limit=${scan}`,
       { headers: { Accept: "application/json" } }
     );
     if (!res.ok) return [];
@@ -147,6 +175,7 @@ export async function fetchRecentCreations(limit = 25): Promise<StonkFunCreation
       const symbol = m?.[1]?.trim() || "?";
 
       out.push({ mint, symbol, signature: tx.signature, timestamp: tx.timestamp ?? 0 });
+      if (out.length >= limit) break;
     }
     return out;
   } catch {

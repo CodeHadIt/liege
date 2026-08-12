@@ -14,8 +14,10 @@
 import {
   fetchWhitelistedQuoteMints,
   fetchQuoteMintMeta,
-  fetchRecentPumpCoins,
-  coinQuoteMint,
+  fetchCurvesForQuote,
+  resolveCurveMint,
+  fetchTokenMeta,
+  fetchPumpCoin,
   BASELINE_QUOTE_MINTS,
   PUMP_CREATE_URL,
   type PumpCoin,
@@ -159,22 +161,8 @@ export async function pollPumpFunQuoteMints(): Promise<void> {
 
 // ── Launches inside the window ───────────────────────────────────────────────
 
-/**
- * Newest creation timestamp already processed, so a pass only considers coins
- * minted since the last one.
- */
-let lastSeenCreatedAt = 0;
-let launchesSeeded = false;
-
-/** Mints already reported, guarding against a timestamp tie at the cursor. */
-const alertedMints = new Set<string>();
-
-/**
- * Never report a launch older than this. A coin that predates the window's
- * opening isn't a response to the new quote, and after an outage the feed
- * should resume rather than replay.
- */
-const MAX_ALERT_AGE_MS = 30 * 60 * 1000;
+/** Bonding curves already reported, so a re-enumeration doesn't repeat them. */
+const reportedCurves = new Set<string>();
 
 export function formatPumpLaunchAlert(
   q: QuoteMintMeta,
@@ -211,12 +199,17 @@ export function formatPumpLaunchAlert(
 
   lines.push("");
   lines.push(`<code>${escapeHtml(coin.mint)}</code>`);
-  const footer = [
-    `🕐 ${escapeHtml(formatTimeAgo(coin.createdTimestamp))}`,
-    `🔍 <a href="${solscanToken(coin.mint)}">Solscan</a>`,
-    `📈 <a href="https://pump.fun/coin/${escapeHtml(coin.mint)}">Pump.fun</a>`,
-  ];
+  const footer: string[] = [];
+  // Creation time comes from the frontend API, which may be unreachable — the
+  // chain gives us the launch but not when it happened. Omit rather than print
+  // a bogus age.
+  if (coin.createdTimestamp > 0) footer.push(`🕐 ${escapeHtml(formatTimeAgo(coin.createdTimestamp))}`);
+  footer.push(`🔍 <a href="${solscanToken(coin.mint)}">Solscan</a>`);
+  footer.push(`📈 <a href="https://pump.fun/coin/${escapeHtml(coin.mint)}">Pump.fun</a>`);
   lines.push(footer.join("  ·  "));
+  if (coin.creator) {
+    lines.push(`👤 Dev: <code>${escapeHtml(coin.creator)}</code>`);
+  }
   return lines.join("\n");
 }
 
@@ -246,26 +239,25 @@ async function sendLaunchAlert(
 }
 
 /**
- * One launch pass: report new coins paired against anything that isn't a
- * baseline asset.
+ * One launch pass: enumerate, on-chain, every coin launched against each quote
+ * we're watching.
  *
- * The filter is on the QUOTE, not on a list of quotes we happen to be watching,
- * and that difference is the whole point. Pump.fun lets you launch against SOL
- * (native or wrapped) and stablecoins; a coin quoted in anything else is by
- * definition paired to a newly-listed asset, and is interesting on its own
- * evidence — whether or not the catalog poller has noticed the listing yet.
+ * Detection is a memcmp query against `BondingCurve.quote_mint`, not a scan of
+ * pump.fun's recent-creations feed. That feed was the original design and it had
+ * to go: it sits behind a WAF that answered 403 to this machine after a burst of
+ * requests, and the block persisted. A feed whose entire job is to not miss a
+ * launch cannot have its only detection path behind something that can lock us
+ * out silently.
  *
- * The earlier design only reported launches against an already-open window,
- * which made this feed a strict dependent of the catalog read. That lost the
- * launches in the gap between a listing and our seeing it — and the first coin
- * against a new stock quote is the one worth having. Filtering on the quote
- * removes the dependency: the two paths now discover the same event
- * independently, and whichever gets there first announces it.
+ * The on-chain query is strictly better on the property that matters. It returns
+ * **every** curve for the quote — including ones created before we noticed the
+ * quote existed — so there is no detection gap to reason about, where the HTTP
+ * feed could only ever show a rolling window of recent creations.
  *
- * The cost of running unconditionally is one request a minute, and it is
- * near-pure signal: across 1,230 unique coins sampled over four orderings,
- * every single one was quoted in SOL, wrapped SOL or USDC. Until a stock is
- * listed this filter matches nothing.
+ * It is also why keying off the watched quotes is complete rather than a
+ * dependency: the pump program *enforces* the whitelist, so a coin's quote is
+ * necessarily one of the whitelisted mints. Enumerating the non-baseline ones
+ * therefore covers every launch that could interest us, by construction.
  */
 export async function pollPumpFunLaunches(): Promise<void> {
   const now = Date.now();
@@ -278,65 +270,92 @@ export async function pollPumpFunLaunches(): Promise<void> {
       );
     }
   }
+  // Nothing whitelisted beyond the baseline means nothing to enumerate. Unlike
+  // the HTTP design this costs no requests at all while idle, which is the
+  // normal state.
+  if (watchedQuotes.size === 0) return;
 
-  // One page spans roughly three minutes of creations at the observed rate. If
-  // the cursor is further back than that — a delayed or failed pass — pull more
-  // pages so the gap is actually covered instead of being silently skipped.
-  const gapMs = lastSeenCreatedAt > 0 ? now - lastSeenCreatedAt : 0;
-  const pages = Math.min(4, Math.max(1, Math.ceil(gapMs / (3 * 60 * 1000))));
-
-  const coins = await fetchRecentPumpCoins(pages);
-  // null is a fetch failure, not a quiet minute — hold the cursor and retry.
-  if (coins === null) return;
-  if (coins.length === 0) return;
-
-  const newest = Math.max(...coins.map((c) => c.createdTimestamp));
-
-  if (!launchesSeeded) {
-    // Start from the present, matching every other feed's silent first pass, so
-    // a redeploy can't replay recent launches into the channel.
-    lastSeenCreatedAt = newest;
-    launchesSeeded = true;
-    console.log(`[pumpfun] seeded launch cursor at ${new Date(newest).toISOString()}`);
-    return;
-  }
-
-  // Oldest-first, so ordinals follow launch order rather than page order.
-  const fresh = coins
-    .filter((c) => c.createdTimestamp > lastSeenCreatedAt && !alertedMints.has(c.mint))
-    .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
-
-  for (const coin of fresh) {
-    const quoteMint = coinQuoteMint(coin);
-    // Baseline-quoted coins are the entire firehose and are dropped here,
-    // before any metadata lookup or window bookkeeping.
-    if (BASELINE_QUOTE_MINTS.has(quoteMint)) continue;
-    if (coin.createdTimestamp > 0 && now - coin.createdTimestamp > MAX_ALERT_AGE_MS) continue;
-
-    // Opens the window (and announces the quote) if the catalog hasn't already.
-    const w = await ensureQuoteWatched(quoteMint, true);
-    if (!w) continue; // window already closed for this quote
-
-    if (w.launchCount >= MAX_LAUNCHES_PER_WINDOW) {
-      if (w.launchCount === MAX_LAUNCHES_PER_WINDOW) {
-        w.launchCount++;
-        console.log(`[pumpfun] ${w.quote.symbol} hit the ${MAX_LAUNCHES_PER_WINDOW}-launch cap — muting`);
-      }
+  for (const [quoteMint, w] of watchedQuotes) {
+    const curves = await fetchCurvesForQuote(quoteMint);
+    // null is an RPC failure, not an empty result — hold and retry next pass.
+    if (curves === null) {
+      console.error(`[pumpfun] curve enumeration failed for ${w.quote.symbol} — holding`);
       continue;
     }
 
-    w.launchCount++;
-    alertedMints.add(coin.mint);
-    try {
-      await broadcastAlert((chatId) => sendLaunchAlert(chatId, w.quote, coin, w.launchCount));
-      console.log(`[pumpfun] alerted launch #${w.launchCount} ${coin.symbol} vs ${w.quote.symbol}`);
-    } catch (err) {
-      console.error("[pumpfun] failed to send launch alert:", err);
+    const fresh = curves.filter((c) => !reportedCurves.has(c.curve));
+    if (fresh.length === 0) continue;
+
+    // Resolve each curve to its coin, enriching from the frontend API where it
+    // is reachable. Enrichment is optional by design — the chain already
+    // supplies mint, creator and the pairing, and everything below degrades to
+    // Metaplex metadata when the API is blocked.
+    const resolved: Array<{ curve: string; coin: PumpCoin }> = [];
+    for (const c of fresh) {
+      // Mark before alerting: a curve that fails enrichment must not be retried
+      // forever, and a partial failure must never replay an alert.
+      reportedCurves.add(c.curve);
+      const mint = await resolveCurveMint(c.curve);
+      if (!mint) continue;
+
+      const enriched = await fetchPumpCoin(mint);
+      if (enriched) {
+        resolved.push({ curve: c.curve, coin: enriched });
+        continue;
+      }
+      const meta = await fetchTokenMeta(mint);
+      resolved.push({
+        curve: c.curve,
+        coin: {
+          mint,
+          name: meta.name,
+          symbol: meta.symbol,
+          quoteMint,
+          createdTimestamp: 0, // unknown without the API; the alert omits the age
+          creator: c.creator,
+          imageUrl: meta.imageUrl,
+          website: null,
+          twitter: null,
+          telegram: null,
+          marketCapUsd: null,
+          bondingCurve: c.curve,
+        },
+      });
+    }
+
+    // Oldest-first where creation times are known, so ordinals follow launch
+    // order. Coins with no timestamp keep enumeration order, after the dated
+    // ones — there is nothing better to sort them by.
+    resolved.sort((a, b) => {
+      const ta = a.coin.createdTimestamp || Number.MAX_SAFE_INTEGER;
+      const tb = b.coin.createdTimestamp || Number.MAX_SAFE_INTEGER;
+      return ta - tb;
+    });
+
+    for (const { coin } of resolved) {
+      // A launch older than the window itself predates the listing this feed is
+      // about, so it isn't news even on a first enumeration.
+      if (coin.createdTimestamp > 0 && now - coin.createdTimestamp > LAUNCH_WINDOW_MS) continue;
+
+      if (w.launchCount >= MAX_LAUNCHES_PER_WINDOW) {
+        if (w.launchCount === MAX_LAUNCHES_PER_WINDOW) {
+          w.launchCount++;
+          console.log(`[pumpfun] ${w.quote.symbol} hit the ${MAX_LAUNCHES_PER_WINDOW}-launch cap — muting`);
+        }
+        continue;
+      }
+
+      w.launchCount++;
+      try {
+        await broadcastAlert((chatId) => sendLaunchAlert(chatId, w.quote, coin, w.launchCount));
+        console.log(`[pumpfun] alerted launch #${w.launchCount} ${coin.symbol} vs ${w.quote.symbol}`);
+      } catch (err) {
+        console.error("[pumpfun] failed to send launch alert:", err);
+      }
     }
   }
 
-  lastSeenCreatedAt = Math.max(lastSeenCreatedAt, newest);
-  if (alertedMints.size > 1000) alertedMints.clear();
+  if (reportedCurves.size > 5000) reportedCurves.clear();
 }
 
 // ── Manual tests ─────────────────────────────────────────────────────────────
@@ -351,17 +370,47 @@ export async function sendPumpQuoteTestPing(chatId: string): Promise<boolean> {
 }
 
 /**
- * Treat a recent coin as the first launch against its own quote so the launch
- * format can be checked without waiting for a listing.
+ * Send a launch alert built from a REAL coin, through the same on-chain path the
+ * live watcher uses, so the format can be checked without waiting for a listing.
+ *
+ * `quoteMint` defaults to USDC — the only non-SOL quote pump.fun has whitelisted
+ * — because it is the one quote with real curves to enumerate today. The
+ * resulting alert is genuine in every respect except that USDC is a baseline
+ * asset the live feed would not open a window for.
  */
-export async function sendPumpLaunchTestPing(chatId: string, symbol?: string): Promise<boolean> {
-  const coins = await fetchRecentPumpCoins(1);
-  if (!coins || coins.length === 0) return false;
-  const coin = symbol
-    ? coins.find((c) => c.symbol.toLowerCase() === symbol.toLowerCase())
-    : coins[0];
-  if (!coin) return false;
-  const meta = await fetchQuoteMintMeta(coinQuoteMint(coin));
-  await sendLaunchAlert(chatId, meta, coin, 1);
-  return true;
+export async function sendPumpLaunchTestPing(
+  chatId: string,
+  quoteMint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  launchNumber = 1
+): Promise<boolean> {
+  const curves = await fetchCurvesForQuote(quoteMint);
+  if (!curves || curves.length === 0) return false;
+  const quoteMeta = await fetchQuoteMintMeta(quoteMint);
+
+  for (const c of curves) {
+    const mint = await resolveCurveMint(c.curve);
+    if (!mint) continue;
+    const enriched = await fetchPumpCoin(mint);
+    const tokenMeta = await fetchTokenMeta(mint);
+    // Prefer a coin whose metadata actually resolved, so the sample shows a real
+    // name rather than the truncated-mint fallback.
+    if (!enriched && tokenMeta.name.includes("\u2026")) continue;
+    const coin: PumpCoin = enriched ?? {
+      mint,
+      name: tokenMeta.name,
+      symbol: tokenMeta.symbol,
+      quoteMint,
+      createdTimestamp: 0,
+      creator: c.creator,
+      imageUrl: tokenMeta.imageUrl,
+      website: null,
+      twitter: null,
+      telegram: null,
+      marketCapUsd: null,
+      bondingCurve: c.curve,
+    };
+    await sendLaunchAlert(chatId, quoteMeta, coin, launchNumber);
+    return true;
+  }
+  return false;
 }

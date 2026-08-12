@@ -149,10 +149,11 @@ export async function register() {
       );
     }, PUMPFUN_QUOTE_INTERVAL);
 
-    // Launches against a newly-added Pump.fun quote. Pump.fun's API won't filter
-    // by quote mint, so this pulls the recent-creations feed and matches locally
-    // — but only while a window is open, which is the rare case. With none open
-    // the pass returns before making any request at all.
+    // Launches against a newly-added Pump.fun quote, detected on-chain: one
+    // memcmp query against BondingCurve.quote_mint returns every coin launched
+    // against a watched quote. This replaced a scan of pump.fun's HTTP creation
+    // feed, which sits behind a WAF that blocked us outright after a burst of
+    // requests. With no window open the pass makes no request at all.
     console.log("[instrumentation] Starting Pump.fun launch-window watcher (every 60s)");
     const PUMPFUN_LAUNCH_INTERVAL = 60_000;
     pollPumpFunLaunches().catch((err) =>
