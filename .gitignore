@@ -50,3 +50,10 @@ FEATURES.md
 data/rh-candidates.json
 data/rh-traders-cache.json
 data/rh-contract-flags.json
+
+# Tracked-wallet export for external terminals — a personal watchlist,
+# regenerable at any time via scripts/export-tracked-wallets.ts.
+data/tracked-wallets.json
+data/tracked-wallets.jsonc
+data/tracked-devs.json
+data/tracked-devs.jsonc

@@ -12,7 +12,13 @@ import { config as loadEnv } from "dotenv";
 loadEnv({ path: ".env.local" });
 
 import { readFileSync } from "fs";
-import { buildLabel, dedupeLabels, upsertAlphaWallets, type AlphaWallet } from "../src/lib/api/alpha-wallets";
+import {
+  buildLabel,
+  dedupeLabels,
+  upsertAlphaWallets,
+  MIN_COMBINED_PNL_USD,
+  type AlphaWallet,
+} from "../src/lib/api/alpha-wallets";
 
 const SOURCE = "rh-ath-2m-60d";
 const CHAIN = "rh";
@@ -46,11 +52,16 @@ async function main() {
     isActive: true,
   }));
 
-  console.log(`alpha wallets from ${SOURCE}: ${wallets.length}\n`);
-  for (const w of wallets.slice(0, 15)) {
+  // Same bar as the live promotion path — the seed must not be able to
+  // introduce wallets the daily scan would reject.
+  const belowBar = wallets.filter((w) => (w.totalPnlUsd ?? 0) < MIN_COMBINED_PNL_USD);
+  const qualified = wallets.filter((w) => (w.totalPnlUsd ?? 0) >= MIN_COMBINED_PNL_USD);
+  console.log(`below $${MIN_COMBINED_PNL_USD.toLocaleString()} combined PnL, skipped: ${belowBar.length}`);
+  console.log(`alpha wallets from ${SOURCE}: ${qualified.length}\n`);
+  for (const w of qualified.slice(0, 15)) {
     console.log(`  ${w.label.padEnd(34)} ${w.address}  ${w.tokenCount}x  ${w.tokens.slice(0, 4).join(",")}`);
   }
-  if (wallets.length > 15) console.log(`  … ${wallets.length - 15} more`);
+  if (qualified.length > 15) console.log(`  … ${qualified.length - 15} more`);
 
   const dupes = labels.filter((l, i) => labels.indexOf(l) !== i);
   console.log(`\nlabel collisions resolved: ${dupes.length}`);
@@ -59,7 +70,7 @@ async function main() {
     console.log(`\nPREVIEW ONLY — re-run with --write to upsert into Supabase.`);
     return;
   }
-  const n = await upsertAlphaWallets(wallets);
+  const n = await upsertAlphaWallets(qualified);
   console.log(`\nupserted ${n} wallets into alpha_wallets`);
 }
 

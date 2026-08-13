@@ -12,6 +12,20 @@ export const CHAIN_PREFIX: Record<string, string> = {
   ethereum: "ETH",
 };
 
+/**
+ * Minimum COMBINED realised PnL, across a wallet's qualifying $2M runners, for
+ * it to count as alpha.
+ *
+ * Appearing in the top 30 of two runners is easy to do with small size — the
+ * list was full of wallets whose two appearances together made a few hundred
+ * dollars, which says nothing about skill or conviction. Requiring $20k of
+ * combined PnL keeps the list to wallets that actually committed to the trade.
+ *
+ * Enforced on EVERY write path (the daily scan's promotion and the seed script),
+ * so a wallet can never enter the table below the bar.
+ */
+export const MIN_COMBINED_PNL_USD = 20_000;
+
 export interface AlphaWallet {
   id?: string;
   label: string;

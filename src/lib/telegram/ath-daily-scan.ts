@@ -18,6 +18,7 @@ import {
 import {
   buildLabel,
   upsertAlphaWallets,
+  MIN_COMBINED_PNL_USD,
   loadAlphaWallets,
   compactPnl,
   type AlphaWallet,
@@ -358,15 +359,29 @@ export async function runAthScan(opts: { windowHours?: number; dryRun?: boolean 
       continue;
     }
 
+    // Already on the ATH list — never report or re-capture it, whatever its
+    // peak date says.
+    //
+    // This used to be `athAt < cutoff && known.has(...)`, which was dead code:
+    // the plain `athAt < cutoff` check below already skipped everything older
+    // than the window, so the `known` half never decided anything. A token
+    // recorded yesterday whose peak was STILL inside the rolling 24h window
+    // therefore sailed through and was re-processed and re-announced the next
+    // night — HMM and STONKBROKER both went out twice that way.
+    //
+    // Checked before resolvePeak() so a known token costs no price history.
+    if (known.has(c.tokenAddress.toLowerCase())) {
+      console.log(`[ath-scan] skipping ${c.symbol} — already on the ATH list`);
+      continue;
+    }
+
     const peak = await resolvePeak(c);
     if (!peak || peak.athMcUsd < ATH_THRESHOLD_USD) continue;
     if (peak.athMcUsd > PLAUSIBLE_MAX_ATH_USD) {
       rejected.push(`${c.symbol || c.tokenAddress} ($${Math.round(peak.athMcUsd).toLocaleString()})`);
       continue;
     }
-    // Only tokens that PEAKED inside the window — an old runner still trading
-    // above $2M is not news, and was recorded when it first qualified.
-    if (new Date(peak.athAt).getTime() < cutoff && known.has(c.tokenAddress)) continue;
+    // Only tokens that PEAKED inside the window.
     if (new Date(peak.athAt).getTime() < cutoff) continue;
 
     const { deployer, factory } = await fetchDeployer(c.tokenAddress);
@@ -484,6 +499,15 @@ export async function promoteRepeatTraders(wallets: string[]): Promise<number> {
 
     const list = [...byToken.values()].sort((a, b) => (b.totalPnlUsd ?? 0) - (a.totalPnlUsd ?? 0));
     const totalPnl = list.reduce((s, a) => s + (a.totalPnlUsd ?? 0), 0);
+    // Two top-30 appearances are easy to reach with tiny size; combined PnL is
+    // what separates conviction from noise. Checked before the upsert AND the
+    // ping, so a sub-threshold wallet is never stored or announced.
+    if (totalPnl < MIN_COMBINED_PNL_USD) {
+      console.log(
+        `[ath-scan] skipping ${wallet} — combined PnL ${compactPnl(totalPnl)} below ${compactPnl(MIN_COMBINED_PNL_USD)}`
+      );
+      continue;
+    }
     const invested = list.reduce((s, a) => s + (a.amountInvestedUsd ?? 0), 0);
     const label = buildLabel(
       CHAIN,

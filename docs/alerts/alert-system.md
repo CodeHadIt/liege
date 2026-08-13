@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-12 (pools.fun added)
+**Last updated:** 2026-08-13 ($20k alpha PnL floor; duplicate-ATH-token fix)
 
 ---
 
@@ -831,6 +831,39 @@ The contract guard lives in `ath-tokens.ts` and is shared by all three paths tha
 write to `alpha_wallets`, rather than each carrying its own copy.
 
 ---
+
+### Promotion criteria
+
+A wallet is promoted to alpha only when **both** hold:
+
+| | |
+|---|---|
+| Distinct $2M runners it was a top-30 trader on | **2 or more** |
+| Combined realised PnL across those runners | **≥ $20,000** (`MIN_COMBINED_PNL_USD`) |
+
+The PnL floor was added after the fact and is the more important of the two.
+Two top-30 appearances are easy to reach with tiny size: the list had filled with
+wallets whose two appearances together made a few hundred dollars — one pair of
+tokens accounted for most of them — which says nothing about skill or conviction.
+Applying the bar retroactively removed **40 of 108** wallets.
+
+It is enforced on **every** write path (the daily scan's promotion and
+`scripts/seed-alpha-wallets.ts`) and checked *before* both the upsert and the
+ping, so a wallet under the bar is never stored and never announced.
+`scripts/prune-alpha-wallets.ts` applies it to existing rows; it deletes rather
+than deactivates, and holds back any row with a NULL PnL rather than guessing.
+
+### Already-recorded tokens are never re-reported
+
+A token already in `ath_tokens` is skipped outright — no re-ping, no re-capture,
+no upsert — checked before its price history is resolved.
+
+This was a bug worth recording. The guard used to read
+`athAt < cutoff && known.has(token)`, which never decided anything: the plain
+`athAt < cutoff` check beside it already skipped everything older than the
+window. So a token recorded yesterday whose peak was **still inside** the rolling
+24h window passed straight through and was re-processed and re-announced the
+following night. HMM and STONKBROKER both went out twice that way.
 
 ## 13. Robinhood Chain — alpha deployer alerts
 
