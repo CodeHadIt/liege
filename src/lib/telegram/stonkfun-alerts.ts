@@ -106,7 +106,13 @@ async function sendAlert(chatId: string, details: StonkFunTokenDetails): Promise
 }
 
 /**
- * PAUSED — alerting on every StonkFun launch was too noisy to be useful.
+ * PAUSED, and no longer functional as written.
+ *
+ * It was paused because alerting on every launch was too noisy. It would now
+ * also report nothing at all: it reads fetchRecentCreations, which detects the
+ * 1B-supply TOKEN_MINT signature that StonkFun has stopped producing (see the
+ * launch-watcher notes below). Reviving the every-launch feed means rebuilding
+ * it on fetchStonkFunLaunches, not just re-scheduling this function.
  *
  * The feed now follows the same shape as the Robinhood Chain and BNB Chain
  * watchers: ping when a new pairing asset is ADDED, then ping the FIRST token
@@ -188,17 +194,6 @@ const PINNED_QUOTE_MINTS = new Map<string, string>([
   ["4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", "RAY (Raydium)"],
 ]);
 
-/** Mints already reported, so a launch is announced exactly once. */
-const pinnedSeen = new Set<string>();
-let pinnedSeeded = false;
-
-/**
- * Don't announce a launch older than this even on a fresh seed — the feed spans
- * ~12 hours and replaying half a day of history into the channel on restart
- * would be worse than missing one.
- */
-const PINNED_MAX_AGE_MS = 60 * 60 * 1000;
-
 export function formatPinnedLaunchAlert(l: StonkFunLaunch, launchNumber: number): string {
   const lines: string[] = [];
   lines.push(
@@ -239,64 +234,6 @@ async function sendPinnedAlert(chatId: string, l: StonkFunLaunch, launchNumber: 
 
 /** Running count per pinned quote, for the "#N since tracking began" line. */
 const pinnedCounts = new Map<string, number>();
-
-/**
- * One pass: report every new coin launched against a pinned quote asset.
- *
- * Short-circuits before any request when nothing is pinned, so removing the
- * last entry from PINNED_QUOTE_MINTS silences this entirely.
- */
-export async function pollStonkFunPinnedQuotes(): Promise<void> {
-  if (PINNED_QUOTE_MINTS.size === 0) return;
-
-  const launches = await fetchStonkFunLaunches();
-  // null is a fetch failure, not an empty feed — hold state and retry.
-  if (launches === null) return;
-  if (launches.length === 0) return;
-
-  const pinned = launches.filter((l) => PINNED_QUOTE_MINTS.has(l.quoteMint));
-
-  if (!pinnedSeeded) {
-    for (const l of launches) pinnedSeen.add(l.mint);
-    for (const l of pinned) pinnedCounts.set(l.quoteMint, (pinnedCounts.get(l.quoteMint) ?? 0) + 1);
-    pinnedSeeded = true;
-    console.log(
-      `[stonkfun] pinned-quote seed: ${launches.length} launches recorded, ` +
-        `${pinned.length} against pinned quotes (no alert on backlog)`
-    );
-    return;
-  }
-
-  // Oldest-first so the running count reads in launch order.
-  const fresh = pinned
-    .filter((l) => !pinnedSeen.has(l.mint))
-    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
-
-  const now = Date.now();
-  for (const l of fresh) {
-    pinnedSeen.add(l.mint);
-    const age = now - (Date.parse(l.createdAt) || now);
-    if (age > PINNED_MAX_AGE_MS) {
-      console.log(`[stonkfun] skipping stale pinned launch ${l.symbol} (${Math.round(age / 60000)}m old)`);
-      continue;
-    }
-    const n = (pinnedCounts.get(l.quoteMint) ?? 0) + 1;
-    pinnedCounts.set(l.quoteMint, n);
-    try {
-      await broadcastAlert((chatId) => sendPinnedAlert(chatId, l, n));
-      console.log(`[stonkfun] alerted pinned launch #${n} ${l.symbol} vs ${l.quoteSymbol}`);
-    } catch (err) {
-      console.error("[stonkfun] failed to send pinned launch alert:", err);
-    }
-  }
-
-  // Everything in the feed is recorded so a later page-out can't resurface it.
-  for (const l of launches) pinnedSeen.add(l.mint);
-  if (pinnedSeen.size > 5000) {
-    pinnedSeen.clear();
-    for (const l of launches) pinnedSeen.add(l.mint);
-  }
-}
 
 /** Manual test: render the most recent pinned-quote launch. */
 export async function sendPinnedQuoteTestPing(chatId: string): Promise<boolean> {
@@ -418,31 +355,24 @@ export async function sendQuoteTokenTestPing(chatId: string): Promise<boolean> {
   return true;
 }
 
-// ── First token launched against a newly-added quote ──────────────────────────
-// Same shape as the Robinhood Chain and BNB Chain watchers: once a pairing asset
-// appears, ping the first token actually launched against it, then stop.
+// ── Launches against a watched quote ─────────────────────────────────────────
 //
-// Detection differs from BNB Chain in one way that shapes everything below.
+// Reads StonkFun's own launches feed, which names the quote mint in the same
+// record as the token. That makes the pairing exact and atomic — the same
+// property the BNB Chain watchers get from a bonding-curve event.
 //
-// On BNB Chain the launchpad emits (token, paymentToken) in a single creation
-// event, so a launch and its pair are known together, atomically, at the moment
-// the curve is deployed. StonkFun gives no such event. Its mint IS on-chain and
-// immediate (Helius TOKEN_MINT from the platform deployer), but the pool is
-// seeded in a LATER transaction, so the mint tx names only the new token —
-// verified by probe-stonkfun-pair.ts, which found exactly one mint and no quote
-// in five consecutive launches. Reading the pair back from the token's own
-// history doesn't work either: its early transactions route through SOL and USDC
-// via aggregators, so several "known quote" candidates appear with nothing to
-// distinguish the real one.
+// This replaced a detector built on the deployer's TOKEN_MINT transactions plus
+// deepest-pool pair inference. That approach had stopped working entirely:
+// StonkFun moved its launch mechanism to Raydium SWAP legs, so the 1B-supply
+// TOKEN_MINT signature it keyed on no longer occurs. Measured before the switch:
+// 23 real launches in a 3-hour window, of which the detector saw ZERO, with
+// zero qualifying TOKEN_MINTs in 1,000 deployer transactions. The feed had gone
+// silently dead — it still ran, still logged, and never found anything.
 //
-// So the pair comes from the token's deepest indexed pool, which means it is not
-// known at mint time and arrives some seconds later. Two consequences:
-//   - a creation may need several passes before its pair resolves, hence the
-//     pending queue with bounded retries rather than a single fixed delay;
-//   - pools are NOT indexed in launch order, so resolution order says nothing
-//     about launch order. The queue is therefore drained strictly oldest-first
-//     and stops at the first unresolved creation, so a token can never be
-//     announced as "first" while an older launch's pair is still unknown.
+// The old design also carried a pending queue, bounded resolve retries and an
+// ordering stall, all of which existed only because the quote was unknown at
+// mint time and arrived later from an indexer. With the quote supplied up front,
+// none of that is needed and all of it is gone.
 
 interface WatchedQuote {
   quote: QuoteToken;
@@ -451,15 +381,6 @@ interface WatchedQuote {
 }
 const watchedQuotes = new Map<string, WatchedQuote>(); // key: quote mint
 
-/** Creations seen but not yet matched to a pair, with how many passes we've tried. */
-interface PendingCreation {
-  creation: StonkFunCreation;
-  attempts: number;
-}
-const pending = new Map<string, PendingCreation>(); // key: mint
-// A StonkFun pool is normally indexed within a minute; give it well past that
-// before dropping the creation, but don't hold mints forever.
-const MAX_RESOLVE_ATTEMPTS = 10;
 
 function startQuoteWatch(q: QuoteToken): void {
   if (watchedQuotes.has(q.quoteMint)) return;
@@ -536,7 +457,22 @@ async function sendLaunchAlert(
  * ping any that are the first launch against a quote asset we're watching.
  * Does nothing at all while no quote is being watched.
  */
-export async function pollStonkFunFirstTokens(): Promise<void> {
+/** Launch mints already handled, so each is reported exactly once. */
+const seenLaunches = new Set<string>();
+let launchesSeeded = false;
+
+/**
+ * One poll cycle over StonkFun's launch feed.
+ *
+ * Handles both kinds of watch from a SINGLE fetch:
+ *   - windowed quotes  — a newly-added pairing asset, capped and time-limited
+ *   - pinned quotes    — watched in full by explicit request (see above)
+ *
+ * A quote cannot be both: pinned assets are `custom`, which the category
+ * denylist keeps out of the windowed set. The windowed path is checked first
+ * regardless, so a future overlap would produce one alert, not two.
+ */
+export async function pollStonkFunLaunches(): Promise<void> {
   const now = Date.now();
   for (const [mint, w] of watchedQuotes) {
     if (now - w.openedAt > LAUNCH_WINDOW_MS) {
@@ -547,70 +483,43 @@ export async function pollStonkFunFirstTokens(): Promise<void> {
     }
   }
 
-  // Track creations on EVERY pass, even when nothing is being watched. A new
-  // quote is noticed up to one catalog poll after it appears, and a token can be
-  // launched against it inside that gap. If tracking only began once a watch
-  // existed, that launch would land in the seed set and be discarded — and the
-  // NEXT token would then be announced as the first, which is worse than silence.
-  const creations = await fetchRecentCreations(25);
-  if (creations.length === 0) return;
+  const launches = await fetchStonkFunLaunches();
+  // null is a fetch failure, not an empty feed — hold state rather than advance
+  // a cursor over launches we never saw.
+  if (launches === null) return;
+  if (launches.length === 0) return;
 
-  if (!seeded) {
-    for (const c of creations) seen.add(c.mint);
-    seeded = true;
-    console.log(`[stonkfun] seeded ${seen.size} existing creations (no alert on backlog)`);
+  if (!launchesSeeded) {
+    for (const l of launches) seenLaunches.add(l.mint);
+    for (const l of launches) {
+      if (PINNED_QUOTE_MINTS.has(l.quoteMint)) {
+        pinnedCounts.set(l.quoteMint, (pinnedCounts.get(l.quoteMint) ?? 0) + 1);
+      }
+    }
+    launchesSeeded = true;
+    console.log(`[stonkfun] seeded ${launches.length} launches from the feed (no alert on backlog)`);
     return;
   }
 
-  // Queue anything new, oldest-first, so the true first wins if several land at once.
-  const nowSec = now / 1000;
-  for (const c of creations.filter((x) => !seen.has(x.mint)).reverse()) {
-    seen.add(c.mint);
-    if (c.timestamp > 0 && nowSec - c.timestamp > MAX_ALERT_AGE_SECONDS) continue;
-    pending.set(c.mint, { creation: c, attempts: 0 });
-  }
-  if (seen.size > 1000) {
-    seen.clear();
-    for (const c of creations) seen.add(c.mint);
-  }
+  // Oldest-first so ordinals and running counts follow launch order.
+  const fresh = launches
+    .filter((l) => !seenLaunches.has(l.mint))
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
 
-  // Forget creations that aged out of the alert window, so a quiet spell doesn't
-  // leave a stale queue to resolve when a quote is finally added.
-  for (const [mint, p] of pending) {
-    if (p.creation.timestamp > 0 && nowSec - p.creation.timestamp > MAX_ALERT_AGE_SECONDS) {
-      pending.delete(mint);
+  for (const l of fresh) {
+    seenLaunches.add(l.mint);
+
+    const w = watchedQuotes.get(l.quoteMint);
+    const pinned = !w && PINNED_QUOTE_MINTS.has(l.quoteMint);
+    if (!w && !pinned) continue; // launched against something we're not watching
+
+    const ageMs = now - (Date.parse(l.createdAt) || now);
+    if (ageMs > MAX_ALERT_AGE_SECONDS * 1000) {
+      console.log(`[stonkfun] skipping stale launch ${l.symbol} (${Math.round(ageMs / 60000)}m old)`);
+      continue;
     }
-  }
 
-  // Resolving a pair costs an indexer lookup per creation, so only do it when
-  // there is actually a quote to match against. The queue above still filled, so
-  // the moment a quote IS added its recent launches are already waiting.
-  if (watchedQuotes.size === 0) return;
-
-  const queued = [...pending.values()].sort((a, b) => a.creation.timestamp - b.creation.timestamp);
-  for (const p of queued) {
-    const mint = p.creation.mint;
-    try {
-      const details = await enrichCreation(p.creation);
-      if (!details.pairedAddress) {
-        // Pool not indexed yet. Retry next pass, and give up eventually.
-        if (++p.attempts >= MAX_RESOLVE_ATTEMPTS) {
-          pending.delete(mint);
-          console.log(`[stonkfun] gave up resolving pair for ${details.symbol}`);
-          continue;
-        }
-        // Stop the pass here rather than moving on. Pools are not indexed in
-        // launch order, so a younger creation can resolve first — and if it
-        // pairs against the same quote it would be announced as the "first",
-        // permanently beating a token that actually launched earlier. While an
-        // older pair is unknown, no younger one can be judged first.
-        return;
-      }
-
-      pending.delete(mint); // pair known — this creation is settled either way
-      const w = watchedQuotes.get(details.pairedAddress);
-      if (!w) continue; // paired against something we're not watching
-
+    if (w) {
       // Every launch in the window is reported, not only the first — but a
       // runaway pair is capped rather than allowed to flood the feed.
       if (w.launchCount >= MAX_LAUNCHES_PER_WINDOW) {
@@ -621,28 +530,99 @@ export async function pollStonkFunFirstTokens(): Promise<void> {
         continue;
       }
       w.launchCount++;
-      await broadcastAlert((chatId) => sendLaunchAlert(chatId, w.quote, details, w.launchCount));
-      console.log(`[stonkfun] alerted launch #${w.launchCount} ${details.symbol} vs ${w.quote.symbol}`);
-    } catch (err) {
-      pending.delete(mint);
-      console.error("[stonkfun] first-token check failed:", err);
+      // Market stats and socials are a best-effort extra: the pairing, name and
+      // launch cap already come from the feed, so a token too new to be indexed
+      // is still reported rather than delayed.
+      const details = await enrichLaunch(l);
+      try {
+        await broadcastAlert((chatId) => sendLaunchAlert(chatId, w.quote, details, w.launchCount));
+        console.log(`[stonkfun] alerted launch #${w.launchCount} ${l.symbol} vs ${w.quote.symbol}`);
+      } catch (err) {
+        console.error("[stonkfun] failed to send launch alert:", err);
+      }
+    } else {
+      const n = (pinnedCounts.get(l.quoteMint) ?? 0) + 1;
+      pinnedCounts.set(l.quoteMint, n);
+      try {
+        await broadcastAlert((chatId) => sendPinnedAlert(chatId, l, n));
+        console.log(`[stonkfun] alerted pinned launch #${n} ${l.symbol} vs ${l.quoteSymbol}`);
+      } catch (err) {
+        console.error("[stonkfun] failed to send pinned launch alert:", err);
+      }
     }
+  }
+
+  if (seenLaunches.size > 5000) {
+    seenLaunches.clear();
+    for (const l of launches) seenLaunches.add(l.mint);
   }
 }
 
 /**
- * Manual test: treat the most recent creation as if it were the first launch
- * against its own pair, so the format can be verified without waiting.
+ * Turn a feed launch into the shape the alert formatter expects, adding market
+ * stats and socials where an indexer already knows about the token.
+ *
+ * Never throws and never blocks the alert: the fields that matter (pairing,
+ * name, symbol, mint) come from the feed itself.
+ */
+async function enrichLaunch(l: StonkFunLaunch): Promise<StonkFunTokenDetails> {
+  const base: StonkFunTokenDetails = {
+    mint: l.mint,
+    symbol: l.symbol,
+    signature: "",
+    timestamp: Math.floor((Date.parse(l.createdAt) || Date.now()) / 1000),
+    name: l.name,
+    imageUrl: l.logoUrl,
+    description: null,
+    website: null,
+    twitter: null,
+    telegram: null,
+    pairedSymbol: l.quoteSymbol,
+    pairedAddress: l.quoteMint,
+    dex: l.launchpad,
+    priceUsd: null,
+    liquidityUsd: null,
+    marketCap: l.startMarketCapUsd,
+    pairUrl: null,
+  };
+  try {
+    const d = await enrichCreation({
+      mint: l.mint,
+      symbol: l.symbol,
+      signature: "",
+      timestamp: base.timestamp,
+    });
+    return {
+      ...d,
+      // The feed is authoritative on the pairing; never let a deeper SOL pool
+      // overwrite the quote the token was actually launched against.
+      name: d.name || l.name,
+      symbol: d.symbol || l.symbol,
+      imageUrl: d.imageUrl ?? l.logoUrl,
+      pairedSymbol: l.quoteSymbol,
+      pairedAddress: l.quoteMint,
+      dex: d.dex ?? l.launchpad,
+      marketCap: d.marketCap ?? l.startMarketCapUsd,
+    };
+  } catch {
+    return base;
+  }
+}
+
+/**
+ * Manual test: send the most recent real launch as if it were the first against
+ * its own quote, so the format can be checked without waiting.
+ *
+ * Reads the launches feed, so it exercises the same source the watcher uses.
  */
 export async function sendStonkFunFirstTokenTestPing(chatId: string, symbol?: string): Promise<boolean> {
-  const [creations, quotes] = await Promise.all([fetchRecentCreations(10), fetchQuoteTokens()]);
-  for (const c of creations) {
-    const details = await enrichCreation(c);
-    if (!details.pairedAddress) continue;
-    const quote = quotes.find((q) => q.quoteMint === details.pairedAddress);
+  const [launches, quotes] = await Promise.all([fetchStonkFunLaunches(), fetchQuoteTokens()]);
+  if (!launches) return false;
+  for (const l of launches) {
+    const quote = quotes.find((q) => q.quoteMint === l.quoteMint);
     if (!quote) continue;
     if (symbol && quote.symbol.toLowerCase() !== symbol.toLowerCase()) continue;
-    await sendLaunchAlert(chatId, quote, details, 1);
+    await sendLaunchAlert(chatId, quote, await enrichLaunch(l), 1);
     return true;
   }
   return false;

@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-13 (pinned RAY quote via StonkFun's launches feed)
+**Last updated:** 2026-08-13 (StonkFun launch detection migrated to /api/launches)
 
 ---
 
@@ -96,8 +96,7 @@ be bundled for the Edge runtime.
 | Poller | Interval |
 |---|---|
 | StonkFun quote tokens | 60s |
-| StonkFun first token | 30s |
-| StonkFun pinned quotes ($RAY) | 30s |
+| StonkFun launches (windowed + pinned) | 30s |
 | Pump.fun quote assets | 60s |
 | Pump.fun launch window | 60s |
 | Sunrise stock pairs | 60s |
@@ -127,7 +126,7 @@ reserved for the chain marker and used for nothing else.
 |---|---|
 | Code | [`stonkfun-alerts.ts`](../../src/lib/telegram/stonkfun-alerts.ts), [`api/stonkfun.ts`](../../src/lib/api/stonkfun.ts) |
 | Quote catalog | `GET https://www.stonkfun.xyz/api/quote-tokens` (public JSON) |
-| Launch detection | Helius enhanced API, deployer transactions filtered locally for `TOKEN_MINT` |
+| Launch detection | `GET /api/launches` — StonkFun's own feed, quote mint included |
 | Deployer | `5CEbueQnq1Ym2uSSx2xXds3jQAqT1BDnkA59RZobSPAG` |
 
 StonkFun is custodial: every token is minted by one deployer wallet. A genuine
@@ -225,56 +224,65 @@ outright — it is authoritative, atomic, and needs no retry queue. The main fee
 still uses the mint detector; migrating it is not done and is the obvious next
 improvement.
 
-### Pair resolution — the hard part
+### Launch detection — StonkFun's own launches feed
 
-This feed is architecturally weaker than BNB Chain, and it is worth
-understanding why before trusting a ping.
+`GET /api/launches` returns the last 100 launches and names **`quoteMint` and
+`quoteSymbol` in the same record as the token**. The pairing is therefore exact
+and atomic — the same property the BNB Chain watchers get from a bonding-curve
+event — with no pool lookup, no retry queue and no ordering constraints.
 
-The mint is on-chain and immediate. **The pair is not.** StonkFun seeds the pool
-in a *later* transaction, so the mint transaction names only the new token —
-verified by [`probe-stonkfun-pair.ts`](../../scripts/probe-stonkfun-pair.ts),
-which found exactly one mint and no quote across five consecutive launches.
+#### The detector this replaced had gone silently dead
 
-Reading the pair back from the token's own history also fails: early trades route
-through Jupiter/DFLOW aggregators, so SOL, USDC *and* the real quote all appear
-as candidates with nothing to separate them.
+The original design read the deployer's `TOKEN_MINT` transactions and inferred
+the pair from the token's deepest indexed pool. **StonkFun moved its launch
+mechanism to Raydium SWAP legs**, so the 1B-supply `TOKEN_MINT` signature it
+keyed on stopped occurring.
 
-So the pair comes from the token's **deepest indexed pool**, which arrives some
-seconds after the mint. Two consequences drive the implementation:
+Measured before the migration:
 
-- A creation may need several passes before its pair resolves → a **pending
-  queue** with bounded retries (`MAX_RESOLVE_ATTEMPTS = 10`, ~5 min at 30s).
-- **Pools are not indexed in launch order**, so resolution order says nothing
-  about launch order. The queue is drained strictly oldest-first and **stops at
-  the first unresolved creation** — otherwise a younger token whose pool indexed
-  sooner could be announced as "first" and permanently beat an earlier launch.
+| | |
+|---|---|
+| Real launches in a 3-hour window (`/api/launches`) | **23** |
+| Of those the `TOKEN_MINT` detector would have caught | **0** |
+| Qualifying `TOKEN_MINT`s in 1,000 deployer transactions | **0** |
 
-Creations are tracked on **every** pass, even with nothing watched. A quote is
-noticed up to one catalog poll (60s) after it appears, and a token can be
-launched in that gap; if tracking only began once a watch existed, that launch
-would land in the seed set and the *next* token would be wrongly announced as
-first. Only pair *resolution* is gated on a watch existing, so the cost profile
-is unchanged.
+Missed launches included `SPYX`, `QQQX`, `MSFTX` and `GMEX` — tokenized stock
+quotes, exactly what this feed exists to report. The poller still ran, still
+logged, and never found anything: **no error, no alert, no signal.**
 
-Other bounds: creations older than **15 minutes** are never queued; queued
-creations are dropped once they age past the same window.
+It was found only because a report about a *different* feature (the pinned RAY
+quote) was checked against real example mints rather than assumed to work.
+
+#### What went with it
+
+The pending queue, `MAX_RESOLVE_ATTEMPTS`, and the ordering stall that halted a
+pass on the first unresolved creation all existed solely because the quote was
+unknown at mint time. With the quote supplied up front, all of it is gone.
+
+Market stats and socials are still fetched per matching launch, but they are
+strictly best-effort: pairing, name, symbol and mint come from the feed, so a
+token too new to be indexed is reported rather than delayed.
+
+#### Both watch kinds share one fetch
+
+Windowed quotes (a newly-added pairing asset, capped and time-limited) and
+pinned quotes are served from a single `/api/launches` read per pass. A quote
+cannot be both — pinned assets are `custom`, which the denylist keeps out of the
+windowed set — and the windowed path is checked first regardless, so a future
+overlap would produce one alert rather than two.
 
 ### Known limitations
 
-- **A dropped creation can produce a wrong "first".** If a pool never indexes
-  within 10 passes, that creation is discarded while its watch stays open, so a
-  later token could be reported as first. Ordering holds up to the drop; the drop
-  itself cannot be made safe without an on-chain pair.
-- **Deepest pool ≠ launch pool** in principle. Low risk here because only mints
-  under 15 minutes old are considered, when the launch pool is normally the only
-  one.
-
-### Paused: the every-launch feed
-
-`pollStonkFunCreations` and `formatStonkFunAlert` still exist and work, but are
-**not scheduled**. They pinged on every mint, which drowned out the signal.
-Re-enable by scheduling `pollStonkFunCreations` in `instrumentation.ts` — nothing
-else needs changing.
+- **The feed is a hard 100-launch window (~12h at current rates) with no
+  pagination.** `limit`, `page`, `offset`, `before` and `cursor` are all ignored
+  and return the same 100 records. An outage longer than the window loses those
+  launches permanently — there is no catch-up path. At a 30s poll that is ~1,400x
+  headroom, so it only matters for a prolonged deploy failure.
+- The window shrinks as launch rate rises: at 100 launches/hour it would cover
+  one hour rather than twelve.
+- `pollStonkFunCreations` (the paused every-launch feed) is **not merely paused,
+  it is non-functional** — it reads the same dead `TOKEN_MINT` path. Reviving it
+  means rebuilding it on `fetchStonkFunLaunches`.
 
 ---
 

@@ -10,7 +10,7 @@ export async function register() {
 
     // Dynamic import so this only loads server-side
     const { pollAndStoreDexProfiles, refreshCurrentMarketCaps } = await import("@/lib/api/dex-orders-cache");
-    const { pollStonkFunQuoteTokens, pollStonkFunFirstTokens, pollStonkFunPinnedQuotes } = await import("@/lib/telegram/stonkfun-alerts");
+    const { pollStonkFunQuoteTokens, pollStonkFunLaunches } = await import("@/lib/telegram/stonkfun-alerts");
     const { pollSunriseStocks } = await import("@/lib/telegram/sunrise-alerts");
     const { pollLongStocks, pollLongOnchainCreations, pollFlapRobinhoodStocks } = await import("@/lib/telegram/long-alerts");
     const { pollBscStockQuotes, pollBscOnchainLaunches } = await import("@/lib/telegram/bsc-stock-alerts");
@@ -40,34 +40,19 @@ export async function register() {
       );
     }, STONKFUN_QUOTE_INTERVAL);
 
-    // First token launched against a newly-added StonkFun quote. Runs tighter
-    // than the catalog poll so a launch is caught while it's still news, and
-    // short-circuits entirely while no quote is being watched.
-    console.log("[instrumentation] Starting StonkFun first-token watcher (every 30s)");
-    const STONKFUN_FIRST_TOKEN_INTERVAL = 30_000;
-    pollStonkFunFirstTokens().catch((err) =>
-      console.error("[instrumentation] Initial StonkFun first-token poll error:", err)
+    // Launches against a watched or pinned StonkFun quote. One read of
+    // StonkFun's own launches feed serves both, and the feed names the quote
+    // mint per launch — so there is no pair to infer and no retry queue.
+    console.log("[instrumentation] Starting StonkFun launch watcher (every 30s)");
+    const STONKFUN_LAUNCH_INTERVAL = 30_000;
+    pollStonkFunLaunches().catch((err) =>
+      console.error("[instrumentation] Initial StonkFun launch poll error:", err)
     );
     setInterval(() => {
-      pollStonkFunFirstTokens().catch((err) =>
-        console.error("[instrumentation] StonkFun first-token poll error:", err)
+      pollStonkFunLaunches().catch((err) =>
+        console.error("[instrumentation] StonkFun launch poll error:", err)
       );
-    }, STONKFUN_FIRST_TOKEN_INTERVAL);
-
-    // Pinned StonkFun quotes (currently $RAY) — every coin launched against
-    // them, no window and no cap. Reads StonkFun's own /api/launches feed, which
-    // names the quote mint per launch; the deployer TOKEN_MINT path cannot see
-    // these launches at all. Short-circuits when nothing is pinned.
-    console.log("[instrumentation] Starting StonkFun pinned-quote watcher (every 30s)");
-    const STONKFUN_PINNED_INTERVAL = 30_000;
-    pollStonkFunPinnedQuotes().catch((err) =>
-      console.error("[instrumentation] Initial StonkFun pinned-quote poll error:", err)
-    );
-    setInterval(() => {
-      pollStonkFunPinnedQuotes().catch((err) =>
-        console.error("[instrumentation] StonkFun pinned-quote poll error:", err)
-      );
-    }, STONKFUN_PINNED_INTERVAL);
+    }, STONKFUN_LAUNCH_INTERVAL);
 
     // Sunrise new-stock-pair poller (tokenized stocks vs USDC) — 60s.
     console.log("[instrumentation] Starting Sunrise stock-pair alert poller (every 60s)");
