@@ -77,6 +77,8 @@ export interface StonkFunTokenDetails extends StonkFunCreation {
   liquidityUsd: number | null;
   marketCap: number | null;
   pairUrl: string | null;
+  /** Every quote this token trades against, not just the deepest pool's. */
+  quoteAddresses: string[];
 }
 
 function heliusKey(): string {
@@ -267,8 +269,9 @@ async function fetchMarket(mint: string): Promise<{
   liquidityUsd: number | null;
   marketCap: number | null;
   pairUrl: string | null;
+  quoteAddresses: string[];
 }> {
-  const blank = { pairedSymbol: null, pairedAddress: null, dex: null, priceUsd: null, liquidityUsd: null, marketCap: null, pairUrl: null };
+  const blank = { pairedSymbol: null, pairedAddress: null, dex: null, priceUsd: null, liquidityUsd: null, marketCap: null, pairUrl: null, quoteAddresses: [] as string[] };
   await rateLimit("dexscreener");
   try {
     const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${mint}`, {
@@ -287,6 +290,15 @@ async function fetchMarket(mint: string): Promise<{
       liquidityUsd: top.liquidity?.usd ?? null,
       marketCap: top.marketCap ?? null,
       pairUrl: top.url ?? null,
+      // EVERY quote this token trades against, not just the deepest pool's.
+      // `pairedAddress` answers "what is this token mainly paired with", which
+      // is the right question for a normal alert — but a token launched against
+      // a specific quote often picks up a deeper SOL or USDC routing pool
+      // within minutes, which would hide the launch quote entirely. Callers
+      // matching a specific asset need the full list.
+      quoteAddresses: [
+        ...new Set(pairs.map((p) => p.quoteToken?.address).filter((a): a is string => !!a)),
+      ],
     };
   } catch {
     return blank;

@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-13 ($20k alpha PnL floor; duplicate-ATH-token fix)
+**Last updated:** 2026-08-13 (pinned RAY quote on StonkFun)
 
 ---
 
@@ -178,6 +178,51 @@ StonkFun adds later.
 
 **Launches against that quote** — every token launched inside the 36h window,
 numbered, not just the first.
+
+### Pinned quotes — temporary, by request
+
+Some quote assets are watched permanently and in full, bypassing the category
+denylist, the 36h window and the 25-launch cap. Currently:
+
+| Asset | Mint | Added |
+|---|---|---|
+| **RAY** (Raydium) | `4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R` | 2026-08-13 |
+
+**This is expected to be removed.** Deleting the entry from `PINNED_QUOTE_MINTS`
+in [`stonkfun-alerts.ts`](../../src/lib/telegram/stonkfun-alerts.ts) is the
+entire removal procedure — nothing else references it.
+
+Three deviations, each deliberate:
+
+1. **Bypasses `SUPPRESSED_CATEGORIES`.** RAY is a `custom` quote — a
+   creator-nominated on-chain token, which is exactly what that denylist exists
+   to silence. Pinning is a narrow, auditable exception rather than a hole in the
+   category rule.
+2. **Never expires.** The 36h window exists because a *newly-added* pair is
+   briefly interesting. RAY is not new; the request is ongoing coverage.
+3. **Not capped.** The ask is every coin launched against it, so truncating at 25
+   would defeat the point.
+
+A pinned quote is registered during the silent seeding pass (it is already in the
+catalog, so it would otherwise be buried with everything else) and is **not**
+announced as a new quote asset — it isn't a new listing. Alert copy drops the
+"first / inaugural" framing accordingly and numbers launches "since tracking
+began".
+
+#### Matching looks at every pool, not just the deepest
+
+`fetchMarket` reports `pairedAddress` from the token's deepest pool, which is the
+right answer for "what is this token mainly paired with". For a pinned asset it
+is the wrong question: **a token launched against RAY routinely picks up a deeper
+SOL or USDC routing pool within minutes**, which would hide the launch quote and
+lose the alert entirely.
+
+So `fetchMarket` now also returns `quoteAddresses` — every quote the token
+trades against — and matching tries the deepest pool first, then falls back to
+any pinned asset anywhere in that list. The fallback is restricted to pinned
+quotes so normal watches keep their stricter "this is genuinely its pair"
+semantics. Verified with a fixture whose deepest pool was SOL and which still
+matched RAY.
 
 ### Pair resolution — the hard part
 
