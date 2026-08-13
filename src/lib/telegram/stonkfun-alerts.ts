@@ -2,6 +2,8 @@ import {
   fetchRecentCreations,
   enrichCreation,
   fetchQuoteTokens,
+  fetchStonkFunLaunches,
+  type StonkFunLaunch,
   STONKFUN_DEPLOYER,
   STONKFUN_BASE,
   type StonkFunCreation,
@@ -162,6 +164,150 @@ export async function sendStonkFunTestPing(chatId: string): Promise<boolean> {
   return true;
 }
 
+
+// ── Pinned quotes — temporary, watched in full by explicit request ───────────
+//
+// A pinned quote is reported for EVERY coin launched against it: no category
+// filter, no 36h window, no launch cap. Removal is deleting its entry below;
+// nothing else refers to this map.
+//
+// Detection deliberately does NOT go through fetchRecentCreations. That path
+// reconstructs launches from the deployer's TOKEN_MINT transactions, and tokens
+// launched against RAY produce no TOKEN_MINT at all — the supply arrives as
+// Raydium SWAP legs (900M + 100M), with only a small transfer back to the
+// deployer. $713 (FELbdqrBvrhRA7214SiGCktyoAeH2nZEnwnQFDH8uYW9) is absent from
+// 2,200 deployer transactions covering its entire lifetime, yet sits in
+// /api/launches with quoteMint = RAY. Anything built on the mint feed would
+// have been silently blind to exactly the launches this was asked for.
+//
+// StonkFun's own launches feed names the quote mint in the same record as the
+// token, so the match is exact and needs no pool lookup or deepest-pool
+// inference.
+
+const PINNED_QUOTE_MINTS = new Map<string, string>([
+  ["4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", "RAY (Raydium)"],
+]);
+
+/** Mints already reported, so a launch is announced exactly once. */
+const pinnedSeen = new Set<string>();
+let pinnedSeeded = false;
+
+/**
+ * Don't announce a launch older than this even on a fresh seed — the feed spans
+ * ~12 hours and replaying half a day of history into the channel on restart
+ * would be worse than missing one.
+ */
+const PINNED_MAX_AGE_MS = 60 * 60 * 1000;
+
+export function formatPinnedLaunchAlert(l: StonkFunLaunch, launchNumber: number): string {
+  const lines: string[] = [];
+  lines.push(
+    `🌊 <b>New coin vs $${escapeHtml(l.quoteSymbol)} on StonkFun</b>  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`
+  );
+  lines.push(`<i>Launch #${launchNumber} against $${escapeHtml(l.quoteSymbol)} since tracking began.</i>`);
+  lines.push("");
+  lines.push(`<b>${escapeHtml(l.name)}</b>  ·  <code>$${escapeHtml(l.symbol)}</code>`);
+  lines.push(
+    `🔗 <b>$${escapeHtml(l.symbol)}</b> ⇄ <b>$${escapeHtml(l.quoteSymbol)}</b>` +
+      (l.launchpad ? `  ·  🏦 ${escapeHtml(titleCase(l.launchpad))}` : "")
+  );
+  if (l.startMarketCapUsd != null) {
+    lines.push(`📊 Launch MC:  <b>$${escapeHtml(formatCompact(l.startMarketCapUsd))}</b>`);
+  }
+  lines.push("");
+  lines.push(`<code>${escapeHtml(l.mint)}</code>`);
+  const footer = [`🕐 ${escapeHtml(formatTimeAgo(Date.parse(l.createdAt) || 0))}`, `🔍 <a href="${solscanToken(l.mint)}">Solscan</a>`];
+  footer.push(`📈 <a href="https://dexscreener.com/solana/${escapeHtml(l.mint)}">Chart</a>`);
+  lines.push(footer.join("  ·  "));
+  if (l.creator) lines.push(`👤 Dev: <code>${escapeHtml(l.creator)}</code>`);
+  return lines.join("\n");
+}
+
+async function sendPinnedAlert(chatId: string, l: StonkFunLaunch, launchNumber: number): Promise<void> {
+  const bot = await getAlertsBot();
+  const text = formatPinnedLaunchAlert(l, launchNumber);
+  if (l.logoUrl) {
+    await bot.api
+      .sendPhoto(chatId, l.logoUrl, { caption: text, parse_mode: "HTML" })
+      .catch(async () => {
+        await bot.api.sendMessage(chatId, text, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
+      });
+  } else {
+    await bot.api.sendMessage(chatId, text, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
+  }
+}
+
+/** Running count per pinned quote, for the "#N since tracking began" line. */
+const pinnedCounts = new Map<string, number>();
+
+/**
+ * One pass: report every new coin launched against a pinned quote asset.
+ *
+ * Short-circuits before any request when nothing is pinned, so removing the
+ * last entry from PINNED_QUOTE_MINTS silences this entirely.
+ */
+export async function pollStonkFunPinnedQuotes(): Promise<void> {
+  if (PINNED_QUOTE_MINTS.size === 0) return;
+
+  const launches = await fetchStonkFunLaunches();
+  // null is a fetch failure, not an empty feed — hold state and retry.
+  if (launches === null) return;
+  if (launches.length === 0) return;
+
+  const pinned = launches.filter((l) => PINNED_QUOTE_MINTS.has(l.quoteMint));
+
+  if (!pinnedSeeded) {
+    for (const l of launches) pinnedSeen.add(l.mint);
+    for (const l of pinned) pinnedCounts.set(l.quoteMint, (pinnedCounts.get(l.quoteMint) ?? 0) + 1);
+    pinnedSeeded = true;
+    console.log(
+      `[stonkfun] pinned-quote seed: ${launches.length} launches recorded, ` +
+        `${pinned.length} against pinned quotes (no alert on backlog)`
+    );
+    return;
+  }
+
+  // Oldest-first so the running count reads in launch order.
+  const fresh = pinned
+    .filter((l) => !pinnedSeen.has(l.mint))
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+
+  const now = Date.now();
+  for (const l of fresh) {
+    pinnedSeen.add(l.mint);
+    const age = now - (Date.parse(l.createdAt) || now);
+    if (age > PINNED_MAX_AGE_MS) {
+      console.log(`[stonkfun] skipping stale pinned launch ${l.symbol} (${Math.round(age / 60000)}m old)`);
+      continue;
+    }
+    const n = (pinnedCounts.get(l.quoteMint) ?? 0) + 1;
+    pinnedCounts.set(l.quoteMint, n);
+    try {
+      await broadcastAlert((chatId) => sendPinnedAlert(chatId, l, n));
+      console.log(`[stonkfun] alerted pinned launch #${n} ${l.symbol} vs ${l.quoteSymbol}`);
+    } catch (err) {
+      console.error("[stonkfun] failed to send pinned launch alert:", err);
+    }
+  }
+
+  // Everything in the feed is recorded so a later page-out can't resurface it.
+  for (const l of launches) pinnedSeen.add(l.mint);
+  if (pinnedSeen.size > 5000) {
+    pinnedSeen.clear();
+    for (const l of launches) pinnedSeen.add(l.mint);
+  }
+}
+
+/** Manual test: render the most recent pinned-quote launch. */
+export async function sendPinnedQuoteTestPing(chatId: string): Promise<boolean> {
+  const launches = await fetchStonkFunLaunches();
+  if (!launches) return false;
+  const hit = launches.find((l) => PINNED_QUOTE_MINTS.has(l.quoteMint));
+  if (!hit) return false;
+  await sendPinnedAlert(chatId, hit, 1);
+  return true;
+}
+
 // ── Quote-token monitoring ────────────────────────────────────────────────────
 // StonkFun's /launch page lets creators pick a "quote token" — the asset a new
 // token is paired against. We watch that list and alert when a new one is added.
@@ -187,33 +333,6 @@ const SUPPRESSED_CATEGORIES = new Set(["custom"]);
 
 function isAlertableQuote(category: string): boolean {
   return !SUPPRESSED_CATEGORIES.has((category ?? "").toLowerCase());
-}
-
-/**
- * Quote assets watched permanently, by explicit request, regardless of category.
- *
- * TEMPORARY — these are pinned by hand and expected to be removed. Deleting an
- * entry from this map is the whole removal procedure; nothing else refers to it.
- *
- * A pinned quote deviates from a normal watch in three ways, all deliberate:
- *
- *   1. It bypasses SUPPRESSED_CATEGORIES. RAY is a `custom` quote — a
- *      creator-nominated on-chain token — and `custom` is exactly what the
- *      denylist exists to silence. Pinning is the narrow, auditable exception
- *      rather than a hole in the category rule.
- *   2. It never expires. The 36h window exists because a NEWLY-ADDED pair is
- *      briefly interesting; RAY is not new, and the ask is ongoing coverage.
- *   3. It is not capped at MAX_LAUNCHES_PER_WINDOW. The request is every coin
- *      launched against it, so truncating at 25 would defeat the point.
- *
- * Keyed by quote mint.
- */
-const PINNED_QUOTE_MINTS = new Map<string, string>([
-  ["4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", "RAY (Raydium)"],
-]);
-
-function isPinnedQuote(mint: string): boolean {
-  return PINNED_QUOTE_MINTS.has(mint);
 }
 
 const CATEGORY_LABEL: Record<string, string> = {
@@ -267,13 +386,6 @@ export async function pollStonkFunQuoteTokens(): Promise<void> {
     for (const q of quotes) seenQuotes.add(q.quoteMint);
     quotesSeeded = true;
     console.log(`[stonkfun] seeded ${seenQuotes.size} existing quote tokens (no alert on backlog)`);
-    // Pinned quotes are already in the catalog, so seeding would otherwise bury
-    // them with everything else and they'd never be watched. Registered here
-    // WITHOUT announcing them — they are not new listings, and the point is the
-    // launches against them.
-    for (const q of quotes) {
-      if (isPinnedQuote(q.quoteMint)) startQuoteWatch(q);
-    }
     return;
   }
 
@@ -336,8 +448,6 @@ interface WatchedQuote {
   quote: QuoteToken;
   openedAt: number;
   launchCount: number;
-  /** Pinned watches never expire and are never capped. */
-  pinned: boolean;
 }
 const watchedQuotes = new Map<string, WatchedQuote>(); // key: quote mint
 
@@ -353,13 +463,8 @@ const MAX_RESOLVE_ATTEMPTS = 10;
 
 function startQuoteWatch(q: QuoteToken): void {
   if (watchedQuotes.has(q.quoteMint)) return;
-  const pinned = isPinnedQuote(q.quoteMint);
-  watchedQuotes.set(q.quoteMint, { quote: q, openedAt: Date.now(), launchCount: 0, pinned });
-  console.log(
-    pinned
-      ? `[stonkfun] PINNED watch on ${q.symbol} (${q.category}) — every launch, no window, no cap`
-      : `[stonkfun] watching ${q.symbol} (${q.category}) for launches over ${LAUNCH_WINDOW_LABEL}`
-  );
+  watchedQuotes.set(q.quoteMint, { quote: q, openedAt: Date.now(), launchCount: 0 });
+  console.log(`[stonkfun] watching ${q.symbol} (${q.category}) for launches over ${LAUNCH_WINDOW_LABEL}`);
 }
 
 export function formatStonkFunLaunchAlert(
@@ -369,27 +474,15 @@ export function formatStonkFunLaunchAlert(
 ): string {
   const lines: string[] = [];
   const first = launchNumber <= 1;
-  // A pinned quote is not a new listing, so the "first / inaugural" framing
-  // would be actively wrong — RAY has been available for a while and the ask is
-  // simply every coin launched against it.
-  const pinned = isPinnedQuote(q.quoteMint);
-
-  if (pinned) {
-    lines.push(
-      `🌊 <b>New coin vs $${escapeHtml(q.symbol)} on StonkFun</b>  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`
-    );
-    lines.push(`<i>Launch #${launchNumber} against $${escapeHtml(q.symbol)} since tracking began.</i>`);
-  } else {
-    lines.push(
-      `${first ? "🥇" : "🔁"} <b>${first ? "First" : ordinal(launchNumber)} token vs $${escapeHtml(q.symbol)} on StonkFun</b>` +
-        `  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`
-    );
-    lines.push(
-      first
-        ? `<i>Inaugural launch paired to the newly-added quote asset.</i>`
-        : `<i>Launch ${launchNumber} against this quote, inside the ${LAUNCH_WINDOW_LABEL} window.</i>`
-    );
-  }
+  lines.push(
+    `${first ? "🥇" : "🔁"} <b>${first ? "First" : ordinal(launchNumber)} token vs $${escapeHtml(q.symbol)} on StonkFun</b>` +
+      `  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`
+  );
+  lines.push(
+    first
+      ? `<i>Inaugural launch paired to the newly-added quote asset.</i>`
+      : `<i>Launch ${launchNumber} against this quote, inside the ${LAUNCH_WINDOW_LABEL} window.</i>`
+  );
   lines.push(`${escapeHtml(CATEGORY_LABEL[q.category] ?? q.category)}  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
   lines.push("");
   lines.push(`<b>${escapeHtml(d.name)}</b>  ·  <code>$${escapeHtml(d.symbol)}</code>`);
@@ -446,7 +539,6 @@ async function sendLaunchAlert(
 export async function pollStonkFunFirstTokens(): Promise<void> {
   const now = Date.now();
   for (const [mint, w] of watchedQuotes) {
-    if (w.pinned) continue; // pinned watches run until removed by hand
     if (now - w.openedAt > LAUNCH_WINDOW_MS) {
       watchedQuotes.delete(mint);
       console.log(
@@ -516,29 +608,12 @@ export async function pollStonkFunFirstTokens(): Promise<void> {
       }
 
       pending.delete(mint); // pair known — this creation is settled either way
-
-      // Match the deepest pool's quote first — that is the token's real pairing
-      // and the right answer for a normal watch. Then fall back to ANY quote the
-      // token trades against, but only for pinned assets: a token launched
-      // against RAY routinely picks up a deeper SOL or USDC pool within minutes,
-      // which would otherwise hide the launch quote and lose the alert.
-      let w = watchedQuotes.get(details.pairedAddress);
-      if (!w) {
-        for (const addr of details.quoteAddresses ?? []) {
-          const candidate = watchedQuotes.get(addr);
-          if (candidate?.pinned) {
-            w = candidate;
-            break;
-          }
-        }
-      }
+      const w = watchedQuotes.get(details.pairedAddress);
       if (!w) continue; // paired against something we're not watching
 
       // Every launch in the window is reported, not only the first — but a
       // runaway pair is capped rather than allowed to flood the feed.
-      // The cap is a safety valve for a runaway NEW pair. A pinned quote was
-      // asked for explicitly and in full, so it is exempt.
-      if (!w.pinned && w.launchCount >= MAX_LAUNCHES_PER_WINDOW) {
+      if (w.launchCount >= MAX_LAUNCHES_PER_WINDOW) {
         if (w.launchCount === MAX_LAUNCHES_PER_WINDOW) {
           w.launchCount++;
           console.log(`[stonkfun] ${w.quote.symbol} hit the ${MAX_LAUNCHES_PER_WINDOW}-launch cap — muting`);

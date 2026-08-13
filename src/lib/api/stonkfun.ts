@@ -53,6 +53,84 @@ export async function fetchQuoteTokens(): Promise<QuoteToken[]> {
   }
 }
 
+/**
+ * A launch as StonkFun itself reports it, from its own `/api/launches` feed.
+ *
+ * This is a far stronger source than reconstructing launches from the deployer's
+ * mint transactions, for one reason above all: **it names the quote mint
+ * directly**, in the same record as the token. No pool to wait for, no deepest-
+ * pool inference, no ambiguity when a token later picks up a deeper SOL pool.
+ *
+ * It also catches launches the mint-based detector cannot see at all. Tokens
+ * launched against RAY produce no `TOKEN_MINT` transaction from the deployer —
+ * the supply arrives via Raydium SWAPs (a 900M and a 100M leg) — so
+ * `fetchRecentCreations` never surfaces them. Verified against
+ * FELbdqrBvrhRA7214SiGCktyoAeH2nZEnwnQFDH8uYW9 ($713), which is absent from the
+ * deployer's TOKEN_MINT history but present here with quoteMint = RAY.
+ */
+export interface StonkFunLaunch {
+  mint: string;
+  pool: string | null;
+  quoteMint: string;
+  quoteSymbol: string;
+  name: string;
+  symbol: string;
+  creator: string | null;
+  logoUrl: string | null;
+  launchpad: string | null;
+  startMarketCapUsd: number | null;
+  /** ISO timestamp */
+  createdAt: string;
+}
+
+/**
+ * Recent StonkFun launches, newest first.
+ *
+ * Returns null on failure rather than an empty array: a caller that treats a
+ * failed fetch as "nothing launched" would advance its cursor over the gap and
+ * lose every launch in it.
+ *
+ * The feed returns 100 launches, measured at ~12 hours of coverage (roughly 8
+ * launches an hour), so a poll every 30s has enormous headroom.
+ */
+export async function fetchStonkFunLaunches(): Promise<StonkFunLaunch[] | null> {
+  await rateLimit("stonkfun");
+  try {
+    const res = await fetch(`${STONKFUN_BASE}/api/launches`, {
+      headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const list: unknown[] = Array.isArray(data?.launches) ? data.launches : [];
+    return list
+      .map((raw) => {
+        const l = raw as Record<string, unknown>;
+        const str = (k: string): string | null =>
+          typeof l[k] === "string" && (l[k] as string).length > 0 ? (l[k] as string) : null;
+        return {
+          mint: String(l.mint ?? ""),
+          pool: str("pool"),
+          quoteMint: String(l.quoteMint ?? ""),
+          quoteSymbol: str("quoteSymbol") ?? "?",
+          name: str("name") ?? str("symbol") ?? "Unknown",
+          symbol: str("symbol") ?? "?",
+          creator: str("creator"),
+          logoUrl: str("logoUrl"),
+          launchpad: str("launchpad"),
+          startMarketCapUsd:
+            typeof l.startMarketCapUsd === "number" && Number.isFinite(l.startMarketCapUsd)
+              ? (l.startMarketCapUsd as number)
+              : null,
+          createdAt: String(l.createdAt ?? ""),
+        };
+      })
+      .filter((l) => l.mint.length > 0 && l.quoteMint.length > 0);
+  } catch {
+    return null;
+  }
+}
+
 export interface StonkFunCreation {
   mint: string;
   /** Best-effort symbol from the tx description; refined by DAS in enrichment */
@@ -77,8 +155,6 @@ export interface StonkFunTokenDetails extends StonkFunCreation {
   liquidityUsd: number | null;
   marketCap: number | null;
   pairUrl: string | null;
-  /** Every quote this token trades against, not just the deepest pool's. */
-  quoteAddresses: string[];
 }
 
 function heliusKey(): string {
@@ -269,9 +345,8 @@ async function fetchMarket(mint: string): Promise<{
   liquidityUsd: number | null;
   marketCap: number | null;
   pairUrl: string | null;
-  quoteAddresses: string[];
 }> {
-  const blank = { pairedSymbol: null, pairedAddress: null, dex: null, priceUsd: null, liquidityUsd: null, marketCap: null, pairUrl: null, quoteAddresses: [] as string[] };
+  const blank = { pairedSymbol: null, pairedAddress: null, dex: null, priceUsd: null, liquidityUsd: null, marketCap: null, pairUrl: null };
   await rateLimit("dexscreener");
   try {
     const res = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${mint}`, {
@@ -290,15 +365,6 @@ async function fetchMarket(mint: string): Promise<{
       liquidityUsd: top.liquidity?.usd ?? null,
       marketCap: top.marketCap ?? null,
       pairUrl: top.url ?? null,
-      // EVERY quote this token trades against, not just the deepest pool's.
-      // `pairedAddress` answers "what is this token mainly paired with", which
-      // is the right question for a normal alert — but a token launched against
-      // a specific quote often picks up a deeper SOL or USDC routing pool
-      // within minutes, which would hide the launch quote entirely. Callers
-      // matching a specific asset need the full list.
-      quoteAddresses: [
-        ...new Set(pairs.map((p) => p.quoteToken?.address).filter((a): a is string => !!a)),
-      ],
     };
   } catch {
     return blank;

@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-13 (pinned RAY quote on StonkFun)
+**Last updated:** 2026-08-13 (pinned RAY quote via StonkFun's launches feed)
 
 ---
 
@@ -97,6 +97,7 @@ be bundled for the Edge runtime.
 |---|---|
 | StonkFun quote tokens | 60s |
 | StonkFun first token | 30s |
+| StonkFun pinned quotes ($RAY) | 30s |
 | Pump.fun quote assets | 60s |
 | Pump.fun launch window | 60s |
 | Sunrise stock pairs | 60s |
@@ -181,48 +182,48 @@ numbered, not just the first.
 
 ### Pinned quotes — temporary, by request
 
-Some quote assets are watched permanently and in full, bypassing the category
-denylist, the 36h window and the 25-launch cap. Currently:
+Some quote assets are reported in full: **every** coin launched against them, no
+category filter, no 36h window, no launch cap. Currently:
 
 | Asset | Mint | Added |
 |---|---|---|
 | **RAY** (Raydium) | `4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R` | 2026-08-13 |
 
 **This is expected to be removed.** Deleting the entry from `PINNED_QUOTE_MINTS`
-in [`stonkfun-alerts.ts`](../../src/lib/telegram/stonkfun-alerts.ts) is the
-entire removal procedure — nothing else references it.
+in [`stonkfun-alerts.ts`](../../src/lib/telegram/stonkfun-alerts.ts) is the whole
+procedure — the poller short-circuits when the map is empty.
 
-Three deviations, each deliberate:
+#### Detection uses StonkFun's own launches feed, NOT the mint detector
 
-1. **Bypasses `SUPPRESSED_CATEGORIES`.** RAY is a `custom` quote — a
-   creator-nominated on-chain token, which is exactly what that denylist exists
-   to silence. Pinning is a narrow, auditable exception rather than a hole in the
-   category rule.
-2. **Never expires.** The 36h window exists because a *newly-added* pair is
-   briefly interesting. RAY is not new; the request is ongoing coverage.
-3. **Not capped.** The ask is every coin launched against it, so truncating at 25
-   would defeat the point.
+`GET /api/launches` returns the last 100 launches — measured at **~12 hours of
+coverage, roughly 8 launches an hour** — and names `quoteMint` and `quoteSymbol`
+**in the same record as the token**. No pool lookup, no deepest-pool inference,
+no ambiguity.
 
-A pinned quote is registered during the silent seeding pass (it is already in the
-catalog, so it would otherwise be buried with everything else) and is **not**
-announced as a new quote asset — it isn't a new listing. Alert copy drops the
-"first / inaugural" framing accordingly and numbers launches "since tracking
-began".
+This is not a convenience. **The `TOKEN_MINT` detector cannot see these launches
+at all.** A token launched against RAY produces no `TOKEN_MINT` transaction from
+the deployer: the supply arrives as Raydium **SWAP** legs (a 900M and a 100M),
+with only a small transfer back to the deployer. `$713`
+(`FELbdqrBvrhRA7214SiGCktyoAeH2nZEnwnQFDH8uYW9`) is **absent from 2,200 deployer
+transactions covering its entire lifetime**, yet sits in `/api/launches` with
+`quoteMint` = RAY.
 
-#### Matching looks at every pool, not just the deepest
+The first implementation of this feature was built on the mint detector plus
+pair-matching, and would have been silently blind to exactly the launches it was
+asked to report — it was only caught because the reported example mints were
+checked against the real pipeline rather than assumed to work.
 
-`fetchMarket` reports `pairedAddress` from the token's deepest pool, which is the
-right answer for "what is this token mainly paired with". For a pinned asset it
-is the wrong question: **a token launched against RAY routinely picks up a deeper
-SOL or USDC routing pool within minutes**, which would hide the launch quote and
-lose the alert entirely.
+Behaviour: seeds silently on first pass (the feed spans ~12h; replaying that into
+the channel on restart would be worse than missing one), skips launches older
+than 1 hour, numbers launches "since tracking began", and reports newest-last so
+the count reads in launch order.
 
-So `fetchMarket` now also returns `quoteAddresses` — every quote the token
-trades against — and matching tries the deepest pool first, then falls back to
-any pinned asset anywhere in that list. The fallback is restricted to pinned
-quotes so normal watches keep their stricter "this is genuinely its pair"
-semantics. Verified with a fixture whose deepest pool was SOL and which still
-matched RAY.
+#### Worth considering for the whole StonkFun feed
+
+`/api/launches` would also solve the pair-resolution problem described below
+outright — it is authoritative, atomic, and needs no retry queue. The main feed
+still uses the mint detector; migrating it is not done and is the obvious next
+improvement.
 
 ### Pair resolution — the hard part
 
