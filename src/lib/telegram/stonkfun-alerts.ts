@@ -171,28 +171,31 @@ export async function sendStonkFunTestPing(chatId: string): Promise<boolean> {
 }
 
 
-// ── Pinned quotes — temporary, watched in full by explicit request ───────────
+// ── Pinned quotes — dormant, no quote currently pinned ───────────────────────
 //
 // A pinned quote is reported for EVERY coin launched against it: no category
-// filter, no 36h window, no launch cap. Removal is deleting its entry below;
-// nothing else refers to this map.
+// filter, no 36h window, no launch cap. The map is empty, so nothing is pinned
+// and the pinned branch of pollStonkFunLaunches never fires. Pinning a quote
+// again is adding one `[mint, label]` entry below — the machinery around it is
+// intact and needs no other change.
 //
-// Detection deliberately does NOT go through fetchRecentCreations. That path
-// reconstructs launches from the deployer's TOKEN_MINT transactions, and tokens
-// launched against RAY produce no TOKEN_MINT at all — the supply arrives as
-// Raydium SWAP legs (900M + 100M), with only a small transfer back to the
-// deployer. $713 (FELbdqrBvrhRA7214SiGCktyoAeH2nZEnwnQFDH8uYW9) is absent from
-// 2,200 deployer transactions covering its entire lifetime, yet sits in
-// /api/launches with quoteMint = RAY. Anything built on the mint feed would
-// have been silently blind to exactly the launches this was asked for.
+// RAY (4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R) was pinned 2026-08-13 by
+// request and removed 2026-08-14, having served its purpose.
+//
+// If this is revived: detection must NOT go through fetchRecentCreations. That
+// path reconstructs launches from the deployer's TOKEN_MINT transactions, and a
+// token launched against a quote like RAY produces no TOKEN_MINT at all — the
+// supply arrives as Raydium SWAP legs (900M + 100M), with only a small transfer
+// back to the deployer. $713 (FELbdqrBvrhRA7214SiGCktyoAeH2nZEnwnQFDH8uYW9) was
+// absent from 2,200 deployer transactions covering its entire lifetime, yet sat
+// in /api/launches with quoteMint = RAY. Anything built on the mint feed would
+// be silently blind to exactly the launches pinning is asked for.
 //
 // StonkFun's own launches feed names the quote mint in the same record as the
 // token, so the match is exact and needs no pool lookup or deepest-pool
 // inference.
 
-const PINNED_QUOTE_MINTS = new Map<string, string>([
-  ["4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", "RAY (Raydium)"],
-]);
+const PINNED_QUOTE_MINTS = new Map<string, string>();
 
 export function formatPinnedLaunchAlert(l: StonkFunLaunch, launchNumber: number): string {
   const lines: string[] = [];
@@ -235,7 +238,10 @@ async function sendPinnedAlert(chatId: string, l: StonkFunLaunch, launchNumber: 
 /** Running count per pinned quote, for the "#N since tracking began" line. */
 const pinnedCounts = new Map<string, number>();
 
-/** Manual test: render the most recent pinned-quote launch. */
+/**
+ * Manual test: render the most recent pinned-quote launch. Returns false while
+ * PINNED_QUOTE_MINTS is empty, since no launch can match.
+ */
 export async function sendPinnedQuoteTestPing(chatId: string): Promise<boolean> {
   const launches = await fetchStonkFunLaunches();
   if (!launches) return false;
@@ -466,7 +472,8 @@ let launchesSeeded = false;
  *
  * Handles both kinds of watch from a SINGLE fetch:
  *   - windowed quotes  — a newly-added pairing asset, capped and time-limited
- *   - pinned quotes    — watched in full by explicit request (see above)
+ *   - pinned quotes    — watched in full by request; none pinned today, so this
+ *                        path is dormant rather than removed (see above)
  *
  * A quote cannot be both: pinned assets are `custom`, which the category
  * denylist keeps out of the windowed set. The windowed path is checked first

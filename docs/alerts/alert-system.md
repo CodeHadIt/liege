@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-13 (StonkFun launch detection migrated to /api/launches)
+**Last updated:** 2026-08-14 (pinned RAY quote removed; pinning left dormant)
 
 ---
 
@@ -179,18 +179,23 @@ StonkFun adds later.
 **Launches against that quote** — every token launched inside the 36h window,
 numbered, not just the first.
 
-### Pinned quotes — temporary, by request
+### Pinned quotes — dormant, nothing pinned
 
-Some quote assets are reported in full: **every** coin launched against them, no
-category filter, no 36h window, no launch cap. Currently:
+A pinned quote is reported in full: **every** coin launched against it, no
+category filter, no 36h window, no launch cap.
 
-| Asset | Mint | Added |
-|---|---|---|
-| **RAY** (Raydium) | `4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R` | 2026-08-13 |
+**No quote is pinned today.** `PINNED_QUOTE_MINTS` in
+[`stonkfun-alerts.ts`](../../src/lib/telegram/stonkfun-alerts.ts) is empty, so
+the pinned branch of the poller never fires and this section describes capability
+rather than live behaviour.
 
-**This is expected to be removed.** Deleting the entry from `PINNED_QUOTE_MINTS`
-in [`stonkfun-alerts.ts`](../../src/lib/telegram/stonkfun-alerts.ts) is the whole
-procedure — the poller short-circuits when the map is empty.
+| Asset | Mint | Pinned | Removed |
+|---|---|---|---|
+| **RAY** (Raydium) | `4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R` | 2026-08-13 | 2026-08-14 |
+
+The implementation is deliberately kept. Pinning a quote again is adding one
+`[mint, label]` entry to that map — formatting, per-quote counters, seeding and
+the test ping all still work and need no other change.
 
 #### Detection uses StonkFun's own launches feed, NOT the mint detector
 
@@ -200,8 +205,9 @@ coverage, roughly 8 launches an hour** — and names `quoteMint` and `quoteSymbo
 no ambiguity.
 
 This is not a convenience. **The `TOKEN_MINT` detector cannot see these launches
-at all.** A token launched against RAY produces no `TOKEN_MINT` transaction from
-the deployer: the supply arrives as Raydium **SWAP** legs (a 900M and a 100M),
+at all.** A token launched against a quote like RAY produces no `TOKEN_MINT`
+transaction from the deployer: the supply arrives as Raydium **SWAP** legs (a
+900M and a 100M),
 with only a small transfer back to the deployer. `$713`
 (`FELbdqrBvrhRA7214SiGCktyoAeH2nZEnwnQFDH8uYW9`) is **absent from 2,200 deployer
 transactions covering its entire lifetime**, yet sits in `/api/launches` with
@@ -217,12 +223,8 @@ the channel on restart would be worse than missing one), skips launches older
 than 1 hour, numbers launches "since tracking began", and reports newest-last so
 the count reads in launch order.
 
-#### Worth considering for the whole StonkFun feed
-
-`/api/launches` would also solve the pair-resolution problem described below
-outright — it is authoritative, atomic, and needs no retry queue. The main feed
-still uses the mint detector; migrating it is not done and is the obvious next
-improvement.
+This detection path is now shared with the main feed, which was migrated onto
+`/api/launches` for the same reason — see below.
 
 ### Launch detection — StonkFun's own launches feed
 
