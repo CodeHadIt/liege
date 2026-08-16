@@ -23,7 +23,7 @@ import {
   compactPnl,
   type AlphaWallet,
 } from "@/lib/api/alpha-wallets";
-import { getAlertsBot, broadcastAlert } from "./alerts-bot";
+import { getAlertsBot, broadcastAlert, FEATURE } from "./alerts-bot";
 import { escapeHtml } from "./utils/format";
 import { mc } from "./alpha-alerts";
 
@@ -453,7 +453,7 @@ export async function runAthScan(opts: { windowHours?: number; dryRun?: boolean 
   const dateUtc = new Date().toISOString().slice(0, 10);
   if (!opts.dryRun) {
     const summary = formatDailySummary(found, alphaAdded, dateUtc);
-    await broadcastAlert((chatId) => send(chatId, summary));
+    await broadcastAlert(FEATURE.ATH_DAILY, (chatId) => send(chatId, summary));
   }
 
   return {
@@ -533,7 +533,7 @@ export async function promoteRepeatTraders(wallets: string[]): Promise<number> {
     try {
       await upsertAlphaWallets([entry]);
       const text = formatNewAlphaAlert(label, wallet, list, totalPnl);
-      await broadcastAlert((chatId) => send(chatId, text));
+      await broadcastAlert(FEATURE.ATH_DAILY, (chatId) => send(chatId, text));
       added++;
       console.log(`[ath-scan] PROMOTED ${label} (${byToken.size} tokens, PnL ${compactPnl(totalPnl)})`);
     } catch (err) {

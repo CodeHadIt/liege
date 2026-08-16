@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-14 (pinned RAY quote removed; pinning left dormant)
+**Last updated:** 2026-08-16 (two-tier delivery; per-audience alpha confluence)
 
 ---
 
@@ -77,13 +77,39 @@ A separate, private bot from the main Liège command bot.
 |---|---|
 | `TELEGRAM_ALERTS_API_KEY` | Bot token. Absent → all pings silently disabled (pollers still run). |
 | `TELEGRAM_ALERTS_WEBHOOK_SECRET` | Optional `x-telegram-bot-api-secret-token` check. Mismatch → 401, inbound commands break; **push alerts are unaffected**, they never touch the webhook. |
-| `ALERTS_ALLOWLIST` | Comma/space-separated chat IDs that may use the bot *and* receive alerts. Empty → no recipients → nothing sends. |
+| `ALERTS_PLATINUM_IDS` | Chat IDs receiving **every** feed. |
+| `ALERTS_GOLD_IDS` | Chat IDs receiving the shared feeds only (see tiers below). |
+| `ALERTS_ALLOWLIST` | Legacy single-tier list. Used only when **both** tier vars are unset, in which case everyone on it is treated as **platinum** — so behaviour is unchanged until tiers are configured. Empty → no recipients → nothing sends. |
+| `ALPHA_LIBRARY_CUTOFF` | ISO timestamp. Alpha wallets added on or before it form the frozen "library" Gold sees. Unset/invalid → **Gold confluence is disabled entirely**, never treated as "everything is library". |
 
 Legacy `STONKFUN_ALERT_CHAT_ID` / `LONG_ALERT_CHAT_ID` / `SUNRISE_ALERT_CHAT_ID`
 are still honoured as a fallback allow-list when `ALERTS_ALLOWLIST` is unset.
 
 `broadcastAlert()` isolates per-recipient failures, so one bad chat cannot block
 delivery to the rest.
+
+### Tiers
+
+Two tiers. Delivery goes through `broadcastAlert(feature, send)`, and
+`recipientsFor(feature)` is the **only** path from a feed to a chat ID — a feed
+cannot reach anyone without declaring which tiers may see it. Feeds must never
+call `alertRecipients()`, which exists solely as the bot's interaction gate.
+
+| Feature | Platinum | Gold |
+|---|---|---|
+| `launch` — all launchpad feeds (§3–§8) | ✅ | ✅ |
+| `alpha.confluence.gold` — confluence over the frozen library | — | ✅ |
+| `alpha.confluence.platinum` — confluence over **all** wallets | ✅ | — |
+| `ath.daily` — the $2M ATH digest and its promotion announcement | ✅ | — |
+| `deployer` — alpha deployer launches (§13) | ✅ | — |
+
+The two `alpha.confluence.*` features are deliberately **disjoint**: each tier
+gets its own evaluation of the state machine (§11), so routing both to Platinum
+would double-report the same token.
+
+An ID appearing in both tier vars resolves to **platinum**, so a config mistake
+cannot silently demote the owner. An unrecognised feature id logs an error and
+sends to nobody — the failure mode is silence, not a leak.
 
 ### Scheduling
 
@@ -811,6 +837,36 @@ alerts. They are now told apart and both are tracked, on their own terms:
 - Floor comes from OpenSea's public per-collection v2 endpoints, which do index
   this chain. Collections OpenSea doesn't list fall back to the lowest recent
   on-chain fill, and only that path is captioned as derived
+
+### Tiering — two evaluations, one per audience
+
+Gold and Platinum each get their **own run** of the confluence state machine,
+because the alert fires on the *Nth distinct wallet* and the tiers count
+different wallets:
+
+| Audience | Counts | Delivered to |
+|---|---|---|
+| `platinum` | Every active alpha wallet | Platinum only |
+| `gold` | Only wallets with `added_at <= ALPHA_LIBRARY_CUTOFF` | Gold only |
+
+A window therefore belongs to an audience: `alpha_confluence.audience`, with the
+uniqueness key `(chain, audience, token_address, first_buy_at)`. The same token
+can hold one open episode per audience, with its own ordinals and its own
+"since first ping" baseline.
+
+A buy by a wallet the audience cannot see does not open a window, advance a
+count, or occupy an ordinal — it is filtered both at entry and when the window's
+buys are replayed. Without that, Gold could be told "wallet #3" having never been
+shown #1 and #2.
+
+**The message body is identical for both tiers** — labels, addresses, buy
+amounts, all of it. The gate decides *which wallets can trigger an alert*, never
+how much an alert says. A redacted Gold variant was considered and rejected: two
+templates means a future edit can leak Platinum data into the Gold one.
+
+Gold is skipped entirely unless it has both subscribers and a valid cutoff, so
+the failure mode of a missing `ALPHA_LIBRARY_CUTOFF` is that Gold receives
+nothing — not that it receives the newest wallets.
 
 ### Thresholds
 

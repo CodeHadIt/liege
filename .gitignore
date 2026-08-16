@@ -57,3 +57,11 @@ data/tracked-wallets.json
 data/tracked-wallets.jsonc
 data/tracked-devs.json
 data/tracked-devs.jsonc
+
+# Ad-hoc on-chain investigations — local working notes and their datasets,
+# deliberately kept out of the repo. Regenerable from the public APIs and RPC.
+docs/research/
+data/stonkfun-h6qowz4-launches.json
+
+# Private planning notes — product/tier plans, not public documentation.
+docs/private/

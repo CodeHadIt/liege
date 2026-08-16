@@ -1,4 +1,4 @@
-import { getAlertsBot, broadcastAlert } from "./alerts-bot";
+import { getAlertsBot, broadcastAlert, FEATURE, type Feature } from "./alerts-bot";
 import { escapeHtml } from "./utils/format";
 
 // ── Alpha wallet confluence alerts ────────────────────────────────────────────
@@ -239,16 +239,36 @@ async function send(chatId: string, text: string): Promise<void> {
   });
 }
 
-export async function sendConfluenceAlert(t: ConfluenceToken, buyers: AlphaBuyer[]): Promise<void> {
+/**
+ * Which tier's evaluation produced this alert.
+ *
+ * Each audience runs its own confluence state machine and delivers to its own
+ * tier only — `gold` counts the frozen wallet library, `platinum` counts every
+ * wallet. The message body is identical for both: the tier gate decides WHICH
+ * wallets can trigger an alert, never how much the alert says.
+ */
+export type ConfluenceAudience = "gold" | "platinum";
+
+const AUDIENCE_FEATURE: Record<ConfluenceAudience, Feature> = {
+  gold: FEATURE.ALPHA_CONFLUENCE_GOLD,
+  platinum: FEATURE.ALPHA_CONFLUENCE_PLATINUM,
+};
+
+export async function sendConfluenceAlert(
+  t: ConfluenceToken,
+  buyers: AlphaBuyer[],
+  audience: ConfluenceAudience
+): Promise<void> {
   const text = formatConfluenceAlert(t, buyers);
-  await broadcastAlert((chatId) => send(chatId, text));
+  await broadcastAlert(AUDIENCE_FEATURE[audience], (chatId) => send(chatId, text));
 }
 
 export async function sendConfluenceFollowUp(
   t: ConfluenceToken,
   joiner: AlphaBuyer,
-  previous: AlphaBuyer[]
+  previous: AlphaBuyer[],
+  audience: ConfluenceAudience
 ): Promise<void> {
   const text = formatConfluenceFollowUp(t, joiner, previous);
-  await broadcastAlert((chatId) => send(chatId, text));
+  await broadcastAlert(AUDIENCE_FEATURE[audience], (chatId) => send(chatId, text));
 }

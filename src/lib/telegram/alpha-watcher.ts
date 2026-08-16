@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
-import { loadAlphaWallets } from "@/lib/api/alpha-wallets";
+import { loadAlphaWallets, type AlphaWallet } from "@/lib/api/alpha-wallets";
+import { recipientsFor, FEATURE } from "./alerts-bot";
 import {
   getRhLatestBlock,
   getTransfersToWallets,
@@ -23,6 +24,7 @@ import {
   WINDOW_REOPEN_COOLDOWN_MS,
   type AlphaBuyer,
   type ConfluenceToken,
+  type ConfluenceAudience,
 } from "./alpha-alerts";
 
 // ── Alpha wallet confluence watcher ───────────────────────────────────────────
@@ -208,6 +210,9 @@ export async function pollAlphaConfluence(): Promise<void> {
   // Oldest first, so a window opens on the genuinely first buy.
   buys.sort((a, b) => a.boughtAtMs - b.boughtAtMs);
 
+  // Resolved once per poll: the wallet set is identical for every buy in it.
+  const audiences = confluenceAudiences(wallets);
+
   const marketCache = new Map<string, TokenMarket>();
   for (const b of buys) {
     const nft = b.standard === "erc721";
@@ -293,8 +298,62 @@ export async function pollAlphaConfluence(): Promise<void> {
       }
     }
 
-    await advanceConfluence(b, m, nft);
+    for (const a of audiences) await advanceConfluence(b, m, nft, a);
   }
+}
+
+// ── Tiering: who each confluence evaluation is for ────────────────────────────
+//
+// Gold and Platinum get SEPARATE runs of the state machine, because confluence
+// fires on the Nth distinct wallet and the two tiers count different wallets.
+// Gold counts only the frozen library, so it must never number a wallet it
+// cannot see. Each run writes its own `alpha_confluence` rows (keyed by
+// `audience`) and delivers to its own tier only — so nobody is double-pinged.
+
+interface Audience {
+  name: ConfluenceAudience;
+  /** Wallet ids whose buys count for this audience. null = every wallet. */
+  eligible: Set<string> | null;
+}
+
+let _warnedNoCutoff = false;
+
+/**
+ * Build the audiences to evaluate this poll.
+ *
+ * Gold is skipped entirely unless it has both subscribers AND a configured
+ * cutoff. An unset `ALPHA_LIBRARY_CUTOFF` is treated as "not configured", never
+ * as "everything is library" — the failure mode of a bad cutoff must be that
+ * Gold receives nothing, not that it receives the newest wallets.
+ */
+function confluenceAudiences(wallets: Map<string, AlphaWallet & { id: string }>): Audience[] {
+  const out: Audience[] = [];
+
+  if (recipientsFor(FEATURE.ALPHA_CONFLUENCE_PLATINUM).length > 0) {
+    out.push({ name: "platinum", eligible: null });
+  }
+
+  if (recipientsFor(FEATURE.ALPHA_CONFLUENCE_GOLD).length > 0) {
+    const raw = process.env.ALPHA_LIBRARY_CUTOFF;
+    const cutoff = raw ? Date.parse(raw) : NaN;
+    if (!Number.isFinite(cutoff)) {
+      if (!_warnedNoCutoff) {
+        console.warn(
+          "[alpha] gold subscribers exist but ALPHA_LIBRARY_CUTOFF is unset/invalid — gold confluence disabled"
+        );
+        _warnedNoCutoff = true;
+      }
+    } else {
+      const eligible = new Set<string>();
+      for (const w of wallets.values()) {
+        const added = w.addedAt ? Date.parse(w.addedAt) : NaN;
+        if (Number.isFinite(added) && added <= cutoff) eligible.add(w.id);
+      }
+      out.push({ name: "gold", eligible });
+    }
+  }
+
+  return out;
 }
 
 /** Close any window whose 4h has elapsed — we stop watching the token entirely. */
@@ -313,13 +372,23 @@ async function closeExpiredWindows(): Promise<void> {
  * alpha wallet joins. Alerts run from the 2nd distinct wallet to the 5th, after
  * which the window closes.
  */
-async function advanceConfluence(buy: DetectedBuy, market: TokenMarket, nft: boolean): Promise<void> {
+async function advanceConfluence(
+  buy: DetectedBuy,
+  market: TokenMarket,
+  nft: boolean,
+  audience: Audience
+): Promise<void> {
+  // A buy by a wallet this audience cannot see must not open a window, advance a
+  // count, or leak into an ordinal.
+  if (audience.eligible && !audience.eligible.has(buy.walletId)) return;
+
   const now = new Date(buy.boughtAtMs);
 
   const { data: openRows } = await supabase
     .from("alpha_confluence")
     .select("*")
     .eq("chain", CHAIN)
+    .eq("audience", audience.name)
     .eq("token_address", buy.tokenAddress)
     .eq("is_closed", false)
     .gt("window_expires_at", now.toISOString())
@@ -334,6 +403,7 @@ async function advanceConfluence(buy: DetectedBuy, market: TokenMarket, nft: boo
       .from("alpha_confluence")
       .select("window_expires_at")
       .eq("chain", CHAIN)
+      .eq("audience", audience.name)
       .eq("token_address", buy.tokenAddress)
       .gte("window_expires_at", new Date(buy.boughtAtMs - WINDOW_REOPEN_COOLDOWN_MS).toISOString())
       .limit(1);
@@ -347,6 +417,7 @@ async function advanceConfluence(buy: DetectedBuy, market: TokenMarket, nft: boo
       .from("alpha_confluence")
       .insert({
         chain: CHAIN,
+        audience: audience.name,
         token_address: buy.tokenAddress,
         token_symbol: market.symbol,
         token_name: market.name,
@@ -362,7 +433,7 @@ async function advanceConfluence(buy: DetectedBuy, market: TokenMarket, nft: boo
       console.error("[alpha] failed to open window:", error.message);
       return;
     }
-    console.log(`[alpha] watching ${market.symbol} — first buy by ${buy.label}`);
+    console.log(`[alpha:${audience.name}] watching ${market.symbol} — first buy by ${buy.label}`);
     row = data;
     return;
   }
@@ -388,6 +459,9 @@ async function advanceConfluence(buy: DetectedBuy, market: TokenMarket, nft: boo
   const order: string[] = [];
   const perWallet = new Map<string, WindowBuy>();
   for (const r of (windowBuys ?? []) as WindowBuy[]) {
+    // Ineligible wallets are invisible to this audience: they neither count
+    // toward confluence nor occupy an ordinal.
+    if (audience.eligible && !audience.eligible.has(r.wallet_id)) continue;
     if (!perWallet.has(r.wallet_id)) {
       perWallet.set(r.wallet_id, r);
       order.push(r.wallet_id);
@@ -436,19 +510,21 @@ async function advanceConfluence(buy: DetectedBuy, market: TokenMarket, nft: boo
 
   if (distinct === MIN_WALLETS_TO_ALERT) {
     const buyers = order.map(buyerOf).filter((b): b is AlphaBuyer => b !== null);
-    await sendConfluenceAlert(token, buyers);
+    await sendConfluenceAlert(token, buyers, audience.name);
     patch.alerts_sent = (row.alerts_sent ?? 0) + 1;
     patch.first_alert_mc_usd = market.marketCapUsd; // baseline for "up N x"
     patch.last_alert_at = new Date().toISOString();
-    console.log(`[alpha] CONFLUENCE ${market.symbol}: ${buyers.map((b) => b.label).join(" + ")}`);
+    console.log(
+      `[alpha:${audience.name}] CONFLUENCE ${market.symbol}: ${buyers.map((b) => b.label).join(" + ")}`
+    );
   } else if (distinct > MIN_WALLETS_TO_ALERT) {
     const joiner = buyerOf(order[order.length - 1]);
     const previous = order.slice(0, -1).map(buyerOf).filter((b): b is AlphaBuyer => b !== null);
     if (joiner) {
-      await sendConfluenceFollowUp(token, joiner, previous);
+      await sendConfluenceFollowUp(token, joiner, previous, audience.name);
       patch.alerts_sent = (row.alerts_sent ?? 0) + 1;
       patch.last_alert_at = new Date().toISOString();
-      console.log(`[alpha] alpha #${distinct} joined ${market.symbol}: ${joiner.label}`);
+      console.log(`[alpha:${audience.name}] alpha #${distinct} joined ${market.symbol}: ${joiner.label}`);
     }
   }
 

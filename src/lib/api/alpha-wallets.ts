@@ -41,6 +41,12 @@ export interface AlphaWallet {
   source: string | null;
   notes?: string | null;
   isActive?: boolean;
+  /**
+   * When the wallet entered the table. Load-bearing for tiering: wallets added
+   * on or before ALPHA_LIBRARY_CUTOFF form the frozen "library" that Gold
+   * subscribers see, and anything newer is Platinum-only.
+   */
+  addedAt?: string | null;
 }
 
 /**
@@ -148,6 +154,7 @@ export async function loadAlphaWallets(chain: string): Promise<Map<string, Alpha
       maxTxOnAToken: r.max_tx_on_a_token,
       source: r.source,
       isActive: r.is_active,
+      addedAt: r.added_at ?? null,
     });
   }
   return out;

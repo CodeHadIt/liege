@@ -16,7 +16,7 @@ import {
   type BscLaunch,
 } from "@/lib/api/bsc-onchain";
 import { fetchBscTokenStats, bscExplorerTokenUrl } from "@/lib/api/bsc-launches";
-import { getAlertsBot, broadcastAlert } from "./alerts-bot";
+import { getAlertsBot, broadcastAlert, FEATURE } from "./alerts-bot";
 import {
   LAUNCH_WINDOW_MS,
   LAUNCH_WINDOW_LABEL,
@@ -328,7 +328,7 @@ export async function pollBscStockQuotes(): Promise<void> {
       seen.set(key, { live: q.live });
       if (q.live) startFirstTokenWatch(q);
       try {
-        await broadcastAlert((chatId) => sendQuoteAlert(chatId, q, "listed"));
+        await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendQuoteAlert(chatId, q, "listed"));
         console.log(`[bsc-stocks] alerted new quote: ${q.symbol} on ${q.platform} (live=${q.live})`);
       } catch (err) {
         console.error("[bsc-stocks] failed to send listing alert:", err);
@@ -341,7 +341,7 @@ export async function pollBscStockQuotes(): Promise<void> {
       seen.set(key, { live: true });
       startFirstTokenWatch(q);
       try {
-        await broadcastAlert((chatId) => sendQuoteAlert(chatId, q, "live"));
+        await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendQuoteAlert(chatId, q, "live"));
         console.log(`[bsc-stocks] alerted quote went live: ${q.symbol} on ${q.platform}`);
       } catch (err) {
         console.error("[bsc-stocks] failed to send go-live alert:", err);
@@ -462,7 +462,7 @@ export async function pollBscOnchainLaunches(): Promise<void> {
       }
 
       const stats = await fetchBscTokenStats(launch.tokenAddress);
-      await broadcastAlert((chatId) => sendFirstTokenAlert(chatId, w, { launch, ...stats }, w.launchCount));
+      await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendFirstTokenAlert(chatId, w, { launch, ...stats }, w.launchCount));
       console.log(
         `[bsc-stocks] alerted launch #${w.launchCount} ${launch.symbol || launch.tokenAddress} vs ${w.symbol} on ${w.platform}`
       );

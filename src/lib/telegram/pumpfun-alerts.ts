@@ -23,7 +23,7 @@ import {
   type PumpCoin,
   type QuoteMintMeta,
 } from "@/lib/api/pumpfun-quotes";
-import { getAlertsBot, broadcastAlert } from "./alerts-bot";
+import { getAlertsBot, broadcastAlert, FEATURE } from "./alerts-bot";
 import {
   LAUNCH_WINDOW_MS,
   LAUNCH_WINDOW_LABEL,
@@ -87,7 +87,7 @@ async function ensureQuoteWatched(mint: string, announce: boolean): Promise<Watc
     seenQuotes.add(mint);
     if (announce) {
       try {
-        await broadcastAlert((chatId) => sendQuoteAlert(chatId, meta));
+        await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendQuoteAlert(chatId, meta));
         console.log(`[pumpfun] alerted new quote asset: ${meta.symbol} (${mint})`);
       } catch (err) {
         console.error("[pumpfun] failed to send quote-asset alert:", err);
@@ -347,7 +347,7 @@ export async function pollPumpFunLaunches(): Promise<void> {
 
       w.launchCount++;
       try {
-        await broadcastAlert((chatId) => sendLaunchAlert(chatId, w.quote, coin, w.launchCount));
+        await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendLaunchAlert(chatId, w.quote, coin, w.launchCount));
         console.log(`[pumpfun] alerted launch #${w.launchCount} ${coin.symbol} vs ${w.quote.symbol}`);
       } catch (err) {
         console.error("[pumpfun] failed to send launch alert:", err);

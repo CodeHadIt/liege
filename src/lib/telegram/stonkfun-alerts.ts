@@ -10,7 +10,7 @@ import {
   type StonkFunTokenDetails,
   type QuoteToken,
 } from "@/lib/api/stonkfun";
-import { getAlertsBot, broadcastAlert } from "./alerts-bot";
+import { getAlertsBot, broadcastAlert, FEATURE } from "./alerts-bot";
 import {
   LAUNCH_WINDOW_MS,
   LAUNCH_WINDOW_LABEL,
@@ -144,7 +144,7 @@ export async function pollStonkFunCreations(): Promise<void> {
     }
     try {
       const details = await enrichCreation(c);
-      await broadcastAlert((chatId) => sendAlert(chatId, details));
+      await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendAlert(chatId, details));
       console.log(`[stonkfun] alerted: ${details.symbol} vs ${details.pairedSymbol ?? "?"}`);
     } catch (err) {
       console.error("[stonkfun] failed to send alert:", err);
@@ -345,7 +345,7 @@ export async function pollStonkFunQuoteTokens(): Promise<void> {
     }
     startQuoteWatch(q);
     try {
-      await broadcastAlert((chatId) => sendQuoteAlert(chatId, q));
+      await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendQuoteAlert(chatId, q));
       console.log(`[stonkfun] alerted new quote token: ${q.symbol} (${q.category})`);
     } catch (err) {
       console.error("[stonkfun] failed to send quote-token alert:", err);
@@ -542,7 +542,7 @@ export async function pollStonkFunLaunches(): Promise<void> {
       // is still reported rather than delayed.
       const details = await enrichLaunch(l);
       try {
-        await broadcastAlert((chatId) => sendLaunchAlert(chatId, w.quote, details, w.launchCount));
+        await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendLaunchAlert(chatId, w.quote, details, w.launchCount));
         console.log(`[stonkfun] alerted launch #${w.launchCount} ${l.symbol} vs ${w.quote.symbol}`);
       } catch (err) {
         console.error("[stonkfun] failed to send launch alert:", err);
@@ -551,7 +551,7 @@ export async function pollStonkFunLaunches(): Promise<void> {
       const n = (pinnedCounts.get(l.quoteMint) ?? 0) + 1;
       pinnedCounts.set(l.quoteMint, n);
       try {
-        await broadcastAlert((chatId) => sendPinnedAlert(chatId, l, n));
+        await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendPinnedAlert(chatId, l, n));
         console.log(`[stonkfun] alerted pinned launch #${n} ${l.symbol} vs ${l.quoteSymbol}`);
       } catch (err) {
         console.error("[stonkfun] failed to send pinned launch alert:", err);

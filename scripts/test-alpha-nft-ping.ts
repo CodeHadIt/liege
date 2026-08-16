@@ -153,8 +153,8 @@ async function main() {
     console.log("\nalerts bot not configured — printed only.");
     return;
   }
-  await sendConfluenceAlert(token, first);
-  if (joiner) await sendConfluenceFollowUp(token, joiner, first);
+  await sendConfluenceAlert(token, first, "platinum");
+  if (joiner) await sendConfluenceFollowUp(token, joiner, first, "platinum");
   console.log(`\nsent to ${alertRecipients().length} recipient(s)`);
 }
 

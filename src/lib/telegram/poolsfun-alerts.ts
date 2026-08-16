@@ -29,7 +29,7 @@ import {
   rhExplorerTokenUrl,
   type CreatedToken,
 } from "@/lib/api/robinhood-stocks";
-import { getAlertsBot, broadcastAlert } from "./alerts-bot";
+import { getAlertsBot, broadcastAlert, FEATURE } from "./alerts-bot";
 import {
   LAUNCH_WINDOW_MS,
   LAUNCH_WINDOW_LABEL,
@@ -176,7 +176,7 @@ export async function pollPoolsFunQuoteAssets(): Promise<void> {
 
     console.log(`[poolsfun] watching ${watch.symbol} for launches over ${LAUNCH_WINDOW_LABEL}`);
     try {
-      await broadcastAlert((chatId) => sendQuoteAlert(chatId, watch));
+      await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendQuoteAlert(chatId, watch));
       console.log(`[poolsfun] alerted new quote asset: ${watch.symbol} (${ev.asset})`);
     } catch (err) {
       console.error("[poolsfun] failed to send quote-asset alert:", err);
@@ -327,7 +327,7 @@ export async function pollPoolsFunLaunches(): Promise<void> {
 
     w.launchCount++;
     try {
-      await broadcastAlert((chatId) => sendLaunchAlert(chatId, w, enriched, l.creator, w.launchCount));
+      await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendLaunchAlert(chatId, w, enriched, l.creator, w.launchCount));
       console.log(`[poolsfun] alerted launch #${w.launchCount} ${enriched.symbol} vs ${w.symbol}`);
     } catch (err) {
       console.error("[poolsfun] failed to send launch alert:", err);

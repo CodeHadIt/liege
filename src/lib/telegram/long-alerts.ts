@@ -21,7 +21,7 @@ import {
   FLAP_ROBINHOOD_CHAIN_ID,
   type FlapPaymentToken,
 } from "@/lib/api/flap";
-import { getAlertsBot, broadcastAlert } from "./alerts-bot";
+import { getAlertsBot, broadcastAlert, FEATURE } from "./alerts-bot";
 import {
   LAUNCH_WINDOW_MS,
   LAUNCH_WINDOW_LABEL,
@@ -107,7 +107,7 @@ export async function pollLongStocks(): Promise<void> {
     // on-chain event topics) for its inaugural token launch.
     watchedStocks.set(s.contractAddress.toLowerCase(), { symbol: s.symbol, openedAt: Date.now(), launchCount: 0 });
     try {
-      await broadcastAlert((chatId) => sendAlert(chatId, s));
+      await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendAlert(chatId, s));
       console.log(`[long] alerted new stock: ${s.symbol} (${s.name})`);
     } catch (err) {
       console.error("[long] failed to send alert:", err);
@@ -276,7 +276,7 @@ export async function pollLongOnchainCreations(): Promise<void> {
       const platform = await resolveLaunchpad(ev.hooks, ev.txHash, other);
       // best-effort market stats (may be empty for a brand-new pool)
       const enriched = await enrichCreatedToken(token);
-      await broadcastAlert((chatId) => sendLaunchAlert(chatId, w.symbol, enriched, w.launchCount, platform));
+      await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendLaunchAlert(chatId, w.symbol, enriched, w.launchCount, platform));
       console.log(`[long] alerted launch #${w.launchCount} ${meta.symbol} vs ${w.symbol} on ${platform.name}`);
     } catch (err) {
       console.error("[long] failed to send first-token alert:", err);
@@ -367,7 +367,7 @@ export async function pollFlapRobinhoodStocks(): Promise<void> {
       watchedStocks.set(s.address.toLowerCase(), { symbol: s.symbol, openedAt: Date.now(), launchCount: 0 });
     }
     try {
-      await broadcastAlert((chatId) => sendFlapRhAlert(chatId, s));
+      await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendFlapRhAlert(chatId, s));
       console.log(`[long] alerted new Flap stock quote: ${s.symbol} (${s.name})`);
     } catch (err) {
       console.error("[long] failed to send Flap stock alert:", err);

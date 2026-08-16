@@ -4,7 +4,7 @@ import {
   sunriseTokenUrl,
   type SunriseToken,
 } from "@/lib/api/sunrise";
-import { getAlertsBot, broadcastAlert } from "./alerts-bot";
+import { getAlertsBot, broadcastAlert, FEATURE } from "./alerts-bot";
 import { escapeHtml } from "./utils/format";
 
 // Which asset classes to alert on. Sunrise's focus (and the user's) is tokenized
@@ -92,7 +92,7 @@ export async function pollSunriseStocks(): Promise<void> {
 
   for (const t of fresh) {
     seen.add(t.address);
-    await broadcastAlert((chatId) => sendAlert(chatId, t));
+    await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendAlert(chatId, t));
     console.log(`[sunrise] alerted new stock pair: ${t.symbol} (${t.name})`);
   }
 }

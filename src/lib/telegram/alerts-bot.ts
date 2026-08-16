@@ -10,10 +10,13 @@ import type { Context } from "grammy";
 // Env:
 //   TELEGRAM_ALERTS_API_KEY        — the Liège Alerts bot token (from BotFather)
 //   TELEGRAM_ALERTS_WEBHOOK_SECRET — optional webhook secret-token check
-//   ALERTS_ALLOWLIST               — comma/space-separated chat IDs allowed to
-//                                    use the bot and receive alerts. Falls back
-//                                    to the legacy per-source *_ALERT_CHAT_ID
-//                                    vars for backward compatibility.
+//   ALERTS_PLATINUM_IDS            — chat IDs receiving EVERY feed (the owner)
+//   ALERTS_GOLD_IDS                — chat IDs receiving the shared feeds only
+//   ALERTS_ALLOWLIST               — legacy single-tier list. When the tier vars
+//                                    are unset, everyone on it is treated as
+//                                    PLATINUM, so behaviour is unchanged until
+//                                    tiers are configured. Falls back in turn to
+//                                    the legacy per-source *_ALERT_CHAT_ID vars.
 
 function parseIds(s: string | undefined): string[] {
   return (s ?? "")
@@ -22,13 +25,85 @@ function parseIds(s: string | undefined): string[] {
     .filter(Boolean);
 }
 
+// ── Tiers ─────────────────────────────────────────────────────────────────────
+
+export type Tier = "platinum" | "gold";
+
 /**
- * The allow-list: chat IDs permitted to use the bot AND receive alerts. A single
- * source of truth for "who can use Liège Alerts". `ALERTS_ALLOWLIST` is
- * authoritative; otherwise we fall back to the legacy single-target env vars so
- * existing deployments keep working after the split.
+ * Every gated feed. A feature id is what a caller asks to broadcast to — no feed
+ * resolves chat IDs itself, which is what keeps the tier rules in one place.
  */
-export function alertRecipients(): string[] {
+export const FEATURE = {
+  /** Launch feeds — shared by every tier. */
+  LAUNCH: "launch",
+  /** Alpha confluence over the frozen wallet library — Gold's view. */
+  ALPHA_CONFLUENCE_GOLD: "alpha.confluence.gold",
+  /** Alpha confluence over ALL wallets, newly promoted ones included. */
+  ALPHA_CONFLUENCE_PLATINUM: "alpha.confluence.platinum",
+  /** Daily $2M ATH digest, and the wallet-promotion announcement inside it. */
+  ATH_DAILY: "ath.daily",
+  /** Alpha deployer (dev wallet) launches. */
+  DEPLOYER: "deployer",
+} as const;
+
+export type Feature = (typeof FEATURE)[keyof typeof FEATURE];
+
+/**
+ * Which tiers receive which feature.
+ *
+ * The two alpha entries are deliberately disjoint: each tier gets its OWN
+ * evaluation of the confluence state machine (Gold's counts only library
+ * wallets), so sending both to Platinum would double-report the same token.
+ */
+const FEATURE_TIERS: Record<Feature, readonly Tier[]> = {
+  [FEATURE.LAUNCH]: ["platinum", "gold"],
+  [FEATURE.ALPHA_CONFLUENCE_GOLD]: ["gold"],
+  [FEATURE.ALPHA_CONFLUENCE_PLATINUM]: ["platinum"],
+  [FEATURE.ATH_DAILY]: ["platinum"],
+  [FEATURE.DEPLOYER]: ["platinum"],
+};
+
+/**
+ * chat ID → tier. An ID listed in both vars resolves to platinum, so a mistake
+ * in config can never silently demote the owner.
+ */
+export function subscriberTiers(): Map<string, Tier> {
+  const platinum = parseIds(process.env.ALERTS_PLATINUM_IDS);
+  const gold = parseIds(process.env.ALERTS_GOLD_IDS);
+
+  const out = new Map<string, Tier>();
+  // No tier config at all → preserve today's behaviour exactly: one list, and
+  // everyone on it sees everything. Never leaves recipients silently downgraded.
+  if (platinum.length === 0 && gold.length === 0) {
+    for (const id of legacyRecipients()) out.set(id, "platinum");
+    return out;
+  }
+  for (const id of gold) out.set(id, "gold");
+  for (const id of platinum) out.set(id, "platinum"); // platinum wins
+  return out;
+}
+
+export function tierOf(id: string | number | undefined): Tier | null {
+  if (id == null) return null;
+  return subscriberTiers().get(String(id)) ?? null;
+}
+
+/** Chat IDs entitled to a given feature. The ONLY way a feed reaches a chat. */
+export function recipientsFor(feature: Feature): string[] {
+  const tiers = FEATURE_TIERS[feature];
+  if (!tiers) {
+    console.error(`[alerts] unknown feature "${feature}" — refusing to send`);
+    return [];
+  }
+  const out: string[] = [];
+  for (const [id, tier] of subscriberTiers()) {
+    if (tiers.includes(tier)) out.push(id);
+  }
+  return out;
+}
+
+/** The pre-tier list, kept as the fallback source for `subscriberTiers`. */
+function legacyRecipients(): string[] {
   const master = parseIds(process.env.ALERTS_ALLOWLIST);
   if (master.length) return [...new Set(master)];
   const legacy = [
@@ -37,6 +112,17 @@ export function alertRecipients(): string[] {
     ...parseIds(process.env.SUNRISE_ALERT_CHAT_ID),
   ];
   return [...new Set(legacy)];
+}
+
+/**
+ * Everyone permitted to *use* the bot, across all tiers — the interaction gate,
+ * not a delivery list.
+ *
+ * Feeds must NOT call this. Delivery goes through `recipientsFor(feature)`, so
+ * that a new feed cannot reach a chat without declaring which tiers may see it.
+ */
+export function alertRecipients(): string[] {
+  return [...subscriberTiers().keys()];
 }
 
 export function isAllowed(id: string | number | undefined): boolean {
@@ -129,12 +215,19 @@ export async function getAlertsBot(): Promise<Bot<Context>> {
 let _warnedNoToken = false;
 
 /**
- * Send an alert to every allow-listed recipient. `send` builds and delivers the
- * message for one chat ID (so callers keep their photo/text fallback logic).
- * No-ops (with a one-time warning) when the alerts bot isn't configured, and
- * isolates per-recipient failures so one bad chat can't block the rest.
+ * Send an alert to every recipient entitled to `feature`. `send` builds and
+ * delivers the message for one chat ID (so callers keep their photo/text
+ * fallback logic). No-ops (with a one-time warning) when the alerts bot isn't
+ * configured, and isolates per-recipient failures so one bad chat can't block
+ * the rest.
+ *
+ * The feature argument is mandatory: it is the single point where tier rules are
+ * applied, so a feed cannot reach a chat without stating who may see it.
  */
-export async function broadcastAlert(send: (chatId: string) => Promise<void>): Promise<void> {
+export async function broadcastAlert(
+  feature: Feature,
+  send: (chatId: string) => Promise<void>
+): Promise<void> {
   if (!hasAlertsBot()) {
     if (!_warnedNoToken) {
       console.warn("[alerts] TELEGRAM_ALERTS_API_KEY not set — alert pings disabled");
@@ -142,14 +235,15 @@ export async function broadcastAlert(send: (chatId: string) => Promise<void>): P
     }
     return;
   }
-  const ids = alertRecipients();
-  if (ids.length === 0) {
+  if (subscriberTiers().size === 0) {
     if (!_warnedNoToken) {
-      console.warn("[alerts] no recipients — set ALERTS_ALLOWLIST (or a *_ALERT_CHAT_ID)");
+      console.warn("[alerts] no recipients — set ALERTS_PLATINUM_IDS / ALERTS_GOLD_IDS (or ALERTS_ALLOWLIST)");
       _warnedNoToken = true;
     }
     return;
   }
+  const ids = recipientsFor(feature);
+  if (ids.length === 0) return; // nobody is entitled to this feed — not an error
   for (const id of ids) {
     try {
       await send(id);

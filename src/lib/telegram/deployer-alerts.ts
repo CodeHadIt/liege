@@ -14,7 +14,7 @@ import {
   type DeployerToken,
 } from "@/lib/api/alpha-deployers";
 import { RH_EXPLORER } from "@/lib/api/ath-tokens";
-import { getAlertsBot, broadcastAlert } from "./alerts-bot";
+import { getAlertsBot, broadcastAlert, FEATURE } from "./alerts-bot";
 import { escapeHtml } from "./utils/format";
 import { mc } from "./alpha-alerts";
 import { rateLimit } from "@/lib/rate-limiter";
@@ -168,7 +168,7 @@ export async function pollDeployerLaunches(): Promise<void> {
           history,
           rate
         );
-        await broadcastAlert((chatId) => send(chatId, text));
+        await broadcastAlert(FEATURE.DEPLOYER, (chatId) => send(chatId, text));
         await supabase
           .from("deployer_launches")
           .update({ alerted_at: new Date().toISOString(), mc_at_alert_usd: mcUsd })
