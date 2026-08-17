@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-17 (StonkFun launches on the public API, with a durable cursor)
+**Last updated:** 2026-08-17 (access-only /start and /status; StonkFun cursor)
 
 ---
 
@@ -87,6 +87,26 @@ are still honoured as a fallback allow-list when `ALERTS_ALLOWLIST` is unset.
 
 `broadcastAlert()` isolates per-recipient failures, so one bad chat cannot block
 delivery to the rest.
+
+### Commands, and what they must never say
+
+`/start` and `/status` both answer one question — is this chat allowed or not —
+and nothing else:
+
+| | Allowed | Not allowed |
+|---|---|---|
+| `/start` | "You are on the allowlist… you will now start receiving on-chain alerts" | "You cannot start using this bot unless you are on the allowlist" + their ID |
+| `/status` | "You are allowed to use this bot" | "You do not have permission to use this bot" + their ID |
+
+**No reply names a tier, a feed, or a chain.** A Gold user must not be able to
+infer that other feeds exist, and a stranger should learn nothing about what the
+bot does. This is why the old `/start` feed list and `/status` recipient count
+were removed rather than made tier-aware — there is no wording of "here is what
+you get" that does not also imply "here is what you don't".
+
+`/start`, `/status`, `/id` and `/help` are reachable by anyone, so a stranger can
+be told where they stand and can find their own ID to send on. Every other update
+from a non-allow-listed chat is dropped **without a reply**.
 
 ### Tiers
 

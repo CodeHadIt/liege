@@ -147,34 +147,58 @@ export async function getAlertsBot(): Promise<Bot<Context>> {
 
     const bot = new Bot<Context>(token);
 
-    // Allow-list gate: anyone not on the list is politely rejected and told
-    // their own ID, so the owner can add them. Non-allowed updates are dropped.
+    /**
+     * Commands a stranger is allowed to reach, so they can be told where they
+     * stand and find their own ID to send on. Every other update from a
+     * non-allow-listed chat is dropped without a reply.
+     */
+    const OPEN_COMMANDS = /^\/(start|status|id|help)(@[\w]+)?(\s|$)/i;
+
     bot.use(async (ctx, next) => {
       const id = ctx.chat?.id ?? ctx.from?.id;
       if (isAllowed(id)) return next();
-      if (ctx.chat) {
-        await ctx
-          .reply(
-            `⛔ <b>Liège Alerts</b> is private.\n\n` +
-              `Your Telegram ID: <code>${id ?? "unknown"}</code>\n` +
-              `Ask the owner to add you to the allow-list.`,
-            { parse_mode: "HTML" }
-          )
-          .catch(() => {});
-      }
+      // Handlers below answer strangers themselves, so the refusal wording lives
+      // in one place per command rather than being duplicated here.
+      if (OPEN_COMMANDS.test(ctx.message?.text ?? "")) return next();
       // no next() → drop the update
     });
 
+    // No feed list and no tier wording in any reply below. What the bot can do,
+    // and that access has levels at all, are not a stranger's business — and a
+    // Gold user must not be able to infer that other feeds exist.
+
     bot.command("start", async (ctx) => {
+      const id = ctx.chat?.id ?? ctx.from?.id;
+      if (isAllowed(id)) {
+        await ctx.reply(
+          `✅ <b>You are on the allowlist.</b>\n\n` +
+            `You will now start receiving on-chain alerts.`,
+          { parse_mode: "HTML" }
+        );
+        return;
+      }
       await ctx.reply(
-        `🔔 <b>Liège Alerts</b>\n\n` +
-          `You'll receive live pings for new launches across supported chains:\n` +
-          `• 📈 StonkFun (Solana) — new stock &amp; on-chain quote assets, plus the first token launched against each\n` +
-          `• 🌅 Sunrise (Solana) — new stock pairs\n` +
-          `• 🟢 Robinhood Chain — new stocks and the first token vs each, with the launchpad (Long, Flap, Pons, Uniswap…)\n` +
-          `• 🟡 BNB Chain — new tokenized-stock quotes on Four.meme &amp; Flap, plus the first token launched against each\n\n` +
-          `Flap runs on both BNB Chain and Robinhood Chain, so its alerts always name the chain.\n\n` +
-          `More chains &amp; platforms coming. This bot is private — use /status any time.`,
+        `⛔ <b>You cannot start using this bot unless you are on the allowlist.</b>\n\n` +
+          `Your Telegram ID: <code>${id ?? "unknown"}</code>\n` +
+          `Send it to the owner to request access.`,
+        { parse_mode: "HTML" }
+      );
+    });
+
+    bot.command("status", async (ctx) => {
+      const id = ctx.chat?.id ?? ctx.from?.id;
+      if (isAllowed(id)) {
+        await ctx.reply(
+          `✅ <b>You are allowed to use this bot.</b>\n\n` +
+            `On-chain alerts are being delivered to this chat.`,
+          { parse_mode: "HTML" }
+        );
+        return;
+      }
+      await ctx.reply(
+        `⛔ <b>You do not have permission to use this bot.</b>\n\n` +
+          `Your Telegram ID: <code>${id ?? "unknown"}</code>\n` +
+          `Send it to the owner to request access.`,
         { parse_mode: "HTML" }
       );
     });
@@ -182,7 +206,8 @@ export async function getAlertsBot(): Promise<Bot<Context>> {
     bot.command("help", async (ctx) => {
       await ctx.reply(
         `<b>Liège Alerts</b> — private alert feed.\n\n` +
-          `/status — show what's active and who's on the allow-list\n` +
+          `/start — check your access and begin receiving alerts\n` +
+          `/status — whether you are allowed to use this bot\n` +
           `/id — show your Telegram ID\n` +
           `/help — this message`,
         { parse_mode: "HTML" }
@@ -190,19 +215,9 @@ export async function getAlertsBot(): Promise<Bot<Context>> {
     });
 
     bot.command("id", async (ctx) => {
-      await ctx.reply(`Your Telegram ID: <code>${ctx.chat?.id}</code>`, { parse_mode: "HTML" });
-    });
-
-    bot.command("status", async (ctx) => {
-      const ids = alertRecipients();
-      await ctx.reply(
-        `✅ <b>Liège Alerts is running.</b>\n\n` +
-          `Recipients on allow-list: <b>${ids.length}</b>\n` +
-          `Feeds: StonkFun · Sunrise · Robinhood Chain · BNB Chain (Four.meme, Flap)\n` +
-          `Every feed pings on a new pairing asset, then on the first token launched against it.\n` +
-          `<i>Push-only — nothing you send is acted on beyond these commands.</i>`,
-        { parse_mode: "HTML" }
-      );
+      await ctx.reply(`Your Telegram ID: <code>${ctx.chat?.id ?? ctx.from?.id}</code>`, {
+        parse_mode: "HTML",
+      });
     });
 
     return bot;
