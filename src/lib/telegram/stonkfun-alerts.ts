@@ -11,6 +11,7 @@ import {
   type QuoteToken,
 } from "@/lib/api/stonkfun";
 import { getAlertsBot, broadcastAlert, FEATURE } from "./alerts-bot";
+import { getFeedCursor, setFeedCursor } from "@/lib/api/feed-cursors";
 import {
   LAUNCH_WINDOW_MS,
   LAUNCH_WINDOW_LABEL,
@@ -465,7 +466,26 @@ async function sendLaunchAlert(
  */
 /** Launch mints already handled, so each is reported exactly once. */
 const seenLaunches = new Set<string>();
-let launchesSeeded = false;
+
+/** Cursor identity in `feed_cursors`. */
+const LAUNCH_FEED = "stonkfun.launches";
+
+/** In-process copy of the cursor, so a poll costs one read only on first pass. */
+let cursor: string | null = null;
+let cursorLoaded = false;
+
+/**
+ * How far back a resumed watcher will still report.
+ *
+ * Larger than the steady-state staleness bound because catching up is the whole
+ * point: after a deploy, a launch from an hour ago is still inside its 36h watch
+ * window and still worth knowing about. Anything older than this is treated as
+ * history and skipped, so a long outage cannot dump a day of backlog.
+ */
+const CATCHUP_MAX_AGE_SECONDS = 6 * 60 * 60;
+
+/** Ceiling on alerts from one pass, so a huge gap cannot flood the channel. */
+const MAX_ALERTS_PER_PASS = 25;
 
 /**
  * One poll cycle over StonkFun's launch feed.
@@ -490,20 +510,34 @@ export async function pollStonkFunLaunches(): Promise<void> {
     }
   }
 
-  const launches = await fetchStonkFunLaunches();
-  // null is a fetch failure, not an empty feed — hold state rather than advance
-  // a cursor over launches we never saw.
+  // The cursor survives restarts, so a redeploy resumes where the last pass
+  // finished instead of re-seeding and silently dropping the downtime.
+  if (!cursorLoaded) {
+    cursor = await getFeedCursor(LAUNCH_FEED);
+    cursorLoaded = true;
+    if (cursor) console.log(`[stonkfun] resuming launches from ${cursor}`);
+  }
+
+  // Seeding only needs enough to establish a position, so it reads one page.
+  // Resuming may have a real backlog to walk, so it is allowed to paginate —
+  // 10 pages is ~8 days of downtime at the observed launch rate.
+  const launches = await fetchStonkFunLaunches({ since: cursor, maxPages: cursor ? 10 : 1 });
+  // null is a fetch failure, not an empty feed — hold the cursor rather than
+  // advance it over launches we never saw.
   if (launches === null) return;
   if (launches.length === 0) return;
 
-  if (!launchesSeeded) {
-    for (const l of launches) seenLaunches.add(l.mint);
+  // No cursor means this feed has never run. Seed silently: the backlog is
+  // history, not news.
+  if (cursor === null) {
     for (const l of launches) {
+      seenLaunches.add(l.mint);
       if (PINNED_QUOTE_MINTS.has(l.quoteMint)) {
         pinnedCounts.set(l.quoteMint, (pinnedCounts.get(l.quoteMint) ?? 0) + 1);
       }
     }
-    launchesSeeded = true;
+    cursor = launches[0].createdAt; // feed is newest-first
+    await setFeedCursor(LAUNCH_FEED, cursor);
     console.log(`[stonkfun] seeded ${launches.length} launches from the feed (no alert on backlog)`);
     return;
   }
@@ -513,6 +547,8 @@ export async function pollStonkFunLaunches(): Promise<void> {
     .filter((l) => !seenLaunches.has(l.mint))
     .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
 
+  let alertsThisPass = 0;
+
   for (const l of fresh) {
     seenLaunches.add(l.mint);
 
@@ -521,10 +557,18 @@ export async function pollStonkFunLaunches(): Promise<void> {
     if (!w && !pinned) continue; // launched against something we're not watching
 
     const ageMs = now - (Date.parse(l.createdAt) || now);
-    if (ageMs > MAX_ALERT_AGE_SECONDS * 1000) {
+    if (ageMs > CATCHUP_MAX_AGE_SECONDS * 1000) {
       console.log(`[stonkfun] skipping stale launch ${l.symbol} (${Math.round(ageMs / 60000)}m old)`);
       continue;
     }
+
+    if (alertsThisPass >= MAX_ALERTS_PER_PASS) {
+      console.log(
+        `[stonkfun] hit the ${MAX_ALERTS_PER_PASS}-alert cap for this pass — remaining backlog skipped`
+      );
+      break;
+    }
+    alertsThisPass++;
 
     if (w) {
       // Every launch in the window is reported, not only the first — but a
@@ -557,6 +601,16 @@ export async function pollStonkFunLaunches(): Promise<void> {
         console.error("[stonkfun] failed to send pinned launch alert:", err);
       }
     }
+  }
+
+  // Advance past everything this pass saw, including launches that were skipped
+  // as stale, unwatched or over a cap — they have been considered and must not
+  // be reconsidered after a restart. Only a fetch failure (handled above) leaves
+  // the cursor where it was.
+  const newest = launches[0]?.createdAt;
+  if (newest && (!cursor || Date.parse(newest) > Date.parse(cursor))) {
+    cursor = newest;
+    await setFeedCursor(LAUNCH_FEED, newest);
   }
 
   if (seenLaunches.size > 5000) {

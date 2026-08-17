@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-16 (two-tier delivery; per-audience alpha confluence)
+**Last updated:** 2026-08-17 (StonkFun launches on the public API, with a durable cursor)
 
 ---
 
@@ -151,8 +151,9 @@ reserved for the chain marker and used for nothing else.
 | | |
 |---|---|
 | Code | [`stonkfun-alerts.ts`](../../src/lib/telegram/stonkfun-alerts.ts), [`api/stonkfun.ts`](../../src/lib/api/stonkfun.ts) |
+| Cursor | `feed_cursors` row `stonkfun.launches` ([`api/feed-cursors.ts`](../../src/lib/api/feed-cursors.ts)) |
 | Quote catalog | `GET https://www.stonkfun.xyz/api/quote-tokens` (public JSON) |
-| Launch detection | `GET /api/launches` — StonkFun's own feed, quote mint included |
+| Launch detection | `GET /api/public/v1/launches` — StonkFun's own ledger, quote mint included, `since` + pagination |
 | Deployer | `5CEbueQnq1Ym2uSSx2xXds3jQAqT1BDnkA59RZobSPAG` |
 
 StonkFun is custodial: every token is minted by one deployer wallet. A genuine
@@ -299,15 +300,61 @@ cannot be both — pinned assets are `custom`, which the denylist keeps out of t
 windowed set — and the windowed path is checked first regardless, so a future
 overlap would produce one alert rather than two.
 
+### Resuming after downtime — the durable cursor
+
+The watcher keeps its position in `feed_cursors` under `stonkfun.launches`, and
+resumes with `?since=<cursor>`.
+
+This replaced a silent data-loss bug, which was the real cost of the old design
+— **not** the 100-record window. Position lived in a module-level flag, so every
+restart re-seeded from the live feed and returned without alerting: anything
+launched during the downtime was absorbed into the seed set and never reported.
+That was paid on each redeploy, not merely during rare outages, and it produced
+no error to notice.
+
+| | |
+|---|---|
+| No cursor (first ever run) | Seed one page silently — the backlog is history, not news |
+| Cursor present | Fetch everything since it, oldest-first, and report it |
+| Fetch failure | Hold the cursor; never advance over launches never seen |
+
+Bounds on a resumed pass: launches older than **6h** are skipped as history, and
+at most **25** alerts are sent per pass, so a long outage cannot dump a day of
+backlog into the channel. The cursor advances past everything the pass *saw* —
+including launches skipped as stale, unwatched or over a cap — so a restart
+cannot reconsider them.
+
+`setFeedCursor` only ever moves forward, so a late page or two instances racing
+cannot rewind the feed into a replay. A missing `feed_cursors` table degrades to
+the old behaviour (silent seed) rather than throwing.
+
+### Why the public API, not the internal one
+
+Detection reads `/api/public/v1/launches`, not the internal `/api/launches`.
+Both are served from the same ledger — compared over an 18.9h overlap they
+agreed on **all 100 records, in both directions** — but only the public one
+supports `since` and real pagination, which is what makes the cursor possible.
+
+The internal feed's 100-record cap was never the practical constraint: measured
+at **5.3 launches/hour**, it covers ~18.9h, which is **~2,274x** headroom at a
+30s poll.
+
+Quirk worth knowing: an out-of-range `page` serves page 1 again rather than an
+empty list, so the fetcher stops when a page adds no new mints instead of
+trusting the page number alone.
+
 ### Known limitations
 
-- **The feed is a hard 100-launch window (~12h at current rates) with no
-  pagination.** `limit`, `page`, `offset`, `before` and `cursor` are all ignored
-  and return the same 100 records. An outage longer than the window loses those
-  launches permanently — there is no catch-up path. At a 30s poll that is ~1,400x
-  headroom, so it only matters for a prolonged deploy failure.
-- The window shrinks as launch rate rises: at 100 launches/hour it would cover
-  one hour rather than twelve.
+- **The ledger omits some launches.** `B8Pejdbb…` has a live platform pool yet is
+  absent from all 3,695 records; the two pre-launch test tokens (`BUhtmXJt…`,
+  `Ahtv2MSt…`) are absent too. Anything the ledger drops is invisible to this
+  feed, and the public API does not fix that — it is the same ledger.
+  **Scope unmeasured:** all three known omissions are from 2026-07-23, the
+  platform's first day, which is consistent with only early/test launches having
+  been dropped. Whether omissions continue today has not been checked; doing so
+  needs the deployer's mint history swept against the ledger.
+- The 6h catch-up bound means an outage longer than that still loses the launches
+  before it — deliberately, since a day-old launch is not news.
 - `pollStonkFunCreations` (the paused every-launch feed) is **not merely paused,
   it is non-functional** — it reads the same dead `TOKEN_MINT` path. Reviving it
   means rebuilding it on `fetchStonkFunLaunches`.

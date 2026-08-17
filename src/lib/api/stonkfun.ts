@@ -84,51 +84,98 @@ export interface StonkFunLaunch {
 }
 
 /**
- * Recent StonkFun launches, newest first.
+ * One launch record, from either feed shape.
+ *
+ * The public API nests the quote (`quote.mint`), the internal one flattens it
+ * (`quoteMint`). Both are accepted so the parser is not a second thing to change
+ * if the source moves again.
+ */
+function parseLaunch(raw: unknown): StonkFunLaunch | null {
+  const l = raw as Record<string, unknown>;
+  const str = (k: string): string | null =>
+    typeof l[k] === "string" && (l[k] as string).length > 0 ? (l[k] as string) : null;
+  const quote = (l.quote ?? {}) as Record<string, unknown>;
+  const qs = (k: string): string | null =>
+    typeof quote[k] === "string" && (quote[k] as string).length > 0 ? (quote[k] as string) : null;
+
+  const out: StonkFunLaunch = {
+    mint: String(l.mint ?? ""),
+    pool: str("pool"),
+    quoteMint: String(l.quoteMint ?? qs("mint") ?? ""),
+    quoteSymbol: str("quoteSymbol") ?? qs("symbol") ?? "?",
+    name: str("name") ?? str("symbol") ?? "Unknown",
+    symbol: str("symbol") ?? "?",
+    creator: str("creator"),
+    logoUrl: str("logoUrl"),
+    launchpad: str("launchpad"),
+    startMarketCapUsd:
+      typeof l.startMarketCapUsd === "number" && Number.isFinite(l.startMarketCapUsd)
+        ? (l.startMarketCapUsd as number)
+        : null,
+    createdAt: String(l.createdAt ?? ""),
+  };
+  if (!out.mint || !out.quoteMint || !out.createdAt) return null;
+  return out;
+}
+
+/**
+ * StonkFun launches, newest first, from the **public** API.
  *
  * Returns null on failure rather than an empty array: a caller that treats a
  * failed fetch as "nothing launched" would advance its cursor over the gap and
  * lose every launch in it.
  *
- * The feed returns 100 launches, measured at ~12 hours of coverage (roughly 8
- * launches an hour), so a poll every 30s has enormous headroom.
+ * This reads `/api/public/v1/launches` rather than the internal `/api/launches`.
+ * Both are served from the same ledger — compared over an 18.9h overlap they
+ * agreed on all 100 records, in both directions — but only the public one
+ * supports `since` and real pagination, which is what allows a watcher to resume
+ * after downtime instead of silently swallowing the gap.
+ *
+ * `since` is INCLUSIVE: passing the newest known timestamp returns that record
+ * again, so callers must still dedupe on mint.
  */
-export async function fetchStonkFunLaunches(): Promise<StonkFunLaunch[] | null> {
-  await rateLimit("stonkfun");
-  try {
-    const res = await fetch(`${STONKFUN_BASE}/api/launches`, {
-      headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const list: unknown[] = Array.isArray(data?.launches) ? data.launches : [];
-    return list
-      .map((raw) => {
-        const l = raw as Record<string, unknown>;
-        const str = (k: string): string | null =>
-          typeof l[k] === "string" && (l[k] as string).length > 0 ? (l[k] as string) : null;
-        return {
-          mint: String(l.mint ?? ""),
-          pool: str("pool"),
-          quoteMint: String(l.quoteMint ?? ""),
-          quoteSymbol: str("quoteSymbol") ?? "?",
-          name: str("name") ?? str("symbol") ?? "Unknown",
-          symbol: str("symbol") ?? "?",
-          creator: str("creator"),
-          logoUrl: str("logoUrl"),
-          launchpad: str("launchpad"),
-          startMarketCapUsd:
-            typeof l.startMarketCapUsd === "number" && Number.isFinite(l.startMarketCapUsd)
-              ? (l.startMarketCapUsd as number)
-              : null,
-          createdAt: String(l.createdAt ?? ""),
-        };
-      })
-      .filter((l) => l.mint.length > 0 && l.quoteMint.length > 0);
-  } catch {
-    return null;
+export async function fetchStonkFunLaunches(
+  opts: { since?: string | null; maxPages?: number } = {}
+): Promise<StonkFunLaunch[] | null> {
+  const { since = null, maxPages = 10 } = opts;
+  const out: StonkFunLaunch[] = [];
+  const seen = new Set<string>();
+  let totalPages = 1;
+
+  for (let page = 1; page <= totalPages && page <= maxPages; page++) {
+    await rateLimit("stonkfun");
+    const url = new URL(`${STONKFUN_BASE}/api/public/v1/launches`);
+    url.searchParams.set("pageSize", "100");
+    url.searchParams.set("page", String(page));
+    if (since) url.searchParams.set("since", since);
+
+    try {
+      const res = await fetch(url, {
+        headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      totalPages = Number(data?.data?.pagination?.totalPages) || 1;
+      const list: unknown[] = Array.isArray(data?.data?.launches) ? data.data.launches : [];
+      if (list.length === 0) break;
+
+      let added = 0;
+      for (const raw of list) {
+        const l = parseLaunch(raw);
+        if (!l || seen.has(l.mint)) continue;
+        seen.add(l.mint);
+        out.push(l);
+        added++;
+      }
+      // An out-of-range page serves page 1 again rather than an empty list, so
+      // a pass that adds nothing new means we are looping, not paginating.
+      if (added === 0) break;
+    } catch {
+      return null;
+    }
   }
+  return out;
 }
 
 export interface StonkFunCreation {
