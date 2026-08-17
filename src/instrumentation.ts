@@ -20,6 +20,46 @@ export async function register() {
     const { maybeRunDailyScan, maybeRefreshMarketCaps } = await import("@/lib/telegram/ath-daily-scan");
     const { pollDeployerLaunches } = await import("@/lib/telegram/deployer-alerts");
 
+    // Tier configuration, reported once at boot.
+    //
+    // Every tier rule is env-driven, so a missing variable does not fail — it
+    // quietly changes who receives what. Gold confluence was dark in production
+    // for a day because ALERTS_GOLD_IDS / ALPHA_LIBRARY_CUTOFF were incomplete
+    // there and nothing said so. This makes the resolved configuration the first
+    // thing in the log.
+    const { subscriberTiers, recipientsFor, FEATURE } = await import("@/lib/telegram/alerts-bot");
+    {
+      const tiers = subscriberTiers();
+      const counts: Record<string, number> = {};
+      for (const t of tiers.values()) counts[t] = (counts[t] ?? 0) + 1;
+      const goldIds = recipientsFor(FEATURE.ALPHA_CONFLUENCE_GOLD).length;
+      const raw = process.env.ALPHA_LIBRARY_CUTOFF;
+      const cutoffOk = !!raw && Number.isFinite(Date.parse(raw));
+
+      console.log(
+        `[instrumentation] alert tiers: ${tiers.size} recipient(s) — ` +
+          `platinum=${counts.platinum ?? 0} gold=${counts.gold ?? 0}` +
+          (process.env.ALERTS_PLATINUM_IDS || process.env.ALERTS_GOLD_IDS
+            ? ""
+            : " (LEGACY MODE: no tier vars set, everyone treated as platinum)")
+      );
+      console.log(
+        `[instrumentation] ALPHA_LIBRARY_CUTOFF=${raw ?? "(unset)"}${cutoffOk ? "" : " ← INVALID/UNSET"}`
+      );
+      if (goldIds > 0 && !cutoffOk) {
+        console.error(
+          "[instrumentation] ⚠ gold subscribers exist but ALPHA_LIBRARY_CUTOFF is unset/invalid — " +
+            "GOLD CONFLUENCE IS DISABLED. Set it to enable gold alpha alerts."
+        );
+      } else if (goldIds === 0 && (counts.gold ?? 0) > 0) {
+        console.error("[instrumentation] ⚠ gold tier has members but no gold features resolve — check FEATURE_TIERS");
+      } else {
+        console.log(
+          `[instrumentation] gold confluence: ${goldIds > 0 ? "ENABLED" : "no gold recipients"}`
+        );
+      }
+    }
+
     console.log("[instrumentation] Starting dex-profiles background poller (every 30s)");
     console.log("[instrumentation] Starting MC refresh poller (every 120s)");
     // NOTE: the every-launch StonkFun feed (pollStonkFunCreations) is PAUSED —
