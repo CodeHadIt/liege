@@ -17,11 +17,42 @@ ALTER TABLE alpha_confluence
 -- Existing rows were produced by the pre-tier, all-wallets evaluation, which is
 -- exactly what 'platinum' means — the DEFAULT above backfills them correctly.
 
-ALTER TABLE alpha_confluence
-  DROP CONSTRAINT IF EXISTS alpha_confluence_chain_token_address_first_buy_at_key;
+-- Drop the OLD uniqueness key, whatever Postgres called it.
+--
+-- Looked up rather than named literally: the original was created inline by
+-- `UNIQUE (chain, token_address, first_buy_at)`, so its name is auto-generated.
+-- A literal `DROP CONSTRAINT IF EXISTS <guess>` would silently no-op if the
+-- guess were wrong, leaving the old key in place to reject the second audience's
+-- row for the same token and instant — the exact collision this migration
+-- exists to prevent. Failing to find it must not be silent.
+DO $$
+DECLARE
+  con_name text;
+BEGIN
+  SELECT c.conname INTO con_name
+  FROM pg_constraint c
+  WHERE c.conrelid = 'alpha_confluence'::regclass
+    AND c.contype = 'u'
+    AND (
+      SELECT array_agg(a.attname::text ORDER BY a.attname)
+      FROM unnest(c.conkey) k
+      JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k
+    ) = ARRAY['chain','first_buy_at','token_address']
+  LIMIT 1;
+
+  IF con_name IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE alpha_confluence DROP CONSTRAINT %I', con_name);
+    RAISE NOTICE 'dropped old uniqueness key: %', con_name;
+  ELSE
+    RAISE NOTICE 'no (chain, token_address, first_buy_at) unique constraint found — already migrated?';
+  END IF;
+END $$;
 
 -- A token may now hold one episode per audience at the same instant, so the
 -- audience has to be part of what makes an episode unique.
+ALTER TABLE alpha_confluence
+  DROP CONSTRAINT IF EXISTS alpha_confluence_chain_audience_token_first_buy_key;
+
 ALTER TABLE alpha_confluence
   ADD CONSTRAINT alpha_confluence_chain_audience_token_first_buy_key
   UNIQUE (chain, audience, token_address, first_buy_at);
