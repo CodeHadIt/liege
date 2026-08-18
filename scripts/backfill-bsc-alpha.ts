@@ -22,6 +22,9 @@ import {
   BSC_ATH_THRESHOLD_USD,
   BSC_PLAUSIBLE_MAX_ATH_USD,
   BSC_NOT_LAUNCHES,
+  BSC_MIN_SELLER_RATIO,
+  BSC_MIN_BUYERS,
+  fetchBscExitLiquidity,
 } from "../src/lib/api/dune-bsc";
 import { getBscTotalSupplies, getBscContractFlags } from "../src/lib/api/bsc-onchain";
 import {
@@ -91,15 +94,53 @@ async function main() {
   }
   if (runners.length === 0) return;
 
+  // 3. Honeypots ---------------------------------------------------------------
+  // A contract that accepts buys and blocks sells still prints a price, so it
+  // reaches this point looking like a runner. Left in, it contributes "top
+  // traders" who never traded and its deployer counts toward a promotion.
+  const exitRows = await fetchBscExitLiquidity(
+    runners.map((r) => r.token),
+    SINCE_TS
+  );
+  if (!exitRows) throw new Error("exit-liquidity query failed");
+  const exitOf = new Map(exitRows.map((e) => [String(e.token).toLowerCase(), e]));
+
+  const withExit = runners.map((r) => {
+    const e = exitOf.get(r.token.toLowerCase());
+    const buyers = Number(e?.buyers ?? 0);
+    const sellers = Number(e?.sellers ?? 0);
+    return { ...r, buyers, sellers, buyUsd: Number(e?.buy_usd ?? 0), sellUsd: Number(e?.sell_usd ?? 0),
+             sellerRatio: buyers > 0 ? sellers / buyers : 0 };
+  });
+  const honeypots = withExit.filter(
+    (r) => r.sellerRatio < BSC_MIN_SELLER_RATIO || r.buyers < BSC_MIN_BUYERS
+  );
+  const clean = withExit.filter(
+    (r) => r.sellerRatio >= BSC_MIN_SELLER_RATIO && r.buyers >= BSC_MIN_BUYERS
+  );
+  console.log(
+    `4. exit-liquidity filter: ${clean.length} kept, ${honeypots.length} rejected ` +
+      `(sellers/buyers < ${BSC_MIN_SELLER_RATIO} or < ${BSC_MIN_BUYERS} buyers)`
+  );
+  for (const h of honeypots.sort((a, b) => b.athMcUsd! - a.athMcUsd!).slice(0, 5)) {
+    console.log(
+      `     rejected ${String(h.symbol ?? "?").padEnd(12)} ${usd(h.athMcUsd!)}  ` +
+        `${h.buyers} buyers / ${h.sellers} sellers`
+    );
+  }
+  runners.length = 0;
+  runners.push(...(clean as typeof runners));
+  if (runners.length === 0) return;
+
   const tokens = runners.map((r) => r.token);
 
-  // 3. Traders and deployers --------------------------------------------------
+  // 4. Traders and deployers --------------------------------------------------
   // Sequential, not parallel: both bodies carry the whole corpus inline, and
   // firing them together was enough to drop a connection.
   const traders = await fetchBscTopTraders(tokens, SINCE_TS);
   const devs = await fetchBscDeployers(tokens);
   if (!traders || !devs) throw new Error("trader/deployer query failed");
-  console.log(`4. trader rows: ${traders.length}   deployer rows: ${devs.length}`);
+  console.log(`5. trader rows: ${traders.length}   deployer rows: ${devs.length}`);
 
   const symbolOf = new Map(runners.map((r) => [r.token.toLowerCase(), String(r.symbol ?? "?")]));
   const devOf = new Map(
@@ -140,13 +181,13 @@ async function main() {
   const human = overBar.filter((s) => s.maxTx <= BOT_MAX_TX_ON_ANY_TOKEN);
 
   console.log(
-    `5. wallets: ${byWallet.size} seen → ${repeats.length} on 2+ runners → ` +
+    `6. wallets: ${byWallet.size} seen → ${repeats.length} on 2+ runners → ` +
       `${overBar.length} over ${usd(MIN_COMBINED_PNL_USD)} → ${human.length} after bot filter`
   );
 
   const flags = await getBscContractFlags(human.map((h) => h.wallet));
   const eoas = human.filter((h) => flags.get(h.wallet) === false);
-  console.log(`6. contracts excluded: ${human.length - eoas.length}  →  alpha wallets: ${eoas.length}`);
+  console.log(`7. contracts excluded: ${human.length - eoas.length}  →  alpha wallets: ${eoas.length}`);
 
   const labels = dedupeLabels(
     eoas.map((e) => buildLabel(CHAIN, e.winners.map((w) => w.symbol), e.combined))
@@ -177,7 +218,7 @@ async function main() {
     .filter(([d, t]) => t.length >= MIN_ATH_TOKENS_FOR_DEPLOYER && devFlags.get(d) === false)
     .sort((a, b) => b[1].length - a[1].length);
   console.log(
-    `7. deployers: ${byDev.size} distinct → ${alphaDevs.length} with ` +
+    `8. deployers: ${byDev.size} distinct → ${alphaDevs.length} with ` +
       `${MIN_ATH_TOKENS_FOR_DEPLOYER}+ runners (contracts excluded)`
   );
 
@@ -204,6 +245,10 @@ async function main() {
     ath_at: r.peak_h,
     total_supply: r.supply,
     launched_at: r.first_h,
+    distinct_buyers: (r as { buyers?: number }).buyers ?? null,
+    distinct_sellers: (r as { sellers?: number }).sellers ?? null,
+    buy_volume_usd: (r as { buyUsd?: number }).buyUsd ?? null,
+    sell_volume_usd: (r as { sellUsd?: number }).sellUsd ?? null,
     source: `dune-backfill-${SINCE}`,
     traders_captured_at: new Date().toISOString(),
   }));
@@ -253,7 +298,27 @@ async function main() {
   console.log(`  ath_token_traders: ${traderRows.length}`);
 
   const n = await upsertAlphaWallets(wallets);
-  console.log(`  alpha_wallets: ${n}`);
+  console.log(`  alpha_wallets upserted: ${n}`);
+
+  // Wallets promoted by an earlier, dirtier run may no longer qualify once
+  // honeypots are removed from the corpus. Deactivate rather than delete: the
+  // confluence watcher only loads is_active rows, and the evidence stays.
+  const keep = new Set(wallets.map((w) => w.address.toLowerCase()));
+  const { data: existing } = await supabase
+    .from("alpha_wallets")
+    .select("id,address,is_active")
+    .eq("chain", CHAIN);
+  const stale = (existing ?? []).filter(
+    (r) => r.is_active && !keep.has(String(r.address).toLowerCase())
+  );
+  if (stale.length) {
+    const { error } = await supabase
+      .from("alpha_wallets")
+      .update({ is_active: false, notes: `deactivated ${new Date().toISOString().slice(0, 10)}: no longer qualifies` })
+      .in("id", stale.map((r) => r.id));
+    if (error) throw new Error(`deactivate alpha_wallets: ${error.message}`);
+  }
+  console.log(`  alpha_wallets deactivated (no longer qualify): ${stale.length}`);
 
   const devRows = alphaDevs.map(([address, toks]) => ({
     chain: CHAIN,

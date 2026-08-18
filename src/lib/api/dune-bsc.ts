@@ -340,3 +340,60 @@ export async function fetchBscDeployers(tokens: string[]) {
     { limit: tokens.length + 1000 }
   );
 }
+
+/**
+ * Minimum ratio of distinct selling wallets to distinct buying wallets.
+ *
+ * A honeypot lets people in and not out, so it shows many buyers and almost no
+ * sellers. Healthy tokens run close to 1:1. Measured across 743 BNB Chain
+ * runners, this bar removes ~30 tokens including several with 200+ buyers and
+ * fewer than 5 sellers, while leaving every genuine runner in place.
+ */
+export const BSC_MIN_SELLER_RATIO = 0.10;
+
+/** Below this, "market cap" is a handful of wallets trading with themselves. */
+export const BSC_MIN_BUYERS = 25;
+
+export interface BscExitLiquidity {
+  token: string;
+  buyers: number;
+  sellers: number;
+  buy_usd: number;
+  sell_usd: number;
+}
+
+/**
+ * Buy- and sell-side participation per token.
+ *
+ * Deliberately counts distinct WALLETS, not USD. Sell-USD/buy-USD is ~1.0 for
+ * honeypots and healthy tokens alike — the wallets that can sell dump
+ * everything — so the value ratio detects nothing. The wallet ratio is what
+ * separates them.
+ */
+export async function fetchBscExitLiquidity(tokens: string[], since: string) {
+  if (tokens.length === 0) return [];
+  return duneQuery<BscExitLiquidity>(
+    `
+    WITH toks(token) AS (VALUES ${tokenValues(tokens)}),
+    buys AS (
+      SELECT d.token_bought_address AS token,
+             count(distinct d.tx_from) AS buyers, sum(d.amount_usd) AS buy_usd
+      FROM dex.trades d JOIN toks t ON t.token = d.token_bought_address
+      WHERE d.blockchain='bnb' AND d.block_time >= TIMESTAMP '${since}' AND d.amount_usd > 0
+      GROUP BY 1
+    ),
+    sells AS (
+      SELECT d.token_sold_address AS token,
+             count(distinct d.tx_from) AS sellers, sum(d.amount_usd) AS sell_usd
+      FROM dex.trades d JOIN toks t ON t.token = d.token_sold_address
+      WHERE d.blockchain='bnb' AND d.block_time >= TIMESTAMP '${since}' AND d.amount_usd > 0
+      GROUP BY 1
+    )
+    SELECT b.token, b.buyers, coalesce(s.sellers,0) AS sellers,
+           b.buy_usd, coalesce(s.sell_usd,0) AS sell_usd
+    FROM buys b LEFT JOIN sells s ON s.token = b.token
+  `,
+    "bsc-exit-liquidity",
+    { limit: tokens.length + 1000 }
+  );
+}
