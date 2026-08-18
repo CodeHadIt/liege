@@ -239,3 +239,119 @@ export async function getBscTokenMeta(address: string): Promise<{ name: string; 
   const [name, symbol] = await Promise.all([read(ERC20_NAME), read(ERC20_SYMBOL)]);
   return { name, symbol };
 }
+
+// ── Batched reads, for corpus-scale work ─────────────────────────────────────
+// The single-call `rpc` helper above is right for watchers, which make a handful
+// of calls per poll. The alpha backfill asks the same question of a few thousand
+// addresses at once, where one HTTP round trip per address is the bottleneck.
+// These batch it into JSON-RPC arrays and rotate endpoints on failure.
+
+const BATCH_RPCS = [
+  ...BSC_RPCS,
+  "https://binance.llamarpc.com",
+  "https://bsc-dataseed1.defibit.io",
+];
+let batchCursor = 0;
+
+/** One JSON-RPC batch, returning results by input index. Missing = unresolved. */
+async function rpcBatch(
+  calls: { method: string; params: unknown[] }[]
+): Promise<Map<number, unknown>> {
+  const out = new Map<number, unknown>();
+  if (calls.length === 0) return out;
+  const body = calls.map((c, i) => ({ jsonrpc: "2.0", id: i, method: c.method, params: c.params }));
+
+  for (let attempt = 0; attempt < BATCH_RPCS.length * 2; attempt++) {
+    const url = BATCH_RPCS[batchCursor % BATCH_RPCS.length];
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(25_000),
+      });
+      if (!res.ok) {
+        batchCursor++;
+        continue;
+      }
+      const json = await res.json();
+      if (!Array.isArray(json)) {
+        batchCursor++;
+        continue;
+      }
+      for (const item of json) {
+        if (typeof item?.id === "number" && item.result !== undefined) out.set(item.id, item.result);
+      }
+      // An endpoint that answers nothing is failing quietly — rotate rather than
+      // report every address as unresolved.
+      if (out.size > 0) return out;
+      batchCursor++;
+    } catch {
+      batchCursor++;
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
+  return out;
+}
+
+const SELECTOR_TOTAL_SUPPLY = "0x18160ddd";
+
+/**
+ * `totalSupply` per token, decimal-adjusted. Absent when the call failed or the
+ * contract does not implement it — never silently zero, since a zero supply
+ * would compute a $0 market cap and quietly drop a real runner.
+ */
+export async function getBscTotalSupplies(
+  tokens: { address: string; decimals: number | null }[],
+  batchSize = 25
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  for (let i = 0; i < tokens.length; i += batchSize) {
+    const chunk = tokens.slice(i, i + batchSize);
+    const res = await rpcBatch(
+      chunk.map((t) => ({
+        method: "eth_call",
+        params: [{ to: t.address, data: SELECTOR_TOTAL_SUPPLY }, "latest"],
+      }))
+    );
+    for (const [idx, raw] of res) {
+      const t = chunk[idx];
+      if (typeof raw !== "string" || raw === "0x") continue;
+      try {
+        const supply = Number(BigInt(raw)) / 10 ** (t.decimals ?? 18);
+        if (Number.isFinite(supply) && supply > 0) out.set(t.address.toLowerCase(), supply);
+      } catch {
+        /* unparseable — leave unresolved */
+      }
+    }
+    await new Promise((r) => setTimeout(r, 90));
+  }
+  return out;
+}
+
+/**
+ * Which addresses have bytecode.
+ *
+ * Promotion must exclude contracts. Robinhood learned this the hard way: a
+ * PoolManager appeared in nearly every token's trader list and was promoted as
+ * an "alpha wallet" on billions of imputed PnL. Routers and aggregators do the
+ * same on BSC.
+ */
+export async function getBscContractFlags(
+  addresses: string[],
+  batchSize = 40
+): Promise<Map<string, boolean>> {
+  const out = new Map<string, boolean>();
+  for (let i = 0; i < addresses.length; i += batchSize) {
+    const chunk = addresses.slice(i, i + batchSize);
+    const res = await rpcBatch(
+      chunk.map((a) => ({ method: "eth_getCode", params: [a, "latest"] }))
+    );
+    for (const [idx, raw] of res) {
+      if (typeof raw !== "string") continue;
+      out.set(chunk[idx].toLowerCase(), raw !== "0x");
+    }
+    await new Promise((r) => setTimeout(r, 90));
+  }
+  return out;
+}
