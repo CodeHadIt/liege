@@ -223,6 +223,43 @@ async function main() {
   );
 
   if (!WRITE) {
+    // Current market cap for the headline runners, priced the same way the ATH
+    // was (price x the supply we read), so the two numbers are comparable.
+    const top = runners.slice(0, 10);
+    const now = new Map<string, number>();
+    for (const r of top) {
+      try {
+        const res = await fetch(
+          `https://api.geckoterminal.com/api/v2/networks/bsc/tokens/${r.token}`,
+          { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15_000) }
+        );
+        if (res.ok) {
+          const j = await res.json();
+          const price = parseFloat(j?.data?.attributes?.price_usd ?? "");
+          if (Number.isFinite(price) && r.supply) now.set(r.token, price * r.supply);
+        }
+      } catch {
+        /* leave unknown */
+      }
+      await new Promise((x) => setTimeout(x, 2200)); // GeckoTerminal free tier
+    }
+    console.log(`\nTOP ${top.length} RUNNERS`);
+    console.log(
+      `${"SYMBOL".padEnd(14)}${"ATH MC".padStart(14)}${"NOW MC".padStart(14)}` +
+        `${"OFF ATH".padStart(9)}  ${"BUY/SELL WALLETS".padEnd(20)}CONTRACT`
+    );
+    for (const r of top) {
+      const cur = now.get(r.token);
+      const off = cur != null && r.athMcUsd ? `${(100 - (cur / r.athMcUsd) * 100).toFixed(0)}%` : "—";
+      const e = r as unknown as { buyers: number; sellers: number };
+      console.log(
+        `${String(r.symbol ?? "?").slice(0, 13).padEnd(14)}` +
+          `${usd(r.athMcUsd!).padStart(14)}` +
+          `${(cur != null ? usd(cur) : "—").padStart(14)}` +
+          `${off.padStart(9)}  ` +
+          `${`${e.buyers} / ${e.sellers}`.padEnd(20)}${r.token}`
+      );
+    }
     console.log("\nDRY RUN — nothing written. Re-run with --write.");
     console.log(`  would write ${runners.length} tokens, ${traders.length} trader rows,`);
     console.log(`  ${wallets.length} alpha wallets, ${alphaDevs.length} alpha deployers`);

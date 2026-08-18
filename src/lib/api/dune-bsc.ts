@@ -23,11 +23,18 @@ const DUNE = "https://api.dune.com/api/v1";
 export const BSC_ATH_THRESHOLD_USD = 2_000_000;
 
 /**
- * Ceiling on a believable ATH. Thin pools print absurd highs — an early run of
- * this pipeline produced a token at 8.9e46 USD — and publishing one would
- * discredit the feed. Above this, hold back and log. Mirrors the Robinhood scan.
+ * Ceiling on a believable ATH.
+ *
+ * Thin pools print absurd highs — an early run of this pipeline produced a token
+ * at 8.9e46 USD — and publishing one would discredit the feed. Above this, hold
+ * back and log.
+ *
+ * Set to $200M rather than Robinhood's $500M. On BNB Chain the band between the
+ * two was dominated by tokens whose caps come from manipulated or unsellable
+ * supply rather than genuine demand, and a nine-figure "runner" nobody can name
+ * is a stronger signal of a bad price than of a real one.
  */
-export const BSC_PLAUSIBLE_MAX_ATH_USD = 500_000_000;
+export const BSC_PLAUSIBLE_MAX_ATH_USD = 200_000_000;
 
 /** Top traders captured per token, matching Robinhood. */
 export const BSC_TOP_N = 30;
