@@ -11,6 +11,9 @@ export async function register() {
     // Dynamic import so this only loads server-side
     const { pollAndStoreDexProfiles, refreshCurrentMarketCaps } = await import("@/lib/api/dex-orders-cache");
     const { pollStonkFunQuoteTokens, pollStonkFunLaunches } = await import("@/lib/telegram/stonkfun-alerts");
+    const { pollStonkFunAirdropLaunches, airdropWatchUntil } = await import(
+      "@/lib/telegram/stonkfun-airdrop-alerts"
+    );
     const { pollSunriseStocks } = await import("@/lib/telegram/sunrise-alerts");
     const { pollLongStocks, pollLongOnchainCreations, pollFlapRobinhoodStocks } = await import("@/lib/telegram/long-alerts");
     const { pollBscStockQuotes, pollBscOnchainLaunches } = await import("@/lib/telegram/bsc-stock-alerts");
@@ -93,6 +96,38 @@ export async function register() {
         console.error("[instrumentation] StonkFun launch poll error:", err)
       );
     }, STONKFUN_LAUNCH_INTERVAL);
+
+    // StonkFun Airdrop Mode — launches that carve supply out of the pool for
+    // holders of the quote token. Its own pass rather than a filter inside the
+    // launch watcher: there the question is "was this launched against an asset
+    // we watch", here the launch OPTION is the signal whatever it paired with.
+    //
+    // Time-boxed. Expires at a fixed timestamp so a redeploy cannot silently
+    // extend a watch that was asked for as 24 hours.
+    const airdropEnds = airdropWatchUntil();
+    if (Date.now() < airdropEnds) {
+      console.log(
+        `[instrumentation] Starting StonkFun airdrop-mode watcher (every 30s, until ${new Date(airdropEnds).toISOString()})`
+      );
+      const STONKFUN_AIRDROP_INTERVAL = 30_000;
+      pollStonkFunAirdropLaunches().catch((err) =>
+        console.error("[instrumentation] Initial StonkFun airdrop poll error:", err)
+      );
+      const airdropTimer = setInterval(() => {
+        if (Date.now() > airdropEnds) {
+          clearInterval(airdropTimer);
+          console.log("[instrumentation] StonkFun airdrop-mode watch window ended — poller stopped");
+          return;
+        }
+        pollStonkFunAirdropLaunches().catch((err) =>
+          console.error("[instrumentation] StonkFun airdrop poll error:", err)
+        );
+      }, STONKFUN_AIRDROP_INTERVAL);
+    } else {
+      console.log(
+        `[instrumentation] StonkFun airdrop-mode watch window already ended (${new Date(airdropEnds).toISOString()}) — not scheduled`
+      );
+    }
 
     // Sunrise new-stock-pair poller (tokenized stocks vs USDC) — 60s.
     console.log("[instrumentation] Starting Sunrise stock-pair alert poller (every 60s)");

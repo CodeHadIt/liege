@@ -442,3 +442,105 @@ export async function enrichCreation(c: StonkFunCreation): Promise<StonkFunToken
     ...market,
   };
 }
+
+// ── Airdrop Mode ─────────────────────────────────────────────────────────────
+// A launch option that holds a share of supply OUT of the pool and distributes
+// it to holders of the quote token being paired against. Reward-mode launches
+// only, capped at 50% of supply, with the recipient set snapshotted and frozen
+// at quote time.
+//
+// Detection has to use the INTERNAL feed. The public ledger carries no airdrop
+// flag and no airdrop filter, so the only alternative is one
+// `/tokens/{mint}/airdrop` request per launch — 1,593 requests to cover a
+// handful of days, which is not a polling strategy. The internal feed carries
+// `airdropBps` inline on every record.
+
+export interface StonkFunAirdropLaunch extends StonkFunLaunch {
+  /** Basis points of supply airdropped. 5000 = 50%. Zero/absent = no airdrop. */
+  airdropBps: number;
+  /** Raw base units carved out of the pool. */
+  airdropSupplyRaw: string | null;
+  /**
+   * Raw base units actually delivered. Runs a few units under `supplyRaw` on
+   * most launches from rounding across recipients — that is expected, not a
+   * failed drop.
+   */
+  airdropDeliveredRaw: string | null;
+}
+
+/**
+ * Launches from StonkFun's internal feed, newest first, carrying airdrop fields.
+ *
+ * Returns null on failure rather than an empty array, so a caller cannot mistake
+ * a dead fetch for "nothing launched" and advance past a gap.
+ *
+ * Capped at 100 records with no pagination — roughly 19 hours at current rates.
+ * Fine for a 30s poller, useless for history.
+ */
+export async function fetchStonkFunInternalLaunches(): Promise<StonkFunAirdropLaunch[] | null> {
+  await rateLimit("stonkfun");
+  try {
+    const res = await fetch(`${STONKFUN_BASE}/api/launches`, {
+      headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const list: unknown[] = Array.isArray(data?.launches) ? data.launches : [];
+    const out: StonkFunAirdropLaunch[] = [];
+    for (const raw of list) {
+      const base = parseLaunch(raw);
+      if (!base) continue;
+      const l = raw as Record<string, unknown>;
+      out.push({
+        ...base,
+        airdropBps: typeof l.airdropBps === "number" ? l.airdropBps : 0,
+        airdropSupplyRaw: l.airdropSupplyRaw != null ? String(l.airdropSupplyRaw) : null,
+        airdropDeliveredRaw: l.airdropDeliveredRaw != null ? String(l.airdropDeliveredRaw) : null,
+      });
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+export interface StonkFunAirdropDetail {
+  bps: number;
+  percentOfSupply: number;
+  supplyTokens: number | null;
+  source: string | null;
+  recipientCount: number | null;
+  quoteSymbol: string | null;
+  settledAt: string | null;
+}
+
+/**
+ * Full airdrop detail for one mint, or null if it launched without one.
+ *
+ * Best-effort enrichment only: it names the recipient count and tier, which the
+ * feed does not carry. An alert must never wait on it.
+ */
+export async function fetchStonkFunAirdrop(mint: string): Promise<StonkFunAirdropDetail | null> {
+  await rateLimit("stonkfun");
+  try {
+    const res = await fetch(`${STONKFUN_BASE}/api/public/v1/tokens/${mint}/airdrop`, {
+      headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!res.ok) return null;
+    const a = (await res.json())?.data?.airdrop;
+    if (!a) return null;
+    return {
+      bps: Number(a.bps) || 0,
+      percentOfSupply: Number(a.percentOfSupply) || 0,
+      supplyTokens: a.supplyTokens != null ? Number(a.supplyTokens) : null,
+      source: a.source ?? null,
+      recipientCount: a.recipientCount != null ? Number(a.recipientCount) : null,
+      quoteSymbol: a.quoteToken?.symbol ?? null,
+      settledAt: a.settledAt ?? null,
+    };
+  } catch {
+    return null;
+  }
+}

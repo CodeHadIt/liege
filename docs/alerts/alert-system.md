@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-17 (access-only /start and /status; StonkFun cursor)
+**Last updated:** 2026-08-18 (StonkFun Airdrop Mode watcher)
 
 ---
 
@@ -319,6 +319,41 @@ pinned quotes are served from a single `/api/launches` read per pass. A quote
 cannot be both — pinned assets are `custom`, which the denylist keeps out of the
 windowed set — and the windowed path is checked first regardless, so a future
 overlap would produce one alert rather than two.
+
+### Airdrop Mode — a separate, time-boxed watcher
+
+| | |
+|---|---|
+| Code | [`stonkfun-airdrop-alerts.ts`](../../src/lib/telegram/stonkfun-airdrop-alerts.ts) |
+| Detection | `GET /api/launches` (**internal**) — `airdropBps` inline |
+| Poll | 30s |
+| Feature | `launch` (all tiers) |
+| Expiry | `STONKFUN_AIRDROP_WATCH_UNTIL`, default `2026-08-19T14:00:00Z` |
+
+Airdrop Mode holds a share of supply **out of the pool** and distributes it to
+holders of the quote token being paired against — reward-mode launches only,
+capped at 50% of supply, recipient set snapshotted and frozen at quote time.
+
+It runs as its own pass rather than a filter inside the launch watcher, because
+it answers a different question. The launch watcher asks *"was this launched
+against an asset we are watching"*; here the launch **option** is the signal,
+whatever it paired against.
+
+**Detection must use the internal feed.** The public ledger exposes no airdrop
+flag and no airdrop filter, so the only alternative is one
+`/tokens/{mint}/airdrop` request per launch — establishing the feature's start
+date cost 1,593 of them. The internal feed carries `airdropBps` on every record,
+which makes this one request per pass. Recipient count and source come from the
+per-token endpoint as best-effort enrichment that can never delay an alert.
+
+**The watcher expires at a fixed timestamp**, not "24h from process start" — the
+latter would silently extend the window on every redeploy, so a watch meant to
+end tonight could still be running next week. Past the deadline the interval
+clears itself and the poller no-ops.
+
+Feature history: the first airdrop launch was **2026-08-17T20:34:48Z**,
+established by probing all 1,593 launches between 2026-08-12 and that timestamp
+individually — every one returned `airdrop: null`.
 
 ### Resuming after downtime — the durable cursor
 
