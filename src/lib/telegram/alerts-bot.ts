@@ -44,6 +44,13 @@ export const FEATURE = {
   ATH_DAILY: "ath.daily",
   /** Alpha deployer (dev wallet) launches. */
   DEPLOYER: "deployer",
+  /**
+   * Solana alpha wallets — deploys and buys by hand-picked wallets.
+   *
+   * Platinum-only, matching the rule that a newly added alpha wallet is not
+   * shared. Move to ["platinum","gold"] below to open it up.
+   */
+  ALPHA_SOLANA: "alpha.solana",
 } as const;
 
 export type Feature = (typeof FEATURE)[keyof typeof FEATURE];
@@ -61,6 +68,7 @@ const FEATURE_TIERS: Record<Feature, readonly Tier[]> = {
   [FEATURE.ALPHA_CONFLUENCE_PLATINUM]: ["platinum"],
   [FEATURE.ATH_DAILY]: ["platinum"],
   [FEATURE.DEPLOYER]: ["platinum"],
+  [FEATURE.ALPHA_SOLANA]: ["platinum"],
 };
 
 /**

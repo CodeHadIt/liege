@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-19 (Jupiter buy links on Solana alerts)
+**Last updated:** 2026-08-19 (Solana alpha wallet watcher)
 
 ---
 
@@ -122,6 +122,7 @@ call `alertRecipients()`, which exists solely as the bot's interaction gate.
 | `alpha.confluence.platinum` — confluence over **all** wallets | ✅ | — |
 | `ath.daily` — the $2M ATH digest and its promotion announcement | ✅ | — |
 | `deployer` — alpha deployer launches (§13) | ✅ | — |
+| `alpha.solana` — Solana alpha wallet deploys and buys (§11b) | ✅ | — |
 
 The two `alpha.confluence.*` features are deliberately **disjoint**: each tier
 gets its own evaluation of the state machine (§11), so routing both to Platinum
@@ -1036,6 +1037,43 @@ practice it meant anything unpriceable bypassed the floor entirely.
   deterministic, so a naive retry loops forever — ranges split in half instead.
 
 ---
+
+## 11b. Solana — alpha wallet watcher
+
+| | |
+|---|---|
+| Code | [`solana-alpha-alerts.ts`](../../src/lib/telegram/solana-alpha-alerts.ts) |
+| Wallets | `alpha_wallets` where `chain = 'solana'` |
+| Added by | [`scripts/add-alpha-wallet.ts`](../../scripts/add-alpha-wallet.ts) |
+| Poll | 30s |
+| Feature | `alpha.solana` — **Platinum only** |
+
+Watches hand-picked Solana wallets and reports two kinds of event:
+
+- **DEPLOY** — the wallet mints a new token. For a dev wallet this is the signal:
+  the first entry, `CyberLeeks`, is the wallet behind CyberLeek (~$1.35M MC), and
+  what it ships next is the reason to watch it.
+- **BUY** — the wallet acquires a token *and pays for it*.
+
+**This is not the Robinhood confluence model** (§11). That one stays silent until
+a second alpha wallet buys the same token, which is correct at 88 wallets and
+useless at one — it would never fire.
+
+### Two things that make or break it
+
+**A spend requirement, not just an incoming token.** These wallets are dusted
+constantly — the first watched wallet received two unsolicited `…pump` tokens in
+three days, each a plain transfer with zero SOL paid. Without requiring
+`>= 0.05 SOL` (or $10 of stablecoin) to leave the wallet, every dusting attack
+becomes an alert. Measured on real history: 3 dust transfers, 0 alerted.
+
+**Transfers are read, not Helius's `type`.** That field reports `UNKNOWN` or
+`TRANSFER` for most pump.fun and Raydium activity — 16 of the last 20
+transactions on the first wallet were `UNKNOWN` — so keying on `type === "SWAP"`
+would miss nearly everything.
+
+Deploys are reported regardless of spend: minting costs almost nothing in SOL and
+is the highest-value event here.
 
 ## 12. Robinhood Chain — daily ATH scan
 

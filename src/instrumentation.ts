@@ -19,6 +19,7 @@ export async function register() {
     const { pollAlphaConfluence } = await import("@/lib/telegram/alpha-watcher");
     const { maybeRunDailyScan, maybeRefreshMarketCaps } = await import("@/lib/telegram/ath-daily-scan");
     const { pollDeployerLaunches } = await import("@/lib/telegram/deployer-alerts");
+    const { pollSolanaAlphaWallets } = await import("@/lib/telegram/solana-alpha-alerts");
 
     // Tier configuration, reported once at boot.
     //
@@ -297,6 +298,20 @@ export async function register() {
         console.error("[instrumentation] Deployer poll error:", err)
       );
     }, DEPLOYER_INTERVAL);
+
+    // Solana alpha wallets — hand-picked wallets watched for deploys and buys.
+    // One Helius request per wallet per pass, so cost tracks the watchlist
+    // rather than chain activity, and it short-circuits when nothing is watched.
+    console.log("[instrumentation] Starting Solana alpha wallet watcher (every 30s)");
+    const SOLANA_ALPHA_INTERVAL = 30_000;
+    pollSolanaAlphaWallets().catch((err) =>
+      console.error("[instrumentation] Initial Solana alpha poll error:", err)
+    );
+    setInterval(() => {
+      pollSolanaAlphaWallets().catch((err) =>
+        console.error("[instrumentation] Solana alpha poll error:", err)
+      );
+    }, SOLANA_ALPHA_INTERVAL);
 
     // Initial poll on startup
     pollAndStoreDexProfiles().catch((err) =>
