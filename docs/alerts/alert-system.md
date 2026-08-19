@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-19 (Solana alpha wallet watcher)
+**Last updated:** 2026-08-19 (Solana alpha watcher: full activity coverage)
 
 ---
 
@@ -1044,16 +1044,25 @@ practice it meant anything unpriceable bypassed the floor entirely.
 |---|---|
 | Code | [`solana-alpha-alerts.ts`](../../src/lib/telegram/solana-alpha-alerts.ts) |
 | Wallets | `alpha_wallets` where `chain = 'solana'` |
+| Watched | `CyberLeeks` (deployer), `CyberLeeks-Funder` (its funding collector) |
 | Added by | [`scripts/add-alpha-wallet.ts`](../../scripts/add-alpha-wallet.ts) |
 | Poll | 30s |
 | Feature | `alpha.solana` — **Platinum only** |
 
-Watches hand-picked Solana wallets and reports two kinds of event:
+Watches hand-picked Solana wallets and reports seven kinds of event:
 
-- **DEPLOY** — the wallet mints a new token. For a dev wallet this is the signal:
-  the first entry, `CyberLeeks`, is the wallet behind CyberLeek (~$1.35M MC), and
-  what it ships next is the reason to watch it.
-- **BUY** — the wallet acquires a token *and pays for it*.
+| Kind | Trigger |
+|---|---|
+| `deploy` | wallet mints a token |
+| `liquidity` | wrapped SOL **and** a token leave together — a pool being seeded |
+| `buy` | token in, value out |
+| `sell` | token out, value in |
+| `burn` | supply destroyed |
+| `sent` | token out, nothing back |
+| `received` | token in, nothing paid — **spam-gated** |
+
+Order matters in classification: a pool seed also looks like a send, and a sale
+also looks like a send, so the specific readings are tested first.
 
 **This is not the Robinhood confluence model** (§11). That one stays silent until
 a second alpha wallet buys the same token, which is correct at 88 wallets and
@@ -1061,11 +1070,16 @@ useless at one — it would never fire.
 
 ### Two things that make or break it
 
-**A spend requirement, not just an incoming token.** These wallets are dusted
-constantly — the first watched wallet received two unsolicited `…pump` tokens in
-three days, each a plain transfer with zero SOL paid. Without requiring
-`>= 0.05 SOL` (or $10 of stablecoin) to leave the wallet, every dusting attack
-becomes an alert. Measured on real history: 3 dust transfers, 0 alerted.
+**Spam is gated on the token being real, not on the transfer.** Only `received`
+— tokens arriving for nothing — has to prove itself, by having at least **$5k of
+pool liquidity**. Everything the wallet paid for, deployed, seeded, sold or burnt
+is reported regardless of depth, because the wallet's own money or supply makes
+it intentional.
+
+A trade additionally needs `>= 0.05 SOL` (or $10 stablecoin) to move, so a free
+transfer is never read as a buy. These wallets are dusted constantly — the first
+watched wallet received two unsolicited `…pump` tokens in three days, each with
+zero SOL paid.
 
 **Transfers are read, not Helius's `type`.** That field reports `UNKNOWN` or
 `TRANSFER` for most pump.fun and Raydium activity — 16 of the last 20

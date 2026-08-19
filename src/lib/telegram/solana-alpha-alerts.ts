@@ -7,13 +7,13 @@ import { escapeHtml, formatCompact, formatTimeAgo, jupiterBuyUrl } from "./utils
 // Watches hand-picked Solana wallets and reports what they DO, which on this
 // chain is two different things:
 //
-//   DEPLOY — the wallet mints a new token. For a dev wallet this is the whole
-//            signal: the first CyberLeeks entry is the wallet behind a $1.35M
-//            token, and the next thing it ships is what you want to know about.
-//   BUY    — the wallet acquires a token and pays for it.
-//
-// Both are reported because "alpha wallet" covers both kinds of wallet, and a
-// watchlist assembled by hand will contain both.
+//   DEPLOY    — mints a new token. For a dev wallet this is the whole signal.
+//   LIQUIDITY — pairs a token with SOL to open a pool.
+//   BUY/SELL  — acquires or disposes of a token for value.
+//   BURN      — destroys supply.
+//   SENT      — moves tokens out for nothing in return.
+//   RECEIVED  — tokens arrive for nothing. The only kind that must prove itself
+//               real, because this is where dusting lives.
 //
 // This is NOT the Robinhood confluence model. That one stays silent until a
 // SECOND alpha wallet buys the same token, which is right when you have 88
@@ -29,14 +29,14 @@ const CHAIN = "solana";
  * arriving as a plain transfer with zero SOL spent. Without a spend requirement
  * every dusting attack becomes an alert, and the feed is worthless.
  */
-const MIN_BUY_SOL = 0.05;
+const MIN_TRADE_SOL = 0.05;
 
 /** Stablecoins that also count as payment for a buy. */
 const STABLE_MINTS = new Set([
   "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", // USDC
   "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT
 ]);
-const MIN_BUY_STABLE_USD = 10;
+const MIN_TRADE_STABLE_USD = 10;
 
 /** Wrapped SOL — payment, not an acquisition. */
 const WSOL_MINT = "So11111111111111111111111111111111111111112";
@@ -65,16 +65,30 @@ interface HeliusTx {
   nativeTransfers?: HeliusTransfer[];
 }
 
+export type AlphaEventKind =
+  | "deploy"
+  | "liquidity"
+  | "buy"
+  | "sell"
+  | "burn"
+  | "sent"
+  | "received";
+
 export interface AlphaEvent {
-  kind: "deploy" | "buy";
+  kind: AlphaEventKind;
   wallet: string;
   label: string;
   signature: string;
   timestamp: number;
   mint: string;
   tokenAmount: number;
+  /** SOL paid out by the wallet in this tx. */
   solSpent: number;
+  /** SOL received by the wallet in this tx. */
+  solReceived: number;
   stableSpent: number;
+  /** Counterparty for a plain send. */
+  counterparty: string | null;
 }
 
 async function fetchWalletTxs(wallet: string, limit = 50): Promise<HeliusTx[] | null> {
@@ -96,61 +110,97 @@ async function fetchWalletTxs(wallet: string, limit = 50): Promise<HeliusTx[] | 
 /**
  * Classify one transaction for one wallet.
  *
- * Deliberately reads the transfers rather than Helius's `type`. That field says
- * UNKNOWN or TRANSFER for most pump.fun and Raydium activity — 16 of the last
- * 20 transactions on the first watched wallet were UNKNOWN — so keying on
- * `type === "SWAP"` would miss nearly everything.
+ * Reads the transfers rather than Helius's `type`, which reports UNKNOWN or
+ * TRANSFER for most pump.fun and Raydium activity — 16 of the last 20
+ * transactions on the first watched wallet were UNKNOWN, including its token
+ * deploy. Keying on `type === "SWAP"` would miss nearly everything.
+ *
+ * Order matters: a pool seed also looks like a send, and a sale also looks like
+ * a send, so the more specific readings are tested first.
  */
 export function classifyTx(tx: HeliusTx, wallet: string, label: string): AlphaEvent | null {
-  const tokensIn = (tx.tokenTransfers ?? []).filter(
-    (t) => t.toUserAccount === wallet && t.mint && t.mint !== WSOL_MINT
-  );
-  if (tokensIn.length === 0) return null;
+  const transfers = tx.tokenTransfers ?? [];
+  const tokensIn = transfers.filter((t) => t.toUserAccount === wallet && t.mint && t.mint !== WSOL_MINT);
+  const tokensOut = transfers.filter((t) => t.fromUserAccount === wallet && t.mint && t.mint !== WSOL_MINT);
+  const wsolOut = transfers.filter((t) => t.fromUserAccount === wallet && t.mint === WSOL_MINT);
 
   const solSpent =
-    (tx.nativeTransfers ?? [])
-      .filter((n) => n.fromUserAccount === wallet)
-      .reduce((s, n) => s + (n.amount ?? 0), 0) / 1e9;
-
-  const stableSpent = (tx.tokenTransfers ?? [])
+    (tx.nativeTransfers ?? []).filter((n) => n.fromUserAccount === wallet).reduce((s, n) => s + (n.amount ?? 0), 0) / 1e9;
+  const solReceived =
+    (tx.nativeTransfers ?? []).filter((n) => n.toUserAccount === wallet).reduce((s, n) => s + (n.amount ?? 0), 0) / 1e9;
+  const stableSpent = transfers
     .filter((t) => t.fromUserAccount === wallet && t.mint && STABLE_MINTS.has(t.mint))
     .reduce((s, t) => s + (t.tokenAmount ?? 0), 0);
+  const stableReceived = transfers
+    .filter((t) => t.toUserAccount === wallet && t.mint && STABLE_MINTS.has(t.mint))
+    .reduce((s, t) => s + (t.tokenAmount ?? 0), 0);
 
-  // A mint the wallet itself created. Reported regardless of spend — a deploy
-  // costs almost nothing in SOL and is the highest-value event here.
-  const isDeploy =
-    tx.type === "TOKEN_MINT" && (tx.description ?? "").toLowerCase().includes("minted");
+  const biggest = (list: HeliusTransfer[]) =>
+    list.reduce((a, b) => ((b.tokenAmount ?? 0) > (a.tokenAmount ?? 0) ? b : a));
 
-  const primary = tokensIn.reduce((a, b) => ((b.tokenAmount ?? 0) > (a.tokenAmount ?? 0) ? b : a));
+  const base = { wallet, label, signature: tx.signature, timestamp: tx.timestamp, solSpent, solReceived, stableSpent };
+  const desc = (tx.description ?? "").toLowerCase();
 
-  if (isDeploy) {
+  // 1. Deploy — the wallet minted a token. Reported regardless of spend: it
+  //    costs almost nothing in SOL and is the highest-value event here.
+  if (tx.type === "TOKEN_MINT" && desc.includes("minted") && tokensIn.length > 0) {
+    const t = biggest(tokensIn);
+    return { ...base, kind: "deploy", mint: t.mint!, tokenAmount: t.tokenAmount ?? 0, counterparty: null };
+  }
+
+  // 2. Burn.
+  if (tx.type === "BURN" || desc.includes("burned")) {
+    const list = tokensOut.length ? tokensOut : tokensIn;
+    if (list.length) {
+      const t = biggest(list);
+      return { ...base, kind: "burn", mint: t.mint!, tokenAmount: t.tokenAmount ?? 0, counterparty: null };
+    }
+  }
+
+  // 3. Liquidity seeding — wrapped SOL AND a token leaving together is a pool
+  //    being funded, not two coincidental sends. This is how CyberLeek's pool
+  //    was created: 330 WSOL + 730M tokens in one transaction.
+  if (wsolOut.length > 0 && tokensOut.length > 0) {
+    const t = biggest(tokensOut);
+    const wsol = wsolOut.reduce((s, w) => s + (w.tokenAmount ?? 0), 0);
     return {
-      kind: "deploy",
-      wallet,
-      label,
-      signature: tx.signature,
-      timestamp: tx.timestamp,
-      mint: primary.mint!,
-      tokenAmount: primary.tokenAmount ?? 0,
-      solSpent,
-      stableSpent,
+      ...base,
+      kind: "liquidity",
+      mint: t.mint!,
+      tokenAmount: t.tokenAmount ?? 0,
+      solSpent: Math.max(solSpent, wsol),
+      counterparty: null,
     };
   }
 
-  // Tokens arriving with nothing paid are dust, not a position.
-  if (solSpent < MIN_BUY_SOL && stableSpent < MIN_BUY_STABLE_USD) return null;
+  // 4. Sale — a token left and value came back.
+  if (tokensOut.length > 0 && (solReceived >= MIN_TRADE_SOL || stableReceived >= MIN_TRADE_STABLE_USD)) {
+    const t = biggest(tokensOut);
+    return { ...base, kind: "sell", mint: t.mint!, tokenAmount: t.tokenAmount ?? 0, counterparty: null };
+  }
 
-  return {
-    kind: "buy",
-    wallet,
-    label,
-    signature: tx.signature,
-    timestamp: tx.timestamp,
-    mint: primary.mint!,
-    tokenAmount: primary.tokenAmount ?? 0,
-    solSpent,
-    stableSpent,
-  };
+  // 5. Buy — a token arrived and value went out.
+  if (tokensIn.length > 0 && (solSpent >= MIN_TRADE_SOL || stableSpent >= MIN_TRADE_STABLE_USD)) {
+    const t = biggest(tokensIn);
+    return { ...base, kind: "buy", mint: t.mint!, tokenAmount: t.tokenAmount ?? 0, counterparty: null };
+  }
+
+  // 6. Plain send out — no value returned.
+  if (tokensOut.length > 0) {
+    const t = biggest(tokensOut);
+    const to = transfers.find((x) => x.fromUserAccount === wallet && x.mint === t.mint)?.toUserAccount ?? null;
+    return { ...base, kind: "sent", mint: t.mint!, tokenAmount: t.tokenAmount ?? 0, counterparty: to };
+  }
+
+  // 7. Received for nothing. This is where dusting lives, so it is the one kind
+  //    gated on the token being real — see shouldReport.
+  if (tokensIn.length > 0) {
+    const t = biggest(tokensIn);
+    const from = transfers.find((x) => x.toUserAccount === wallet && x.mint === t.mint)?.fromUserAccount ?? null;
+    return { ...base, kind: "received", mint: t.mint!, tokenAmount: t.tokenAmount ?? 0, counterparty: from };
+  }
+
+  return null;
 }
 
 interface TokenMarket {
@@ -189,30 +239,73 @@ async function fetchMarket(mint: string): Promise<TokenMarket> {
   }
 }
 
+/**
+ * Minimum pool depth for a token nobody paid for to be worth reporting.
+ *
+ * Spam arrives as a free transfer of a token with no real market. Anything the
+ * wallet PAID for, deployed, seeded, sold or burnt is reported regardless of
+ * depth — the wallet's own money or supply makes it intentional. Only the
+ * "arrived for nothing" case has to prove the token is real.
+ */
+const MIN_RECEIVED_LIQUIDITY_USD = 5_000;
+
+/** Whether an event survives the spam filter. */
+export function shouldReport(e: AlphaEvent, m: TokenMarket): boolean {
+  if (e.kind !== "received") return true;
+  return (m.liquidityUsd ?? 0) >= MIN_RECEIVED_LIQUIDITY_USD;
+}
+
+const KIND_HEADLINE: Record<AlphaEventKind, string> = {
+  deploy: "🧪 <b>Alpha wallet DEPLOYED a token</b>",
+  liquidity: "🌊 <b>Alpha wallet SEEDED liquidity</b>",
+  buy: "🟢 <b>Alpha wallet BOUGHT</b>",
+  sell: "🔴 <b>Alpha wallet SOLD</b>",
+  burn: "🔥 <b>Alpha wallet BURNT tokens</b>",
+  sent: "📤 <b>Alpha wallet SENT tokens</b>",
+  received: "📥 <b>Alpha wallet RECEIVED tokens</b>",
+};
+
 export function formatAlphaEvent(e: AlphaEvent, m: TokenMarket): string {
   const lines: string[] = [];
   const name = m.name ?? m.symbol ?? "Unknown token";
   const sym = m.symbol ?? "?";
+  const amt = formatCompact(e.tokenAmount);
 
-  if (e.kind === "deploy") {
-    lines.push(`🧪 <b>Alpha wallet DEPLOYED a token</b>  ·  ⛓ Solana`);
-  } else {
-    lines.push(`🟢 <b>Alpha wallet BOUGHT</b>  ·  ⛓ Solana`);
-  }
+  lines.push(`${KIND_HEADLINE[e.kind]}  ·  ⛓ Solana`);
   lines.push(`<i>${escapeHtml(e.label)}</i>`);
   lines.push("");
   lines.push(`<b>${escapeHtml(name)}</b>  ·  <code>$${escapeHtml(sym)}</code>`);
 
-  if (e.kind === "deploy") {
-    lines.push(`🏭 Minted ${escapeHtml(formatCompact(e.tokenAmount))} tokens`);
-  } else {
-    const paid =
-      e.solSpent >= MIN_BUY_SOL
-        ? `${e.solSpent.toFixed(3)} SOL`
-        : `$${formatCompact(e.stableSpent)}`;
-    lines.push(`💵 Paid <b>${escapeHtml(paid)}</b> for ${escapeHtml(formatCompact(e.tokenAmount))} ${escapeHtml(sym)}`);
+  switch (e.kind) {
+    case "deploy":
+      lines.push(`🏭 Minted ${escapeHtml(amt)} tokens`);
+      break;
+    case "liquidity":
+      lines.push(`🌊 Paired ${escapeHtml(amt)} ${escapeHtml(sym)} with <b>${e.solSpent.toFixed(2)} SOL</b>`);
+      break;
+    case "buy":
+      lines.push(
+        `💵 Paid <b>${e.solSpent >= MIN_TRADE_SOL ? `${e.solSpent.toFixed(3)} SOL` : `$${formatCompact(e.stableSpent)}`}</b>` +
+          ` for ${escapeHtml(amt)} ${escapeHtml(sym)}`
+      );
+      break;
+    case "sell":
+      lines.push(`💰 Sold ${escapeHtml(amt)} ${escapeHtml(sym)} for <b>${e.solReceived.toFixed(3)} SOL</b>`);
+      break;
+    case "burn":
+      lines.push(`🔥 Burnt ${escapeHtml(amt)} ${escapeHtml(sym)}`);
+      break;
+    case "sent":
+      lines.push(`📤 Sent ${escapeHtml(amt)} ${escapeHtml(sym)}`);
+      if (e.counterparty) lines.push(`➡️ <code>${escapeHtml(e.counterparty)}</code>`);
+      break;
+    case "received":
+      lines.push(`📥 Received ${escapeHtml(amt)} ${escapeHtml(sym)}`);
+      if (e.counterparty) lines.push(`⬅️ <code>${escapeHtml(e.counterparty)}</code>`);
+      break;
   }
-  if (m.marketCapUsd != null) lines.push(`📊 MC ${escapeHtml(formatCompact(m.marketCapUsd))}`);
+
+  if (m.marketCapUsd != null) lines.push(`📊 MC $${escapeHtml(formatCompact(m.marketCapUsd))}`);
   if (m.liquidityUsd != null) lines.push(`💧 Liq $${escapeHtml(formatCompact(m.liquidityUsd))}`);
 
   lines.push("");
@@ -281,6 +374,10 @@ export async function pollSolanaAlphaWallets(): Promise<void> {
     }
 
     const market = await fetchMarket(e.mint);
+    if (!shouldReport(e, market)) {
+      console.log(`[solana-alpha] suppressed spam ${e.kind} for ${e.label}: ${e.mint.slice(0, 8)}… (liq $${Math.round(market.liquidityUsd ?? 0)})`);
+      continue;
+    }
     try {
       const text = formatAlphaEvent(e, market);
       await broadcastAlert(FEATURE.ALPHA_SOLANA, (chatId) => send(chatId, text));
