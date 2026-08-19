@@ -18,7 +18,7 @@ import {
   MAX_LAUNCHES_PER_WINDOW,
   ordinal,
 } from "./launch-window";
-import { escapeHtml, formatCompact, formatPrice, formatTimeAgo } from "./utils/format";
+import { escapeHtml, formatCompact, formatPrice, formatTimeAgo, jupiterBuyUrl } from "./utils/format";
 
 // StonkFun runs on Solana; every alert here is labelled with that so the feed
 // reads consistently next to the multi-chain launchpads (Flap in particular
@@ -78,6 +78,8 @@ export function formatStonkFunAlert(d: StonkFunTokenDetails): string {
   lines.push(`<code>${escapeHtml(d.mint)}</code>`);
   const footer: string[] = [`🕐 ${escapeHtml(formatTimeAgo(d.timestamp))}`, `🔍 <a href="${solscanToken(d.mint)}">Solscan</a>`];
   if (d.pairUrl) footer.push(`📈 <a href="${escapeHtml(d.pairUrl)}">Chart</a>`);
+  const jupA = jupiterBuyUrl(d.mint);
+  if (jupA) footer.push(`🪐 <a href="${jupA}">Buy on Jup</a>`);
   lines.push(footer.join("  ·  "));
   // Custodial launchpad — the on-chain minter is always the platform deployer.
   lines.push(`👤 Minted by StonkFun (<code>${STONKFUN_DEPLOYER.slice(0, 4)}…${STONKFUN_DEPLOYER.slice(-4)}</code>)`);
@@ -217,6 +219,8 @@ export function formatPinnedLaunchAlert(l: StonkFunLaunch, launchNumber: number)
   lines.push(`<code>${escapeHtml(l.mint)}</code>`);
   const footer = [`🕐 ${escapeHtml(formatTimeAgo(Date.parse(l.createdAt) || 0))}`, `🔍 <a href="${solscanToken(l.mint)}">Solscan</a>`];
   footer.push(`📈 <a href="https://dexscreener.com/solana/${escapeHtml(l.mint)}">Chart</a>`);
+  const jupP = jupiterBuyUrl(l.mint);
+  if (jupP) footer.push(`🪐 <a href="${jupP}">Buy on Jup</a>`);
   lines.push(footer.join("  ·  "));
   if (l.creator) lines.push(`👤 Dev: <code>${escapeHtml(l.creator)}</code>`);
   return lines.join("\n");
@@ -297,10 +301,15 @@ export function formatQuoteTokenAlert(q: QuoteToken): string {
   lines.push(`${escapeHtml(CATEGORY_LABEL[q.category] ?? q.category)}  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
   lines.push("");
   lines.push(`<code>${escapeHtml(q.quoteMint)}</code>`);
-  lines.push(
-    `🔍 <a href="https://solscan.io/token/${q.quoteMint}">Solscan</a>` +
-    `  ·  🚀 <a href="${STONKFUN_BASE}/launch">Launch a token</a>`
-  );
+  const quoteFooter = [
+    `🔍 <a href="https://solscan.io/token/${q.quoteMint}">Solscan</a>`,
+    `🚀 <a href="${STONKFUN_BASE}/launch">Launch a token</a>`,
+  ];
+  // The pairing asset itself is buyable, and buying it ahead of the launches
+  // that will be priced against it is the reason to care about this alert.
+  const jupQ = jupiterBuyUrl(q.quoteMint);
+  if (jupQ) quoteFooter.push(`🪐 <a href="${jupQ}">Buy on Jup</a>`);
+  lines.push(quoteFooter.join("  ·  "));
   return lines.join("\n");
 }
 
@@ -436,6 +445,8 @@ export function formatStonkFunLaunchAlert(
   lines.push(`<code>${escapeHtml(d.mint)}</code>`);
   const footer = [`🕐 ${escapeHtml(formatTimeAgo(d.timestamp))}`, `🔍 <a href="${solscanToken(d.mint)}">Solscan</a>`];
   if (d.pairUrl) footer.push(`📈 <a href="${escapeHtml(d.pairUrl)}">Chart</a>`);
+  const jup = jupiterBuyUrl(d.mint);
+  if (jup) footer.push(`🪐 <a href="${jup}">Buy on Jup</a>`);
   lines.push(footer.join("  ·  "));
   return lines.join("\n");
 }

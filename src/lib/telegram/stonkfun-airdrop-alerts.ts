@@ -5,7 +5,7 @@ import {
   type StonkFunAirdropDetail,
 } from "@/lib/api/stonkfun";
 import { getAlertsBot, broadcastAlert, FEATURE } from "./alerts-bot";
-import { escapeHtml, formatCompact, formatTimeAgo } from "./utils/format";
+import { escapeHtml, formatCompact, formatTimeAgo, jupiterBuyUrl } from "./utils/format";
 
 // ── StonkFun Airdrop Mode watcher ────────────────────────────────────────────
 //
@@ -94,6 +94,8 @@ export function formatAirdropAlert(
     `🔍 <a href="${solscanToken(l.mint)}">Solscan</a>`,
     `📈 <a href="https://dexscreener.com/solana/${escapeHtml(l.mint)}">Chart</a>`,
   ];
+  const jup = jupiterBuyUrl(l.mint);
+  if (jup) footer.push(`🪐 <a href="${jup}">Buy on Jup</a>`);
   lines.push(footer.join("  ·  "));
   if (l.creator) lines.push(`👤 Dev: <code>${escapeHtml(l.creator)}</code>`);
   return lines.join("\n");

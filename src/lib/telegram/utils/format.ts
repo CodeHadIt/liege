@@ -133,3 +133,27 @@ export function formatTimeAgo(timestamp: number | null | undefined): string {
   if (diffWeeks < 4) return `${diffWeeks}w ago`;
   return `${Math.floor(diffDays / 30)}mo ago`;
 }
+
+/**
+ * USDC on Solana. The sell side of every Jupiter link we emit.
+ *
+ * Deliberately USDC rather than SOL: an alert is read by someone deciding
+ * whether to take a position, and quoting the trade in a dollar stablecoin means
+ * the amount they type is the amount they are risking.
+ */
+export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+/**
+ * Jupiter swap link, pre-filled to buy `mint` with USDC.
+ *
+ * Returns null for a missing or malformed mint so callers can omit the button
+ * rather than emit a link that opens Jupiter with a broken pair. Solana mints
+ * are base58 and 32-44 characters; anything else is not worth linking.
+ */
+export function jupiterBuyUrl(mint: string | null | undefined): string | null {
+  if (!mint) return null;
+  const m = mint.trim();
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(m)) return null;
+  if (m === USDC_MINT) return null; // buying USDC with USDC is not a trade
+  return `https://jup.ag/?sell=${USDC_MINT}&buy=${m}`;
+}

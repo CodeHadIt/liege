@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-19 (Airdrop Mode watcher closed; code retained)
+**Last updated:** 2026-08-19 (Jupiter buy links on Solana alerts)
 
 ---
 
@@ -156,6 +156,28 @@ be bundled for the Edge runtime.
 
 Catalog polls are slow (assets are added on the order of days); launch watchers
 are fast, and short-circuit entirely while nothing is being watched.
+
+### Buy links
+
+Solana alerts carry a **🪐 Buy on Jup** link in the footer:
+
+```
+https://jup.ag/?sell=<USDC mint>&buy=<token mint>
+```
+
+The sell side is pinned to **USDC** (`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`)
+rather than SOL, so the amount someone types on Jupiter is the amount they are
+risking in dollars.
+
+`jupiterBuyUrl()` in [`utils/format.ts`](../../src/lib/telegram/utils/format.ts)
+returns **null** for a missing or malformed mint, and callers omit the link
+rather than emitting one that opens Jupiter on a broken pair. It also refuses
+USDC itself, since buying USDC with USDC is not a trade.
+
+Present on: StonkFun windowed launches, pinned launches, the every-launch feed,
+Airdrop Mode, and the new-quote-token alert. The quote alert links the **pairing
+asset**, since buying that ahead of the launches priced against it is the reason
+to act on that alert.
 
 ### Chain labelling
 
