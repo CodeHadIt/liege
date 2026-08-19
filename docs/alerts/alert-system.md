@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-18 (StonkFun Airdrop Mode watcher)
+**Last updated:** 2026-08-19 (Airdrop Mode watcher closed; code retained)
 
 ---
 
@@ -320,15 +320,30 @@ cannot be both — pinned assets are `custom`, which the denylist keeps out of t
 windowed set — and the windowed path is checked first regardless, so a future
 overlap would produce one alert rather than two.
 
-### Airdrop Mode — a separate, time-boxed watcher
+### Airdrop Mode — CLOSED, code retained
+
+**This watcher is not scheduled and sends nothing.** It was a 24h watch, the
+window is over, and it was closed on 2026-08-19.
+
+It is unscheduled in [`instrumentation.ts`](../../src/instrumentation.ts) rather
+than left to its own expiry check: at the moment it was closed the deadline had
+not yet passed, so relying on the timestamp would have kept it pinging. Not
+scheduling it is the only state that cannot ping.
+
+To reopen: schedule `pollStonkFunAirdropLaunches` on a 30s interval **and** set
+`STONKFUN_AIRDROP_WATCH_UNTIL` to a future ISO timestamp — its internal guard
+will otherwise refuse to alert past the old deadline. Nothing else needs
+changing.
+
+The rest of this section describes how it works, for whoever reopens it.
 
 | | |
 |---|---|
 | Code | [`stonkfun-airdrop-alerts.ts`](../../src/lib/telegram/stonkfun-airdrop-alerts.ts) |
 | Detection | `GET /api/launches` (**internal**) — `airdropBps` inline |
-| Poll | 30s |
+| Poll | 30s (when scheduled) |
 | Feature | `launch` (all tiers) |
-| Expiry | `STONKFUN_AIRDROP_WATCH_UNTIL`, default `2026-08-19T14:00:00Z` |
+| Expiry | `STONKFUN_AIRDROP_WATCH_UNTIL`, default `2026-08-19T14:00:00Z` (elapsed) |
 
 Airdrop Mode holds a share of supply **out of the pool** and distributes it to
 holders of the quote token being paired against — reward-mode launches only,
@@ -348,8 +363,9 @@ per-token endpoint as best-effort enrichment that can never delay an alert.
 
 **The watcher expires at a fixed timestamp**, not "24h from process start" — the
 latter would silently extend the window on every redeploy, so a watch meant to
-end tonight could still be running next week. Past the deadline the interval
-clears itself and the poller no-ops.
+end tonight could still be running next week. Past the deadline the poller
+no-ops. That guard is a backstop, not the off switch: the off switch is not
+scheduling it.
 
 Feature history: the first airdrop launch was **2026-08-17T20:34:48Z**,
 established by probing all 1,593 launches between 2026-08-12 and that timestamp
