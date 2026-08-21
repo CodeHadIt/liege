@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-19 (Solana alpha watcher: full activity coverage)
+**Last updated:** 2026-08-21 (TTWO pinned — every launch against Take-Two)
 
 ---
 
@@ -249,23 +249,32 @@ StonkFun adds later.
 **Launches against that quote** — every token launched inside the 36h window,
 numbered, not just the first.
 
-### Pinned quotes — dormant, nothing pinned
+### Pinned quotes — every launch against a watched asset
 
 A pinned quote is reported in full: **every** coin launched against it, no
 category filter, no 36h window, no launch cap.
 
-**No quote is pinned today.** `PINNED_QUOTE_MINTS` in
-[`stonkfun-alerts.ts`](../../src/lib/telegram/stonkfun-alerts.ts) is empty, so
-the pinned branch of the poller never fires and this section describes capability
-rather than live behaviour.
-
 | Asset | Mint | Pinned | Removed |
 |---|---|---|---|
-| **RAY** (Raydium) | `4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R` | 2026-08-13 | 2026-08-14 |
+| **TTWO** (Take-Two Interactive) | `TTWofwAge91oFhZs7kpQdyrVRkmevgM88xijGvQFbKo` | 2026-08-21 | — |
+| RAY (Raydium) | `4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R` | 2026-08-13 | 2026-08-14 |
 
-The implementation is deliberately kept. Pinning a quote again is adding one
-`[mint, label]` entry to that map — formatting, per-quote counters, seeding and
-the test ping all still work and need no other change.
+Pinning or unpinning is one `[mint, label]` entry in `PINNED_QUOTE_MINTS`
+([`stonkfun-alerts.ts`](../../src/lib/telegram/stonkfun-alerts.ts)); nothing else
+refers to that map.
+
+**Expected volume for TTWO: ~5.4 launches/day**, measured over the 13 days since
+GTA6 opened the pairing, peaking at 22 on day one. This is a busy pin.
+
+#### One edge worth knowing
+
+RAY was category `custom`, which the denylist keeps out of the windowed set, so a
+pinned quote could never also hold an open 36h window. **TTWO is `backpack`,
+which is not denied.** If it were ever re-added to the catalog a window would
+open, and the windowed branch takes precedence — reapplying
+`MAX_LAUNCHES_PER_WINDOW` and silently capping a pin that is meant to be
+uncapped. TTWO is already seeded, so no window opens today, but a pinned quote
+outside the denylist is a live edge rather than a theoretical one.
 
 #### Detection uses StonkFun's own launches feed, NOT the mint detector
 

@@ -174,13 +174,25 @@ export async function sendStonkFunTestPing(chatId: string): Promise<boolean> {
 }
 
 
-// ── Pinned quotes — dormant, no quote currently pinned ───────────────────────
+// ── Pinned quotes — every launch against a watched asset ─────────────────────
 //
 // A pinned quote is reported for EVERY coin launched against it: no category
-// filter, no 36h window, no launch cap. The map is empty, so nothing is pinned
-// and the pinned branch of pollStonkFunLaunches never fires. Pinning a quote
-// again is adding one `[mint, label]` entry below — the machinery around it is
-// intact and needs no other change.
+// filter, no 36h window, no launch cap. Unpinning is deleting its entry below;
+// nothing else refers to this map.
+//
+// Currently pinned:
+//   TTWO — Take-Two Interactive. Requested 2026-08-21. Runs ~5.4 launches/day
+//          measured over 13 days, peaking at 22 the day GTA6 opened it, so this
+//          is a busy pin rather than an occasional one.
+//
+// TTWO differs from the previous pin in a way worth knowing. RAY was `custom`,
+// which the category denylist keeps out of the windowed set, so a pinned quote
+// could never also hold an open 36h window. TTWO is `backpack`, which is NOT
+// denied — if it were ever re-added to the catalog, a window would open and the
+// windowed branch takes precedence, reapplying MAX_LAUNCHES_PER_WINDOW and
+// silently capping a pin that is supposed to be uncapped. It is already seeded
+// in the catalog so no window will open today, but a pinned quote outside the
+// denylist is a live edge, not a theoretical one.
 //
 // RAY (4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R) was pinned 2026-08-13 by
 // request and removed 2026-08-14, having served its purpose.
@@ -198,7 +210,9 @@ export async function sendStonkFunTestPing(chatId: string): Promise<boolean> {
 // token, so the match is exact and needs no pool lookup or deepest-pool
 // inference.
 
-const PINNED_QUOTE_MINTS = new Map<string, string>();
+const PINNED_QUOTE_MINTS = new Map<string, string>([
+  ["TTWofwAge91oFhZs7kpQdyrVRkmevgM88xijGvQFbKo", "TTWO (Take-Two Interactive)"],
+]);
 
 export function formatPinnedLaunchAlert(l: StonkFunLaunch, launchNumber: number): string {
   const lines: string[] = [];
