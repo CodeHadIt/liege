@@ -185,14 +185,19 @@ export async function sendStonkFunTestPing(chatId: string): Promise<boolean> {
 //          measured over 13 days, peaking at 22 the day GTA6 opened it, so this
 //          is a busy pin rather than an occasional one.
 //
-// TTWO differs from the previous pin in a way worth knowing. RAY was `custom`,
-// which the category denylist keeps out of the windowed set, so a pinned quote
-// could never also hold an open 36h window. TTWO is `backpack`, which is NOT
-// denied — if it were ever re-added to the catalog, a window would open and the
-// windowed branch takes precedence, reapplying MAX_LAUNCHES_PER_WINDOW and
-// silently capping a pin that is supposed to be uncapped. It is already seeded
-// in the catalog so no window will open today, but a pinned quote outside the
-// denylist is a live edge, not a theoretical one.
+// A pin is UNRESTRICTED, and three separate mechanisms had to be taught that:
+//
+//   1. No window is opened for a pinned mint (startQuoteWatch returns early).
+//      RAY was `custom`, which the denylist keeps out of the windowed set, so
+//      this never came up. TTWO is `backpack`, which is not denied.
+//   2. Pinned is read BEFORE the window in pollStonkFunLaunches. Reading the
+//      window first handed a pinned quote to the capped, expiring branch.
+//   3. Pinned launches are exempt from MAX_ALERTS_PER_PASS, and that loop
+//      `continue`s rather than `break`s — a windowed burst used to swallow
+//      pinned launches sitting behind it in the same batch.
+//
+// Any one of those left in place would silently cap a pin that is supposed to
+// be uncapped, which is the one failure pinning exists to prevent.
 //
 // RAY (4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R) was pinned 2026-08-13 by
 // request and removed 2026-08-14, having served its purpose.
@@ -414,6 +419,14 @@ const watchedQuotes = new Map<string, WatchedQuote>(); // key: quote mint
 
 function startQuoteWatch(q: QuoteToken): void {
   if (watchedQuotes.has(q.quoteMint)) return;
+  // A pinned quote is uncapped and unexpiring by definition. Opening a 36h
+  // window over one would hand it to the windowed branch, which reapplies the
+  // launch cap and then goes quiet when the window closes — the opposite of
+  // what pinning means.
+  if (PINNED_QUOTE_MINTS.has(q.quoteMint)) {
+    console.log(`[stonkfun] ${q.symbol} is pinned — not opening a ${LAUNCH_WINDOW_LABEL} window`);
+    return;
+  }
   watchedQuotes.set(q.quoteMint, { quote: q, openedAt: Date.now(), launchCount: 0 });
   console.log(`[stonkfun] watching ${q.symbol} (${q.category}) for launches over ${LAUNCH_WINDOW_LABEL}`);
 }
@@ -577,8 +590,10 @@ export async function pollStonkFunLaunches(): Promise<void> {
   for (const l of fresh) {
     seenLaunches.add(l.mint);
 
-    const w = watchedQuotes.get(l.quoteMint);
-    const pinned = !w && PINNED_QUOTE_MINTS.has(l.quoteMint);
+    // Pinned wins over a window. Reading the window first would hand a pinned
+    // quote to the capped, expiring branch.
+    const pinned = PINNED_QUOTE_MINTS.has(l.quoteMint);
+    const w = pinned ? undefined : watchedQuotes.get(l.quoteMint);
     if (!w && !pinned) continue; // launched against something we're not watching
 
     const ageMs = now - (Date.parse(l.createdAt) || now);
@@ -587,13 +602,17 @@ export async function pollStonkFunLaunches(): Promise<void> {
       continue;
     }
 
-    if (alertsThisPass >= MAX_ALERTS_PER_PASS) {
+    // The per-pass cap is a flood guard for catching up after downtime, and it
+    // DROPS what it skips — the cursor advances past the whole pass either way.
+    // A pinned quote is meant to be uncapped, so it is exempt: losing one of its
+    // launches to a burst is precisely the outcome pinning exists to prevent.
+    if (!pinned && alertsThisPass >= MAX_ALERTS_PER_PASS) {
       console.log(
-        `[stonkfun] hit the ${MAX_ALERTS_PER_PASS}-alert cap for this pass — remaining backlog skipped`
+        `[stonkfun] hit the ${MAX_ALERTS_PER_PASS}-alert cap for this pass — remaining windowed backlog skipped`
       );
-      break;
+      continue;
     }
-    alertsThisPass++;
+    if (!pinned) alertsThisPass++;
 
     if (w) {
       // Every launch in the window is reported, not only the first — but a

@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-21 (TTWO pinned — every launch against Take-Two)
+**Last updated:** 2026-08-21 (TTWO pinned and genuinely uncapped)
 
 ---
 
@@ -266,15 +266,29 @@ refers to that map.
 **Expected volume for TTWO: ~5.4 launches/day**, measured over the 13 days since
 GTA6 opened the pairing, peaking at 22 on day one. This is a busy pin.
 
-#### One edge worth knowing
+#### A pin is genuinely unrestricted
 
-RAY was category `custom`, which the denylist keeps out of the windowed set, so a
-pinned quote could never also hold an open 36h window. **TTWO is `backpack`,
-which is not denied.** If it were ever re-added to the catalog a window would
-open, and the windowed branch takes precedence — reapplying
-`MAX_LAUNCHES_PER_WINDOW` and silently capping a pin that is meant to be
-uncapped. TTWO is already seeded, so no window opens today, but a pinned quote
-outside the denylist is a live edge rather than a theoretical one.
+Three separate mechanisms could each have capped a pin, and all three are now
+explicitly taught not to:
+
+| # | Mechanism | Fix |
+|---|---|---|
+| 1 | A 36h window opening on the pinned quote | `startQuoteWatch` returns early for a pinned mint |
+| 2 | The windowed branch taking precedence | pinned is read **before** the window in the poll loop |
+| 3 | `MAX_ALERTS_PER_PASS` (25) | pinned launches are exempt, and the loop `continue`s instead of `break`ing |
+
+Number 1 never came up for RAY, which was `custom` and therefore excluded by the
+category denylist. **TTWO is `backpack`, which is not denied**, so a window could
+genuinely have opened over it.
+
+Number 3 is the subtle one: that cap is a flood guard for catching up after
+downtime and it *drops* what it skips — the cursor advances past the whole pass
+regardless. It also used to `break`, so a burst of windowed launches would
+swallow any pinned launches sitting behind them in the same batch.
+
+Verified by simulation against the shipped decision logic: 60 pinned launches all
+alert with the window cap already exceeded, and 5 pinned launches all get through
+behind 40 windowed ones while the windowed set stays correctly capped at 25.
 
 #### Detection uses StonkFun's own launches feed, NOT the mint detector
 
