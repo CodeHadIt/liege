@@ -6,6 +6,7 @@ import {
 } from "@/lib/api/sunrise";
 import { getAlertsBot, broadcastAlert, FEATURE } from "./alerts-bot";
 import { escapeHtml } from "./utils/format";
+import { FEED, resolveSeen, markSeen } from "@/lib/api/feed-seen";
 
 // Which asset classes to alert on. Sunrise's focus (and the user's) is tokenized
 // stocks — but this is the single place to widen coverage later if desired.
@@ -14,7 +15,6 @@ const ALERT_ASSET_CLASSES = new Set(["stock"]);
 // In-memory dedupe, seeded on first poll so we only alert on assets added after
 // the system comes online — not the existing backlog.
 const seen = new Set<string>();
-let seeded = false;
 
 const ASSET_CLASS_LABEL: Record<string, string> = {
   stock:      "📈 Stock",
@@ -80,10 +80,16 @@ export async function pollSunriseStocks(): Promise<void> {
 
   const relevant = tokens.filter((t) => ALERT_ASSET_CLASSES.has(t.assetClass));
 
-  if (!seeded) {
-    for (const t of relevant) seen.add(t.address);
-    seeded = true;
-    console.log(`[sunrise] seeded ${seen.size} existing stock pairs (no alert on backlog)`);
+  const state = await resolveSeen(FEED.SUNRISE_PAIRS, seen);
+  // Degraded (store unreachable) falls through on the in-memory set — the old
+  // behaviour, which still alerts. Silence would be the worse failure here.
+  for (const k of state.seen) seen.add(k);
+
+  if (state.firstRun) {
+    const keys = relevant.map((t) => t.address);
+    for (const k of keys) seen.add(k);
+    await markSeen(FEED.SUNRISE_PAIRS, keys);
+    console.log(`[sunrise] seeded ${keys.length} existing stock pairs (first run — no alert on backlog)`);
     return;
   }
 
@@ -92,6 +98,7 @@ export async function pollSunriseStocks(): Promise<void> {
 
   for (const t of fresh) {
     seen.add(t.address);
+    await markSeen(FEED.SUNRISE_PAIRS, [t.address]);
     await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendAlert(chatId, t));
     console.log(`[sunrise] alerted new stock pair: ${t.symbol} (${t.name})`);
   }

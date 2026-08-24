@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-24 (HOODon pinned; re-seeding gap documented)
+**Last updated:** 2026-08-24 (durable seen-sets for catalog watchers)
 
 ---
 
@@ -131,6 +131,49 @@ would double-report the same token.
 An ID appearing in both tier vars resolves to **platinum**, so a config mistake
 cannot silently demote the owner. An unrecognised feature id logs an error and
 sends to nobody — the failure mode is silence, not a leak.
+
+### Durable seen-sets
+
+A catalog watcher (new stock, new quote asset) alerts on anything not in its
+seen-set, and seeds that set silently on its first pass so a redeploy does not
+replay the whole catalog.
+
+Holding that set **in memory** made the seed run again on every restart, which
+silently absorbed anything listed while the process was down. Because these
+watchers only ever alert on the transition to "unseen", a swallowed listing can
+never be announced later — it is lost, not delayed. It also never gets a launch
+watch opened, so launches against it go unreported too.
+
+The set now lives in `feed_seen` (`(feed, key)`), so a restart resumes.
+
+| Feed | Key |
+|---|---|
+| `long.rh.stocks` | stock contract |
+| `flap.rh.quotes` | quote address |
+| `bsc.quotes` | quote address |
+| `pumpfun.quotes` | quote mint |
+| `sunrise.pairs` | pair address |
+| `stonkfun.quotes` | quote mint |
+
+`firstRun` is measured on the **stored** set alone, before the in-memory union: a
+restarted process has a populated memory and an empty store only on a genuine
+first run, and conflating the two would re-seed and reintroduce the bug.
+
+**When the store is unreachable** (missing table, transient error) the watcher
+falls back to the in-memory set — the old behaviour, which still alerts — and
+writes nothing, so the store stays authoritative and resumes when reachable.
+Going silent was the first design and it was wrong: a watcher that stops
+reporting because a table is missing turns a deployment-ordering problem into
+missed listings, which is the failure this exists to prevent.
+
+Separate from `feed_cursors`: a cursor answers "how far through an ordered stream
+am I", which suits a feed with a timestamp or block height. A catalog has no
+ordering, so the question is membership, not position.
+
+**Not covered.** Block-cursor watchers (`pools.fun`, Long's on-chain
+`Initialize`, BNB bonding curves) hold their last-scanned block in memory and
+re-baseline to `latest` on restart, so they skip the gap rather than replaying
+it. Same shape of loss, different fix — not addressed here.
 
 ### Scheduling
 
@@ -558,9 +601,8 @@ appears while the process is restarting is absorbed with no alert **and no watch
 opened**, so launches against it go unreported too. Twelve deploys landed between
 2026-08-17 and 2026-08-21.
 
-> **This failure mode is not specific to Flap.** Nine seeded watchers across
-> seven files share it; only the StonkFun launch watcher has a durable cursor.
-> Pinning HOODon fixes one asset, not the class. See "Known limitations" below.
+> HOODon's pin fixes one asset. The class is fixed separately — see
+> §2 "Durable seen-sets".
 
 ### Launchpad attribution
 

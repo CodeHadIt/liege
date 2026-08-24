@@ -29,6 +29,7 @@ import {
   ordinal,
 } from "./launch-window";
 import { escapeHtml, formatCompact, formatPrice } from "./utils/format";
+import { FEED, resolveSeen, markSeen } from "@/lib/api/feed-seen";
 
 // Currency symbols that indicate a stock's own price pool (not a token launched
 // against it) — used to skip when the "other" side of an Initialize is a currency.
@@ -46,7 +47,6 @@ const CHAIN_LABEL = "Robinhood Chain";
 // In-memory dedupe, seeded on first poll so we only alert on stocks added after
 // the system comes online.
 const seen = new Set<string>();
-let seeded = false;
 
 export function formatLongStockAlert(t: RhStockToken): string {
   // Names look like "Take-Two Interactive Software • Robinhood Token"
@@ -91,18 +91,27 @@ export async function pollLongStocks(): Promise<void> {
   const stocks = await fetchRobinhoodStockTokens();
   if (stocks.length === 0) return;
 
-  if (!seeded) {
-    for (const s of stocks) seen.add(s.contractAddress);
-    seeded = true;
-    console.log(`[long] seeded ${seen.size} existing Robinhood stock tokens (no alert on backlog)`);
+  // The seen-set is persisted, so a redeploy resumes instead of re-seeding and
+  // silently swallowing anything listed while the process was down.
+  const state = await resolveSeen(FEED.LONG_STOCKS, seen);
+  // Degraded (store unreachable) falls through on the in-memory set — the old
+  // behaviour, which still alerts. Silence would be the worse failure here.
+  for (const k of state.seen) seen.add(k);
+
+  if (state.firstRun) {
+    const keys = stocks.map((s) => s.contractAddress);
+    for (const k of keys) seen.add(k);
+    await markSeen(FEED.LONG_STOCKS, keys);
+    console.log(`[long] seeded ${keys.length} existing Robinhood stock tokens (first run — no alert on backlog)`);
     return;
   }
 
-  const fresh = stocks.filter((s) => !seen.has(s.contractAddress));
+  const fresh = stocks.filter((s) => !state.seen.has(s.contractAddress));
   if (fresh.length === 0) return;
 
   for (const s of fresh) {
     seen.add(s.contractAddress);
+    await markSeen(FEED.LONG_STOCKS, [s.contractAddress]);
     // Begin watching this newly-added stock (by lowercase address, to match
     // on-chain event topics) for its inaugural token launch.
     watchedStocks.set(s.contractAddress.toLowerCase(), { symbol: s.symbol, openedAt: Date.now(), launchCount: 0 });
@@ -338,7 +347,6 @@ export async function pollLongOnchainCreations(): Promise<void> {
 
 const flapSeen = new Set<string>(); // lowercase addresses, dedupe for alerts
 const flapStockAddresses = new Set<string>(); // union'd into the on-chain stock filter
-let flapSeeded = false;
 
 export function formatFlapRhStockAlert(t: FlapPaymentToken): string {
   // Names look like "Apple • Robinhood Token" — keep the company, drop the issuer.
@@ -396,17 +404,24 @@ export async function pollFlapRobinhoodStocks(): Promise<void> {
     if (s.address) flapStockAddresses.add(s.address.toLowerCase());
   }
 
-  if (!flapSeeded) {
-    for (const s of stocks) flapSeen.add(s.address ?? s.symbol.toLowerCase());
-    flapSeeded = true;
-    console.log(`[long] seeded ${flapSeen.size} existing Flap stock quotes on Robinhood Chain`);
+  const state = await resolveSeen(FEED.FLAP_RH_QUOTES, flapSeen);
+  // Degraded (store unreachable) falls through on the in-memory set — the old
+  // behaviour, which still alerts. Silence would be the worse failure here.
+  for (const k of state.seen) flapSeen.add(k);
+
+  if (state.firstRun) {
+    const keys = stocks.map((s) => s.address ?? s.symbol.toLowerCase());
+    for (const k of keys) flapSeen.add(k);
+    await markSeen(FEED.FLAP_RH_QUOTES, keys);
+    console.log(`[long] seeded ${keys.length} Flap stock quotes on Robinhood Chain (first run — no alert on backlog)`);
     return;
   }
 
   for (const s of stocks) {
     const key = s.address ?? s.symbol.toLowerCase();
-    if (flapSeen.has(key)) continue;
+    if (state.seen.has(key)) continue;
     flapSeen.add(key);
+    await markSeen(FEED.FLAP_RH_QUOTES, [key]);
 
     if (s.address) {
       // Watch for the inaugural launch, same as a registry-sourced stock.

@@ -19,6 +19,7 @@ import {
   ordinal,
 } from "./launch-window";
 import { escapeHtml, formatCompact, formatPrice, formatTimeAgo, jupiterBuyUrl } from "./utils/format";
+import { FEED, resolveSeen, markSeen } from "@/lib/api/feed-seen";
 
 // StonkFun runs on Solana; every alert here is labelled with that so the feed
 // reads consistently next to the multi-chain launchpads (Flap in particular
@@ -280,7 +281,6 @@ export async function sendPinnedQuoteTestPing(chatId: string): Promise<boolean> 
 // token is paired against. We watch that list and alert when a new one is added.
 
 const seenQuotes = new Set<string>();
-let quotesSeeded = false;
 
 /**
  * Quote categories NOT worth alerting on.
@@ -354,10 +354,16 @@ export async function pollStonkFunQuoteTokens(): Promise<void> {
   const quotes = await fetchQuoteTokens();
   if (quotes.length === 0) return;
 
-  if (!quotesSeeded) {
-    for (const q of quotes) seenQuotes.add(q.quoteMint);
-    quotesSeeded = true;
-    console.log(`[stonkfun] seeded ${seenQuotes.size} existing quote tokens (no alert on backlog)`);
+  const state = await resolveSeen(FEED.STONKFUN_QUOTES, seenQuotes);
+  // Degraded (store unreachable) falls through on the in-memory set — the old
+  // behaviour, which still alerts. Silence would be the worse failure here.
+  for (const k of state.seen) seenQuotes.add(k);
+
+  if (state.firstRun) {
+    const keys = quotes.map((q) => q.quoteMint);
+    for (const k of keys) seenQuotes.add(k);
+    await markSeen(FEED.STONKFUN_QUOTES, keys);
+    console.log(`[stonkfun] seeded ${keys.length} existing quote tokens (first run — no alert on backlog)`);
     return;
   }
 
@@ -368,6 +374,7 @@ export async function pollStonkFunQuoteTokens(): Promise<void> {
     // Recorded either way, so a later listing of the same asset isn't treated as
     // new — but only stock-like assets are announced or watched.
     seenQuotes.add(q.quoteMint);
+    await markSeen(FEED.STONKFUN_QUOTES, [q.quoteMint]);
     if (!isAlertableQuote(q.category)) {
       console.log(`[stonkfun] skipping quote ${q.symbol} — category "${q.category}" is not alertable`);
       continue;

@@ -31,6 +31,7 @@ import {
   ordinal,
 } from "./launch-window";
 import { escapeHtml, formatCompact, formatTimeAgo } from "./utils/format";
+import { FEED, resolveSeen, markSeen } from "@/lib/api/feed-seen";
 
 const CHAIN_LABEL = "Solana";
 const PLATFORM = "Pump.fun";
@@ -42,7 +43,6 @@ function solscanToken(mint: string): string {
 // ── Quote catalog ────────────────────────────────────────────────────────────
 
 const seenQuotes = new Set<string>();
-let quotesSeeded = false;
 
 interface WatchedQuote {
   quote: QuoteMintMeta;
@@ -140,10 +140,15 @@ export async function pollPumpFunQuoteMints(): Promise<void> {
   // new on the next successful poll.
   if (mints === null) return;
 
-  if (!quotesSeeded) {
+  const state = await resolveSeen(FEED.PUMPFUN_QUOTES, seenQuotes);
+  // Degraded (store unreachable) falls through on the in-memory set — the old
+  // behaviour, which still alerts. Silence would be the worse failure here.
+  for (const k of state.seen) seenQuotes.add(k);
+
+  if (state.firstRun) {
     for (const m of mints) seenQuotes.add(m);
-    quotesSeeded = true;
-    console.log(`[pumpfun] seeded ${seenQuotes.size} whitelisted quote mint(s) (no alert on backlog)`);
+    await markSeen(FEED.PUMPFUN_QUOTES, mints);
+    console.log(`[pumpfun] seeded ${mints.length} whitelisted quote mint(s) (first run — no alert on backlog)`);
     return;
   }
 
@@ -152,6 +157,7 @@ export async function pollPumpFunQuoteMints(): Promise<void> {
     if (BASELINE_QUOTE_MINTS.has(mint)) {
       // Recorded so a suppressed asset isn't re-evaluated every pass.
       seenQuotes.add(mint);
+      await markSeen(FEED.PUMPFUN_QUOTES, [mint]);
       console.log(`[pumpfun] skipping baseline quote ${mint} — not a new listing`);
       continue;
     }
