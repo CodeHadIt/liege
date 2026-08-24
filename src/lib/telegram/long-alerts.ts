@@ -121,10 +121,48 @@ interface WatchedStock {
   symbol: string;
   openedAt: number;
   launchCount: number;
+  /** Pinned watches never expire and are never capped. */
+  pinned?: boolean;
 }
 // Every launch against a newly-added stock is reported for a fixed window, not
 // just the inaugural one — the burst that follows a new pair is the signal.
 const watchedStocks = new Map<string, WatchedStock>(); // key: lowercase stock contract
+
+/**
+ * Stocks watched permanently, by explicit request.
+ *
+ * A normal watch is opened once, when the stock is first SEEN as new, and runs
+ * for 36h. That is the mechanism HOODon fell through: the seen-set is in-memory,
+ * so every redeploy re-seeds it silently, and a stock that appeared while the
+ * process was restarting is absorbed without an alert AND without ever getting a
+ * watch opened — so launches against it go unreported too.
+ *
+ * A pin does not depend on catching the moment of arrival. It is re-asserted on
+ * every pass, so a restart cannot lose it, and it neither expires nor caps.
+ */
+const PINNED_RH_STOCKS = new Map<string, string>([
+  // Ondo's tokenized Robinhood stock on Flap. Added 2026-08-24 after its
+  // catalog entry was swallowed by a redeploy.
+  ["0xfb5b5778d45ae47f15323fb59b666c655174a79c", "HOODon"],
+]);
+
+/**
+ * Re-assert pinned watches. Cheap and idempotent, so it runs every pass rather
+ * than only at startup — that is what makes a pin survive a restart.
+ */
+function ensurePinnedWatches(): void {
+  for (const [addr, symbol] of PINNED_RH_STOCKS) {
+    const existing = watchedStocks.get(addr);
+    if (existing?.pinned) continue;
+    watchedStocks.set(addr, {
+      symbol,
+      openedAt: Date.now(),
+      launchCount: existing?.launchCount ?? 0,
+      pinned: true,
+    });
+    console.log(`[long] pinned watch asserted for ${symbol} (${addr}) — never expires, never caps`);
+  }
+}
 // Never scan more than this many blocks in one pass (after downtime, skip the gap).
 const MAX_BLOCK_SPAN = 100_000;
 let lastScannedBlock: number | null = null;
@@ -210,6 +248,10 @@ export async function pollLongOnchainCreations(): Promise<void> {
 
   // Baseline on first run; also advance the cursor when nothing is being watched
   // so we never backfill a huge history once a stock is added.
+  // Assert pins first: otherwise the short-circuit below can return before a
+  // pinned stock has a watch, and its launches are missed.
+  ensurePinnedWatches();
+
   if (lastScannedBlock == null || watchedStocks.size === 0) {
     lastScannedBlock = latest;
     return;
@@ -224,6 +266,7 @@ export async function pollLongOnchainCreations(): Promise<void> {
   // Drop stale watches once per pass (not per event).
   const now = Date.now();
   for (const [addr, w] of watchedStocks) {
+    if (w.pinned) continue; // a pin has no window to close
     if (now - w.openedAt > LAUNCH_WINDOW_MS) {
       watchedStocks.delete(addr);
       console.log(`[long] ${LAUNCH_WINDOW_LABEL} window closed for ${w.symbol} — ${w.launchCount} launch(es) reported`);
@@ -232,7 +275,9 @@ export async function pollLongOnchainCreations(): Promise<void> {
 
   // Every stock we know of on this chain, from either source — a pool pairing
   // two of them is not a launch.
-  const stockSet = new Set([...seen, ...flapStockAddresses].map((a) => a.toLowerCase()));
+  const stockSet = new Set(
+    [...seen, ...flapStockAddresses, ...PINNED_RH_STOCKS.keys()].map((a) => a.toLowerCase())
+  );
 
   for (const ev of events) {
     const watchedStock = watchedStocks.has(ev.currency0)
@@ -249,7 +294,7 @@ export async function pollLongOnchainCreations(): Promise<void> {
     if (!meta || QUOTE_SYMBOLS.has(meta.symbol.toUpperCase())) continue; // a currency pool
 
     const w = watchedStocks.get(watchedStock)!;
-    if (w.launchCount >= MAX_LAUNCHES_PER_WINDOW) {
+    if (!w.pinned && w.launchCount >= MAX_LAUNCHES_PER_WINDOW) {
       if (w.launchCount === MAX_LAUNCHES_PER_WINDOW) {
         w.launchCount++;
         console.log(`[long] ${w.symbol} hit the ${MAX_LAUNCHES_PER_WINDOW}-launch cap — muting`);
@@ -340,6 +385,7 @@ async function sendFlapRhAlert(chatId: string, t: FlapPaymentToken): Promise<voi
  * Seeds silently on first run.
  */
 export async function pollFlapRobinhoodStocks(): Promise<void> {
+  ensurePinnedWatches();
   const all = await fetchFlapPaymentTokens();
   const stocks = all.filter(
     (t) => t.chainId === FLAP_ROBINHOOD_CHAIN_ID && t.category === "rwa" && t.status === "available"

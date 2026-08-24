@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-21 (TTWO pinned and genuinely uncapped)
+**Last updated:** 2026-08-24 (HOODon pinned; re-seeding gap documented)
 
 ---
 
@@ -536,6 +536,31 @@ the stock's own price pool.
 Scanning only ever moves forward from the block a watch began, so an older token
 can never be mistaken for the first. `MAX_BLOCK_SPAN = 100_000` — after downtime
 the gap is skipped rather than backfilled.
+
+### Pinned stocks — permanent, uncapped watches
+
+`PINNED_RH_STOCKS` in [`long-alerts.ts`](../../src/lib/telegram/long-alerts.ts)
+holds stocks watched permanently rather than for the usual 36h.
+
+| Asset | Address | Pinned |
+|---|---|---|
+| **HOODon** (Ondo's tokenized Robinhood stock, on Flap) | `0xfb5b5778d45ae47f15323fb59b666c655174a79c` | 2026-08-24 |
+
+A pin is re-asserted on **every pass**, not just at startup, and it neither
+expires nor caps. That is the point: a normal watch is opened only at the moment
+a stock is first seen as new, so it can only ever be opened once — and if that
+moment is missed, it is missed permanently.
+
+**HOODon is why this exists.** It was in the catalog, on the right chain, `rwa`
+and `available` — it passed every filter. What swallowed it was the seed: the
+seen-set is in-memory, so each redeploy re-seeds it silently, and a stock that
+appears while the process is restarting is absorbed with no alert **and no watch
+opened**, so launches against it go unreported too. Twelve deploys landed between
+2026-08-17 and 2026-08-21.
+
+> **This failure mode is not specific to Flap.** Nine seeded watchers across
+> seven files share it; only the StonkFun launch watcher has a durable cursor.
+> Pinning HOODon fixes one asset, not the class. See "Known limitations" below.
 
 ### Launchpad attribution
 
