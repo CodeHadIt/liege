@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-24 (durable seen-sets for catalog watchers)
+**Last updated:** 2026-08-24 (alpha deployer promotion wired in — feed was dead)
 
 ---
 
@@ -1294,6 +1294,32 @@ Two counts live on `token_deployers` and must never be confused:
 Measuring hits against `ath_tokens` alone would always return 100%, since a token
 only enters that table by clearing $2M. The failures are the entire point of a
 rate.
+
+### Promotion — how a dev becomes alpha
+
+`refreshAlphaDeployers` counts each dev's recorded `ath_tokens`, promotes anyone
+at or above `MIN_ATH_TOKENS` (2), builds the label and sets `is_alpha`. It runs
+**inside the daily ATH scan**, right after trader promotion — deployer counts only
+change when a new runner is recorded, which is exactly what the scan just did.
+
+> **This feed was dead from inception and nobody could have noticed.**
+> `upsertDeployer` recorded every runner's dev and kept `ath_token_count`
+> current, but never set `is_alpha`. `refreshAlphaDeployers`, which does, was
+> written, exported and **called by nothing**. `loadAlphaDeployers` filters on
+> `is_alpha`, so `pollDeployerLaunches` polled an empty list every 120s and could
+> not fire. 92 Robinhood deployers were recorded and none was ever promoted.
+> Fixed 2026-08-24 by calling it from the scan; the first run promoted 1 of 81
+> eligible devs (only one has 2+ runners so far).
+
+The 20x success rate's denominator comes from `deployer_launches`, backfilled by
+`syncDeployerTokensFromGmgn` — which had **the same problem**, written and never
+called. It now runs once per newly promoted dev, on the daily scan only: it
+drives the GMGN browser scraper, which is slow and fails often, so it never sits
+on a hot path.
+
+Until that history exists the alert reads *"Deploy history still being indexed"*
+rather than a false 0% — the rate is over every token a dev shipped, and showing
+0/0 as a percentage would misrepresent a dev with two real runners.
 
 ### Where dev data comes from
 

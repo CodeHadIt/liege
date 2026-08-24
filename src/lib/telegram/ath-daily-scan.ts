@@ -23,6 +23,11 @@ import {
   compactPnl,
   type AlphaWallet,
 } from "@/lib/api/alpha-wallets";
+import {
+  refreshAlphaDeployers,
+  syncDeployerTokensFromGmgn,
+  SUCCESS_MULTIPLE,
+} from "@/lib/api/alpha-deployers";
 import { getAlertsBot, broadcastAlert, FEATURE } from "./alerts-bot";
 import { escapeHtml } from "./utils/format";
 import { mc } from "./alpha-alerts";
@@ -328,6 +333,8 @@ export interface ScanResult {
   tokensFound: number;
   tradersCaptured: number;
   alphaAdded: number;
+  /** Deployers holding MIN_ATH_TOKENS or more runners, promoted this pass. */
+  deployersPromoted: number;
   candidatesScanned: number;
 }
 
@@ -450,6 +457,51 @@ export async function runAthScan(opts: { windowHours?: number; dryRun?: boolean 
   // ── Cross-reference against every ATH token ever recorded ────────────────
   const alphaAdded = opts.dryRun ? 0 : await promoteRepeatTraders([...todaysWallets]);
 
+  // Promote repeat DEPLOYERS on the same pass.
+  //
+  // This was the missing link in the deployer feed. `upsertDeployer` above
+  // records every runner's dev and keeps `ath_token_count` current, but never
+  // sets `is_alpha` — and `refreshAlphaDeployers`, which does, was exported and
+  // never called by anything. `loadAlphaDeployers` filters on `is_alpha`, so
+  // `pollDeployerLaunches` polled an empty list every 120s and could not fire.
+  // 92 Robinhood deployers were recorded and none were ever promoted.
+  //
+  // Here is the right place: deployer counts only change when a new ATH token is
+  // recorded, which is exactly what this scan just did.
+  let deployersPromoted = 0;
+  if (!opts.dryRun) {
+    try {
+      const promoted = await refreshAlphaDeployers(CHAIN);
+      deployersPromoted = promoted.length;
+      console.log(`[ath-scan] alpha deployers now tracked: ${deployersPromoted}`);
+
+      // Backfill each dev's FULL deploy history — the denominator of the 20x
+      // success rate the alert leads with. Without it `deployer_launches` stays
+      // empty, `total` is 0, and every alert reads "Deploy history still being
+      // indexed" forever. `syncDeployerTokensFromGmgn` had the same problem as
+      // the promotion above: written, exported, never called.
+      //
+      // Only devs with no history yet are synced. This drives the GMGN browser
+      // scraper, which is slow and fails often (measured at three tokens in ten
+      // minutes elsewhere), so it runs once per dev on a daily scan rather than
+      // on any hot path, and a failure leaves the alert's graceful fallback in
+      // place rather than blocking anything.
+      for (const d of promoted) {
+        if (d.totalDeploys > 0) continue;
+        try {
+          const r = await syncDeployerTokensFromGmgn(CHAIN, d.id, d.address);
+          if (r) console.log(`[ath-scan] ${d.label}: indexed ${r.total} deploys, ${r.hits} hit ${SUCCESS_MULTIPLE}x`);
+          else console.log(`[ath-scan] ${d.label}: deploy history unavailable — rate stays unindexed`);
+        } catch (err) {
+          console.error(`[ath-scan] deploy-history sync failed for ${d.label}:`, err);
+        }
+      }
+    } catch (err) {
+      // Never let this sink the scan — the trader half has already been written.
+      console.error("[ath-scan] deployer promotion failed:", err);
+    }
+  }
+
   const dateUtc = new Date().toISOString().slice(0, 10);
   if (!opts.dryRun) {
     const summary = formatDailySummary(found, alphaAdded, dateUtc);
@@ -460,6 +512,7 @@ export async function runAthScan(opts: { windowHours?: number; dryRun?: boolean 
     tokensFound: found.length,
     tradersCaptured,
     alphaAdded,
+    deployersPromoted,
     candidatesScanned: worth.length,
   };
 }
