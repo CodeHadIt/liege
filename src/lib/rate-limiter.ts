@@ -52,9 +52,11 @@ const API_RATE_LIMITS: Record<string, RateLimiterConfig> = {
   // 10 keeps the watcher from ever blocking on the limiter while staying polite.
   robinscan: { maxTokens: 10, refillRate: 2 },
   stonkfun: { maxTokens: 10, refillRate: 0.5 },
-  // o1's Convex backend. One read per 30s launch pass, so this is generous;
-  // sized to stay polite on a backend that is not a public rate-limited API.
-  o1: { maxTokens: 10, refillRate: 1 },
+  // o1's public API. Documented limits are 20/s, 300/min, 25k/day on the
+  // developer plan. The pollers need ~2/min, so this is sized well under the
+  // per-minute quota rather than near the per-second ceiling — bursts are what
+  // trip the limiter, and there is no reason to burst.
+  o1: { maxTokens: 4, refillRate: 0.5 },
   sunrise: { maxTokens: 10, refillRate: 0.5 },
   robinhood: { maxTokens: 10, refillRate: 0.5 },
   // BSC stock-quote watchers. Both scrape a page (and, for Flap, its app bundle)

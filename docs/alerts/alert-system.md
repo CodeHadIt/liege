@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-25 (o1 exchange on Base)
+**Last updated:** 2026-08-25 (o1 on Base, via o1's public API)
 
 ---
 
@@ -988,8 +988,8 @@ state. `MAX_LAUNCHES_PER_WINDOW` (25) bounds a busy window.
 | | |
 |---|---|
 | Code | [`o1-base-alerts.ts`](../../src/lib/telegram/o1-base-alerts.ts), [`api/o1-base.ts`](../../src/lib/api/o1-base.ts) |
-| Launches | Convex `dashboard:feedPage` (`tab: "new"`) on `exciting-fox-990.convex.cloud` |
-| Stock catalog | static list + on-chain `totalSupply` on Base |
+| Launches | `GET /tokens` (o1 public API) |
+| Stock catalog | `GET /config` (o1 public API) |
 | Poll | stocks 120s · launches 30s |
 | Feature | `launch` (all tiers) |
 
@@ -998,47 +998,56 @@ transaction, priced against a paired asset. Same two-stage shape as everything
 else here: ping when a stock becomes pairable, then ping tokens launched against
 it for 36h.
 
-### The site cannot be polled
+### Source: o1's public API
 
-`launch.o1.exchange` sits behind a **Vercel checkpoint**. Every non-browser
-request — HTML and JS assets alike — answers `429 Vercel Security Checkpoint`,
-consistently and after cooldown. Nothing in this watcher touches it.
+| | |
+|---|---|
+| Base URL | `https://api.launch.o1.exchange/v1` (needs `O1_API_KEY`) |
+| Catalog | `GET /config?chain_id=8453&include=chains,suites,quotes` |
+| Launches | `GET /tokens?chain_id=8453&sort=newest` |
 
-Its **Convex backend is not protected**, and Base RPC is open, so both live
-sources are reachable by plain HTTP.
+**`launch.o1.exchange` cannot be polled.** It sits behind a Vercel checkpoint
+that answers `429 Vercel Security Checkpoint` to every non-browser request, HTML
+and JS assets alike, consistently and after cooldown. **`api.launch.o1.exchange`
+is not**, which is what makes this feed possible.
 
-### Launch detection
+Get a key at <https://launch.o1.exchange/developers> (connect wallet). Only
+`config:read` and `tokens:read` are needed — none of the `*:prepare` scopes, and
+leave the origin allowlist blank since calls are server-side.
 
-`dashboard:feedPage` with `tab: "new"` — the default `trending` tab reorders by
-activity, which is useless for detecting arrivals. Each record names
-`quoteAddress` and `quoteSymbol` **alongside the token**, so the pairing is exact
-and atomic: no pool lookup, no retry queue, the same property that makes
-StonkFun's feed reliable.
+Without a key both pollers no-op with one warning. They do **not** fall back to a
+guess: the first implementation pinned a catalog lifted from o1's JS bundle, and
+it was stale the day it shipped — 10 stocks where the API reports 13, missing
+CRCL, INTC and MSFT outright.
 
 ### What makes a stock "pairable"
 
-Supply, read on-chain. This took measuring, because the obvious signals do not
-work: **all ten** Base Stock Tokens are deployed **and** all ten have fresh
-prices, so neither bytecode nor price separates a pairable stock from a dormant
-one. Exactly the four with non-zero supply — AAPL, GOOGL, META, NVDA — are the
-four o1's launch form offers.
+`selectable` — o1's own flag for "the launch form offers this". The full catalog
+is fetched (**not** `active_only=true`) so a stock switching on is a visible
+transition rather than an arrival out of nowhere.
 
-A pair going live is therefore a 0 → non-zero supply transition.
+On Base that is currently 4 of 13: AAPL, GOOGL, META, NVDA live; AMZN, COIN,
+CRCL, INTC, MSFT, MSTR, SNDK, SPCX, TSLA registered but dormant. Each of those
+nine will announce itself automatically the moment o1 switches it on.
+
+An earlier version inferred this from on-chain `totalSupply`, because all
+thirteen tokens are deployed **and** all have fresh prices — neither separates
+pairable from dormant. Supply did, and matched `selectable` exactly, but it was
+an inference where the API states the fact.
+
+### Rate limits
+
+Documented at 20/s, 300/min, 25k/day, 500k/month on the developer plan. The two
+pollers use roughly 3,600/day, about 7x headroom on the daily quota. The client
+honours `Retry-After` on a 429 and retries rather than treating a rate limit as
+an empty catalog — which would read as "every stock went dormant".
 
 ### Known limitations
 
-- **The stock list is static.** It was captured from o1's `contracts-*.js`
-  bundle, which cannot be re-fetched at runtime and whose filename is
-  content-hashed, so pinning it would rot. A launch against a quote that is
-  neither a known stock nor a crypto quote logs a loud `UNKNOWN quote` warning
-  once, so catalog drift is visible rather than silent — but a newly added stock
-  will not be announced until the list is extended.
-- Six of the ten catalogued stocks are dormant (AMZN, COIN, MSTR, SNDK, SPCX,
-  TSLA). Those *will* be announced automatically when minted, since that is the
-  same supply transition.
-- Base stock prices are mirrored from Robinhood Chain
-  (`provider: "robinhood"`, `sourceNetworkId: 4663`), so a stale Robinhood feed
-  shows up here.
+- Launch market data is o1's own indexer, so a brand-new pool may report null
+  price/liquidity for a few seconds.
+- The same API serves `chain_id=4663`, so the Robinhood side is the same code
+  with a different chain id — not yet scheduled.
 
 ## 9. Rate limits
 

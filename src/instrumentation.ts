@@ -20,7 +20,7 @@ export async function register() {
     const { maybeRunDailyScan, maybeRefreshMarketCaps } = await import("@/lib/telegram/ath-daily-scan");
     const { pollDeployerLaunches } = await import("@/lib/telegram/deployer-alerts");
     const { pollSolanaAlphaWallets } = await import("@/lib/telegram/solana-alpha-alerts");
-    const { pollO1BaseStocks, pollO1BaseLaunches } = await import("@/lib/telegram/o1-base-alerts");
+    const { pollO1BaseQuotes, pollO1BaseLaunches } = await import("@/lib/telegram/o1-base-alerts");
 
     // Tier configuration, reported once at boot.
     //
@@ -300,16 +300,16 @@ export async function register() {
       );
     }, DEPLOYER_INTERVAL);
 
-    // o1 exchange on Base. The stock catalog is read on-chain (o1's site 429s
-    // every non-browser request), so a pair is "live" once its token has supply.
-    // Stocks are added rarely, so 120s is ample.
+    // o1 exchange on Base. Catalog and launches both come from o1's public API
+    // (needs O1_API_KEY); `selectable` is o1's own flag for a pairable stock.
+    // Stocks are switched on rarely, so 120s is ample.
     console.log("[instrumentation] Starting o1 Base stock-pair poller (every 120s)");
     const O1_STOCK_INTERVAL = 120_000;
-    pollO1BaseStocks().catch((err) =>
+    pollO1BaseQuotes().catch((err) =>
       console.error("[instrumentation] Initial o1 stock poll error:", err)
     );
     setInterval(() => {
-      pollO1BaseStocks().catch((err) => console.error("[instrumentation] o1 stock poll error:", err));
+      pollO1BaseQuotes().catch((err) => console.error("[instrumentation] o1 stock poll error:", err));
     }, O1_STOCK_INTERVAL);
 
     // ...but watch launches tighter, so a token paired to a newly-live stock is
