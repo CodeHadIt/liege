@@ -21,6 +21,7 @@ export async function register() {
     const { pollDeployerLaunches } = await import("@/lib/telegram/deployer-alerts");
     const { pollSolanaAlphaWallets } = await import("@/lib/telegram/solana-alpha-alerts");
     const { pollO1Quotes, pollO1Launches } = await import("@/lib/telegram/o1-alerts");
+    const { pollBasestonk } = await import("@/lib/telegram/basestonk-alerts");
 
     // Tier configuration, reported once at boot.
     //
@@ -329,6 +330,24 @@ export async function register() {
         );
       }, 30_000);
     }
+
+    // basestonk on Base. One poller, not two: basestonk publishes no catalog of
+    // pairable assets, so its stock pairs are derived from the launch feed
+    // itself and both stages must read the same list in one pass.
+    //
+    // The consequence is that a new stock pair is announced on its first launch
+    // rather than at registration — the pair alert and the inaugural launch
+    // alert fire together. Launch volume runs ~25/day, so 30s is comfortably
+    // faster than arrivals.
+    console.log("[instrumentation] Starting basestonk stock-pair + launch watcher (every 30s)");
+    pollBasestonk().catch((err: unknown) =>
+      console.error("[instrumentation] Initial basestonk poll error:", err)
+    );
+    setInterval(() => {
+      pollBasestonk().catch((err: unknown) =>
+        console.error("[instrumentation] basestonk poll error:", err)
+      );
+    }, 30_000);
 
     // Solana alpha wallets — hand-picked wallets watched for deploys and buys.
     // One Helius request per wallet per pass, so cost tracks the watchlist

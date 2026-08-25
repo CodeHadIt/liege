@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-25 (o1 on Base and Robinhood Chain)
+**Last updated:** 2026-08-25 (basestonk on Base)
 
 ---
 
@@ -36,7 +36,13 @@ runaway pair, and the watcher logs when it trips rather than going quiet.
 
 Both constants live in [`launch-window.ts`](../../src/lib/telegram/launch-window.ts)
 so every platform — StonkFun, Pump.fun, Long, Pons, Flap, pools.trade,
-pools.fun, Four.meme, and anything added later — shares one definition instead of inventing its own.
+pools.fun, Four.meme, o1, basestonk, and anything added later — shares one
+definition instead of inventing its own.
+
+One platform reaches stage 1 differently. Most publish a catalog of pairable
+assets, so a stock is announced when it is *registered*. **basestonk publishes no
+catalog**, so its stock pairs are discovered from the launch feed and announced on
+first use — see §8c. The window behaviour after that point is identical.
 
 Deliberately **not** covered: pinging on every launch. That was the original
 StonkFun behaviour and it buried the signal (see §3).
@@ -199,6 +205,7 @@ be bundled for the Edge runtime.
 | pools.fun launches | 30s |
 | o1 stock pairs (per chain) | 120s |
 | o1 launches (per chain) | 30s |
+| basestonk stock pairs + launches | 30s |
 
 Catalog polls are slow (assets are added on the order of days); launch watchers
 are fast, and short-circuit entirely while nothing is being watched.
@@ -987,7 +994,7 @@ state. `MAX_LAUNCHES_PER_WINDOW` (25) bounds a busy window.
 
 | | |
 |---|---|
-| Code | [`o1-base-alerts.ts`](../../src/lib/telegram/o1-base-alerts.ts), [`api/o1-base.ts`](../../src/lib/api/o1-base.ts) |
+| Code | [`o1-alerts.ts`](../../src/lib/telegram/o1-alerts.ts), [`api/o1.ts`](../../src/lib/api/o1.ts) |
 | Launches | `GET /tokens` (o1 public API) |
 | Stock catalog | `GET /config` (o1 public API) |
 | Poll | stocks 120s · launches 30s |
@@ -1067,6 +1074,82 @@ an empty catalog — which would read as "every stock went dormant".
 - Robinhood reports ~12 launches/day, roughly a third stock-paired. Base is
   busier but has fewer live pairs.
 
+## 8c. basestonk — Base
+
+| | |
+|---|---|
+| Code | [`basestonk-alerts.ts`](../../src/lib/telegram/basestonk-alerts.ts), [`api/basestonk.ts`](../../src/lib/api/basestonk.ts) |
+| Launches | `GET /api/launchpad/tokens?sort=age` (public, no auth) |
+| Stock catalog | **none published** — derived from the launch feed |
+| Poll | 30s (one poller, both stages) |
+| Feature | `launch` (all tiers) |
+| Seen-set | `basestonk.base.stocks` |
+
+Same two-stage shape as every other launchpad here — announce a stock becoming
+pairable, then report tokens launched against it for 36h — with one difference in
+how stage one is triggered.
+
+### Discovery is reactive, not catalogued
+
+StonkFun and o1 both publish a catalog of pairable assets, so a stock is
+announced when it is **registered**, before anyone uses it. basestonk publishes
+no such endpoint. Everything plausible was probed and only four paths exist:
+
+| Path | Result |
+|---|---|
+| `/api/launchpad/tokens` | launches (the one we use) |
+| `/api/launchpad/stats/base` | totals only |
+| `/api/launchpad/pairusd/base?pair=` | one price, needs the address already |
+| `/api/launchpad/ecosystem/base?eco=` | bankr/virtuals/clanker filters |
+
+`/pairs`, `/quotes`, `/stocks`, `/rwa`, `/assets`, `/config`, `/supported` and
+the `/base/*` variants all 404. The launch form builds its picker from an
+obfuscated Vite bundle, not an endpoint.
+
+So the only authoritative statement basestonk makes about a pair token is a
+launch that used it, and **a new stock pair is announced on its first launch**.
+In practice both alerts fire in the same pass — pair alert, then "1st token vs
+$X" — because the launch that reveals the pair also opens its window. What is
+lost versus the catalog platforms is the lead time between a stock being added
+and first being used, not the launches themselves.
+
+Both stages run from **one poller**. The pair catalog is derived from the launch
+feed, so splitting them would mean two reads of the same list racing to decide
+which came first.
+
+### Classifying a pair token
+
+basestonk does not label a pair token as a stock, so classification is done
+on-chain from ERC-20 metadata. Two families are live:
+
+| Family | Shape | Examples |
+|---|---|---|
+| Coinbase tokenized | address starts `0xb2`, **8 decimals**, symbol `TICKERc` | COINc, GOOGLc, METAc, NVDAc, MSTRc |
+| ST0x wrapped | 18 decimals, symbol `wtTICKER`, name `Wrapped … ST0x` | wtCOIN, wtNVDA, wtSPCX |
+
+**The `0xb2` prefix alone is not sufficient.** `0xb2000000…4c27f6523082f41d01` is
+"Basecat", an 18-decimal memecoin sitting in that vanity range; a prefix-only
+rule would announce it as a stock. Decimals are what separate them.
+
+A pair token whose metadata cannot be read is skipped and retried next pass, not
+cached as `other` — otherwise one transient RPC failure would permanently
+suppress a stock. Pair tokens that resolve but match neither family are logged
+once, so a third stock family arriving shows up as a candidate rather than
+silently counting as crypto.
+
+### Known limitations
+
+- **No lead time on new pairs** (above). A stock added to the picker but never
+  used is invisible to us.
+- Of the last 100 launches, 74 were stock-paired — but only pairs inside an open
+  36h window are reported, and in steady state every stock pair is already known,
+  so the feed is quiet. That silence is correct.
+- Window state is in-memory, as on o1: a redeploy mid-window stops those launch
+  alerts. The stock seen-set is durable, so no *pair* is lost.
+- basestonk pairs against the same Coinbase tokenized stocks as o1, but the live
+  sets differ — COIN is active on basestonk while dormant on o1 — so neither
+  platform's catalog can answer for the other.
+
 ## 9. Rate limits
 
 Token-bucket per upstream, in
@@ -1082,6 +1165,9 @@ Token-bucket per upstream, in
 | `stonkfun` / `sunrise` / `robinhood` | 10 | 0.5 | Catalog polls |
 | `flap` | 6 | 0.2 | Launch page + app bundle |
 | `fourmeme` | 5 | 0.2 | Create-page scrape |
+| `o1` | 4 | 0.5 | o1 catalog + launches, both chains |
+| `basestonk` | 6 | 0.5 | basestonk launch feed |
+| `baserpc` | 20 | 5 | Base ERC-20 reads (pair-token classification) |
 
 Flap and Four.meme are scraped pages rather than APIs, so they poll gently — new
 quote assets are listed on the order of days, not seconds.

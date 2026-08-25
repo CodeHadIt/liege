@@ -57,6 +57,13 @@ const API_RATE_LIMITS: Record<string, RateLimiterConfig> = {
   // per-minute quota rather than near the per-second ceiling — bursts are what
   // trip the limiter, and there is no reason to burst.
   o1: { maxTokens: 4, refillRate: 0.5 },
+  // basestonk's public launch API — no auth and no documented quota, so this is
+  // sized to be obviously polite: the launch poller needs one call per 30s pass.
+  basestonk: { maxTokens: 6, refillRate: 0.5 },
+  // Public Base RPCs, used to classify pair tokens from their ERC-20 metadata.
+  // Results are cached per address for the life of the process, so this only
+  // sees traffic when an unseen pair token appears — a handful of calls, rarely.
+  baserpc: { maxTokens: 20, refillRate: 5 },
   sunrise: { maxTokens: 10, refillRate: 0.5 },
   robinhood: { maxTokens: 10, refillRate: 0.5 },
   // BSC stock-quote watchers. Both scrape a page (and, for Flap, its app bundle)

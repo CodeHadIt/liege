@@ -29,7 +29,7 @@ import { escapeHtml, formatCompact, formatPrice, formatTimeAgo } from "./utils/f
 
 const O1_LAUNCH_URL = "https://launch.o1.exchange/token/create";
 
-interface ChainConfig {
+export interface ChainConfig {
   id: O1ChainId;
   label: string;
   /** What o1 calls its stock tokens on this chain. */
@@ -39,7 +39,7 @@ interface ChainConfig {
   chart: (address: string) => string;
 }
 
-const CHAINS: Record<string, ChainConfig> = {
+export const CHAINS: Record<string, ChainConfig> = {
   base: {
     id: O1_CHAIN.BASE,
     label: "Base",
