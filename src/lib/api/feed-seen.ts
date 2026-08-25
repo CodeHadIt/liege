@@ -15,6 +15,7 @@ export const FEED = {
   PUMPFUN_QUOTES: "pumpfun.quotes",
   SUNRISE_PAIRS: "sunrise.pairs",
   STONKFUN_QUOTES: "stonkfun.quotes",
+  O1_BASE_STOCKS: "o1.base.stocks",
 } as const;
 
 export type Feed = (typeof FEED)[keyof typeof FEED];

@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-24 (alpha deployer promotion wired in — feed was dead)
+**Last updated:** 2026-08-25 (o1 exchange on Base)
 
 ---
 
@@ -197,6 +197,8 @@ be bundled for the Edge runtime.
 | BNB Chain on-chain launches | 20s |
 | pools.fun quote assets | 60s |
 | pools.fun launches | 30s |
+| o1 Base stock pairs | 120s |
+| o1 Base launches | 30s |
 
 Catalog polls are slow (assets are added on the order of days); launch watchers
 are fast, and short-circuit entirely while nothing is being watched.
@@ -980,6 +982,63 @@ state. `MAX_LAUNCHES_PER_WINDOW` (25) bounds a busy window.
   and the alert is sent without price/liquidity/market cap rather than delayed.
 
 ---
+
+## 8b. Base — o1 exchange
+
+| | |
+|---|---|
+| Code | [`o1-base-alerts.ts`](../../src/lib/telegram/o1-base-alerts.ts), [`api/o1-base.ts`](../../src/lib/api/o1-base.ts) |
+| Launches | Convex `dashboard:feedPage` (`tab: "new"`) on `exciting-fox-990.convex.cloud` |
+| Stock catalog | static list + on-chain `totalSupply` on Base |
+| Poll | stocks 120s · launches 30s |
+| Feature | `launch` (all tiers) |
+
+o1 mints a fixed-supply token and seeds a locked Uniswap v4 pool in one
+transaction, priced against a paired asset. Same two-stage shape as everything
+else here: ping when a stock becomes pairable, then ping tokens launched against
+it for 36h.
+
+### The site cannot be polled
+
+`launch.o1.exchange` sits behind a **Vercel checkpoint**. Every non-browser
+request — HTML and JS assets alike — answers `429 Vercel Security Checkpoint`,
+consistently and after cooldown. Nothing in this watcher touches it.
+
+Its **Convex backend is not protected**, and Base RPC is open, so both live
+sources are reachable by plain HTTP.
+
+### Launch detection
+
+`dashboard:feedPage` with `tab: "new"` — the default `trending` tab reorders by
+activity, which is useless for detecting arrivals. Each record names
+`quoteAddress` and `quoteSymbol` **alongside the token**, so the pairing is exact
+and atomic: no pool lookup, no retry queue, the same property that makes
+StonkFun's feed reliable.
+
+### What makes a stock "pairable"
+
+Supply, read on-chain. This took measuring, because the obvious signals do not
+work: **all ten** Base Stock Tokens are deployed **and** all ten have fresh
+prices, so neither bytecode nor price separates a pairable stock from a dormant
+one. Exactly the four with non-zero supply — AAPL, GOOGL, META, NVDA — are the
+four o1's launch form offers.
+
+A pair going live is therefore a 0 → non-zero supply transition.
+
+### Known limitations
+
+- **The stock list is static.** It was captured from o1's `contracts-*.js`
+  bundle, which cannot be re-fetched at runtime and whose filename is
+  content-hashed, so pinning it would rot. A launch against a quote that is
+  neither a known stock nor a crypto quote logs a loud `UNKNOWN quote` warning
+  once, so catalog drift is visible rather than silent — but a newly added stock
+  will not be announced until the list is extended.
+- Six of the ten catalogued stocks are dormant (AMZN, COIN, MSTR, SNDK, SPCX,
+  TSLA). Those *will* be announced automatically when minted, since that is the
+  same supply transition.
+- Base stock prices are mirrored from Robinhood Chain
+  (`provider: "robinhood"`, `sourceNetworkId: 4663`), so a stale Robinhood feed
+  shows up here.
 
 ## 9. Rate limits
 

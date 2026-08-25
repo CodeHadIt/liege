@@ -20,6 +20,7 @@ export async function register() {
     const { maybeRunDailyScan, maybeRefreshMarketCaps } = await import("@/lib/telegram/ath-daily-scan");
     const { pollDeployerLaunches } = await import("@/lib/telegram/deployer-alerts");
     const { pollSolanaAlphaWallets } = await import("@/lib/telegram/solana-alpha-alerts");
+    const { pollO1BaseStocks, pollO1BaseLaunches } = await import("@/lib/telegram/o1-base-alerts");
 
     // Tier configuration, reported once at boot.
     //
@@ -298,6 +299,29 @@ export async function register() {
         console.error("[instrumentation] Deployer poll error:", err)
       );
     }, DEPLOYER_INTERVAL);
+
+    // o1 exchange on Base. The stock catalog is read on-chain (o1's site 429s
+    // every non-browser request), so a pair is "live" once its token has supply.
+    // Stocks are added rarely, so 120s is ample.
+    console.log("[instrumentation] Starting o1 Base stock-pair poller (every 120s)");
+    const O1_STOCK_INTERVAL = 120_000;
+    pollO1BaseStocks().catch((err) =>
+      console.error("[instrumentation] Initial o1 stock poll error:", err)
+    );
+    setInterval(() => {
+      pollO1BaseStocks().catch((err) => console.error("[instrumentation] o1 stock poll error:", err));
+    }, O1_STOCK_INTERVAL);
+
+    // ...but watch launches tighter, so a token paired to a newly-live stock is
+    // caught while it is still news. One Convex read per pass.
+    console.log("[instrumentation] Starting o1 Base launch watcher (every 30s)");
+    const O1_LAUNCH_INTERVAL = 30_000;
+    pollO1BaseLaunches().catch((err) =>
+      console.error("[instrumentation] Initial o1 launch poll error:", err)
+    );
+    setInterval(() => {
+      pollO1BaseLaunches().catch((err) => console.error("[instrumentation] o1 launch poll error:", err));
+    }, O1_LAUNCH_INTERVAL);
 
     // Solana alpha wallets — hand-picked wallets watched for deploys and buys.
     // One Helius request per wallet per pass, so cost tracks the watchlist
