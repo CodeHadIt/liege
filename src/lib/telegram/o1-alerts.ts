@@ -5,9 +5,10 @@ import {
   O1_CHAIN,
   type O1Quote,
   type O1Launch,
+  type O1ChainId,
 } from "@/lib/api/o1";
 import { getAlertsBot, broadcastAlert, FEATURE } from "./alerts-bot";
-import { FEED, resolveSeen, markSeen } from "@/lib/api/feed-seen";
+import { FEED, resolveSeen, markSeen, type Feed } from "@/lib/api/feed-seen";
 import {
   LAUNCH_WINDOW_MS,
   LAUNCH_WINDOW_LABEL,
@@ -26,9 +27,60 @@ import { escapeHtml, formatCompact, formatPrice, formatTimeAgo } from "./utils/f
 // hardcoded catalog is what the first version did, and it was already missing
 // three stocks the day it shipped.
 
-const CHAIN = O1_CHAIN.BASE;
-const CHAIN_LABEL = "Base";
 const O1_LAUNCH_URL = "https://launch.o1.exchange/token/create";
+
+interface ChainConfig {
+  id: O1ChainId;
+  label: string;
+  /** What o1 calls its stock tokens on this chain. */
+  providerLabel: string;
+  feed: Feed;
+  explorer: (address: string) => string;
+  chart: (address: string) => string;
+}
+
+const CHAINS: Record<string, ChainConfig> = {
+  base: {
+    id: O1_CHAIN.BASE,
+    label: "Base",
+    providerLabel: "Base Stock Token",
+    feed: FEED.O1_BASE_STOCKS,
+    explorer: (a) => `https://basescan.org/token/${a}`,
+    chart: (a) => `https://dexscreener.com/base/${a}`,
+  },
+  rh: {
+    id: O1_CHAIN.ROBINHOOD,
+    label: "Robinhood Chain",
+    providerLabel: "Robinhood Token",
+    feed: FEED.O1_RH_STOCKS,
+    explorer: (a) => `https://robinhoodchain.blockscout.com/token/${a}`,
+    chart: (a) => `https://dexscreener.com/robinhood/${a}`,
+  },
+};
+
+/**
+ * Per-chain runtime state.
+ *
+ * Kept separate rather than shared: a quote address is only unique within a
+ * chain, and o1 lists the same tickers on both — AAPL, NVDA and META all appear
+ * on Base and Robinhood at different addresses. One shared map would let one
+ * chain's window answer for the other's launch.
+ */
+interface ChainState {
+  watchedQuotes: Map<string, WatchedQuote>;
+  liveQuotes: Set<string>;
+  seenLaunches: Set<string>;
+  launchesSeeded: boolean;
+}
+const STATE = new Map<string, ChainState>();
+function stateFor(key: string): ChainState {
+  let s = STATE.get(key);
+  if (!s) {
+    s = { watchedQuotes: new Map(), liveQuotes: new Set(), seenLaunches: new Set(), launchesSeeded: false };
+    STATE.set(key, s);
+  }
+  return s;
+}
 
 /** Never announce a launch older than this, even if a restart re-seeds. */
 const MAX_ALERT_AGE_MS = 30 * 60 * 1000;
@@ -38,46 +90,36 @@ interface WatchedQuote {
   openedAt: number;
   launchCount: number;
 }
-const watchedQuotes = new Map<string, WatchedQuote>(); // key: lowercase address
 
-/** Quotes already announced as live. */
-const liveQuotes = new Set<string>();
-/** Launch tokens already reported. */
-const seenLaunches = new Set<string>();
-let launchesSeeded = false;
 let warnedNoKey = false;
-
-function baseScanToken(address: string): string {
-  return `https://basescan.org/token/${address}`;
-}
 
 /** A stock, as opposed to ETH/USDC. o1 classifies these itself. */
 function isStock(q: O1Quote): boolean {
   return q.route === "rwa";
 }
 
-export function formatO1QuoteAlert(q: O1Quote): string {
+export function formatO1QuoteAlert(q: O1Quote, c: ChainConfig): string {
   const lines: string[] = [];
-  lines.push(`📈 <b>New stock pair on o1</b>  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
+  lines.push(`📈 <b>New stock pair on o1</b>  ·  ⛓ ${escapeHtml(c.label)}`);
   lines.push(`<i>You can now launch tokens paired against this stock.</i>`);
   lines.push("");
   lines.push(`<b>$${escapeHtml(q.symbol)}</b>`);
-  lines.push(`🏷 Base Stock Token  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`);
+  lines.push(`🏷 ${escapeHtml(c.providerLabel)}  ·  ⛓ ${escapeHtml(c.label)}`);
   lines.push("");
   lines.push(`<code>${escapeHtml(q.address)}</code>`);
   lines.push(
-    `🔭 <a href="${baseScanToken(q.address)}">Basescan</a>` +
+    `🔭 <a href="${c.explorer(q.address)}">Explorer</a>` +
       `  ·  🚀 <a href="${O1_LAUNCH_URL}">Launch a token</a>`
   );
   return lines.join("\n");
 }
 
-export function formatO1LaunchAlert(l: O1Launch, q: O1Quote, launchNumber: number): string {
+export function formatO1LaunchAlert(l: O1Launch, q: O1Quote, launchNumber: number, c: ChainConfig): string {
   const lines: string[] = [];
   const first = launchNumber <= 1;
   lines.push(
     `${first ? "🥇" : "🔁"} <b>${first ? "First" : ordinal(launchNumber)} token vs $${escapeHtml(q.symbol)}</b>` +
-      `  ·  ⛓ ${escapeHtml(CHAIN_LABEL)}`
+      `  ·  ⛓ ${escapeHtml(c.label)}`
   );
   lines.push(
     first
@@ -97,25 +139,25 @@ export function formatO1LaunchAlert(l: O1Launch, q: O1Quote, launchNumber: numbe
   lines.push(
     [
       `🕐 ${escapeHtml(formatTimeAgo(Math.floor(l.createdAt / 1000)))}`,
-      `🔭 <a href="${baseScanToken(l.tokenAddress)}">Basescan</a>`,
-      `📈 <a href="https://dexscreener.com/base/${escapeHtml(l.tokenAddress)}">Chart</a>`,
+      `🔭 <a href="${c.explorer(l.tokenAddress)}">Explorer</a>`,
+      `📈 <a href="${c.chart(l.tokenAddress)}">Chart</a>`,
     ].join("  ·  ")
   );
   if (l.creator) lines.push(`👤 Dev: <code>${escapeHtml(l.creator)}</code>`);
   return lines.join("\n");
 }
 
-async function sendQuoteAlert(chatId: string, q: O1Quote): Promise<void> {
+async function sendQuoteAlert(chatId: string, q: O1Quote, c: ChainConfig): Promise<void> {
   const bot = await getAlertsBot();
-  await bot.api.sendMessage(chatId, formatO1QuoteAlert(q), {
+  await bot.api.sendMessage(chatId, formatO1QuoteAlert(q, c), {
     parse_mode: "HTML",
     link_preview_options: { is_disabled: true },
   });
 }
 
-async function sendLaunchAlert(chatId: string, l: O1Launch, q: O1Quote, n: number): Promise<void> {
+async function sendLaunchAlert(chatId: string, l: O1Launch, q: O1Quote, n: number, c: ChainConfig): Promise<void> {
   const bot = await getAlertsBot();
-  const text = formatO1LaunchAlert(l, q, n);
+  const text = formatO1LaunchAlert(l, q, n, c);
   if (l.imageUrl) {
     await bot.api
       .sendPhoto(chatId, l.imageUrl, { caption: text, parse_mode: "HTML" })
@@ -154,41 +196,43 @@ function missingKey(): boolean {
  * The seen-set is persisted, so a redeploy resumes rather than re-seeding and
  * swallowing a stock that went live while the process was down.
  */
-export async function pollO1BaseQuotes(): Promise<void> {
+export async function pollO1Quotes(chainKey: keyof typeof CHAINS): Promise<void> {
   if (missingKey()) return;
+  const c = CHAINS[chainKey];
+  const st = stateFor(chainKey);
 
-  const quotes = await fetchO1Quotes(CHAIN, false);
+  const quotes = await fetchO1Quotes(c.id, false);
   if (quotes === null) return; // failed fetch — hold state
   const stocks = quotes.filter(isStock);
   if (stocks.length === 0) return;
 
   const live = stocks.filter((q) => q.selectable);
 
-  const state = await resolveSeen(FEED.O1_BASE_STOCKS, liveQuotes);
-  for (const k of state.seen) liveQuotes.add(k);
+  const state = await resolveSeen(c.feed, st.liveQuotes);
+  for (const k of state.seen) st.liveQuotes.add(k);
 
   if (state.firstRun) {
     const keys = live.map((q) => q.address);
-    for (const k of keys) liveQuotes.add(k);
-    await markSeen(FEED.O1_BASE_STOCKS, keys);
+    for (const k of keys) st.liveQuotes.add(k);
+    await markSeen(c.feed, keys);
     console.log(
-      `[o1] seeded ${keys.length} live stock pairs of ${stocks.length} catalogued (first run — no alert on backlog)`
+      `[o1:${chainKey}] seeded ${keys.length} live stock pairs of ${stocks.length} catalogued (first run — no alert on backlog)`
     );
     return;
   }
 
   for (const q of live) {
     if (state.seen.has(q.address)) continue;
-    liveQuotes.add(q.address);
-    await markSeen(FEED.O1_BASE_STOCKS, [q.address]);
+    st.liveQuotes.add(q.address);
+    await markSeen(c.feed, [q.address]);
 
     // Open the window on the same pass, so an inaugural launch seconds later is
     // still caught.
-    watchedQuotes.set(q.address, { quote: q, openedAt: Date.now(), launchCount: 0 });
+    st.watchedQuotes.set(q.address, { quote: q, openedAt: Date.now(), launchCount: 0 });
 
     try {
-      await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendQuoteAlert(chatId, q));
-      console.log(`[o1] alerted new Base stock pair: ${q.symbol}`);
+      await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendQuoteAlert(chatId, q, c));
+      console.log(`[o1:${chainKey}] alerted new Base stock pair: ${q.symbol}`);
     } catch (err) {
       console.error("[o1] failed to send quote alert:", err);
     }
@@ -201,79 +245,82 @@ export async function pollO1BaseQuotes(): Promise<void> {
  * Every launch inside the window is reported, numbered — not only the first. The
  * burst that follows a new pair is the signal.
  */
-export async function pollO1BaseLaunches(): Promise<void> {
+export async function pollO1Launches(chainKey: keyof typeof CHAINS): Promise<void> {
   if (missingKey()) return;
+  const c = CHAINS[chainKey];
+  const st = stateFor(chainKey);
 
   const now = Date.now();
-  for (const [addr, w] of watchedQuotes) {
+  for (const [addr, w] of st.watchedQuotes) {
     if (now - w.openedAt > LAUNCH_WINDOW_MS) {
-      watchedQuotes.delete(addr);
+      st.watchedQuotes.delete(addr);
       console.log(
-        `[o1] ${LAUNCH_WINDOW_LABEL} window closed for ${w.quote.symbol} — ${w.launchCount} launch(es) reported`
+        `[o1:${chainKey}] ${LAUNCH_WINDOW_LABEL} window closed for ${w.quote.symbol} — ${w.launchCount} launch(es) reported`
       );
     }
   }
 
-  const launches = await fetchO1Launches(CHAIN, 50);
+  const launches = await fetchO1Launches(c.id, 50);
   if (launches === null) return; // failed fetch — hold state
   if (launches.length === 0) return;
 
-  if (!launchesSeeded) {
-    for (const l of launches) seenLaunches.add(l.tokenAddress);
-    launchesSeeded = true;
-    console.log(`[o1] seeded ${launches.length} existing launches (no alert on backlog)`);
+  if (!st.launchesSeeded) {
+    for (const l of launches) st.seenLaunches.add(l.tokenAddress);
+    st.launchesSeeded = true;
+    console.log(`[o1:${chainKey}] seeded ${launches.length} existing launches (no alert on backlog)`);
     return;
   }
 
   // Oldest-first so ordinals follow launch order.
   const fresh = launches
-    .filter((l) => !seenLaunches.has(l.tokenAddress))
+    .filter((l) => !st.seenLaunches.has(l.tokenAddress))
     .sort((a, b) => a.createdAt - b.createdAt);
 
   for (const l of fresh) {
-    seenLaunches.add(l.tokenAddress);
+    st.seenLaunches.add(l.tokenAddress);
 
-    const w = watchedQuotes.get(l.quoteAddress);
+    const w = st.watchedQuotes.get(l.quoteAddress);
     if (!w) continue; // not launched against a stock we're watching
 
     if (now - l.createdAt > MAX_ALERT_AGE_MS) {
-      console.log(`[o1] skipping stale launch ${l.symbol} (${Math.round((now - l.createdAt) / 60000)}m old)`);
+      console.log(`[o1:${chainKey}] skipping stale launch ${l.symbol} (${Math.round((now - l.createdAt) / 60000)}m old)`);
       continue;
     }
 
     if (w.launchCount >= MAX_LAUNCHES_PER_WINDOW) {
       if (w.launchCount === MAX_LAUNCHES_PER_WINDOW) {
         w.launchCount++;
-        console.log(`[o1] ${w.quote.symbol} hit the ${MAX_LAUNCHES_PER_WINDOW}-launch cap — muting`);
+        console.log(`[o1:${chainKey}] ${w.quote.symbol} hit the ${MAX_LAUNCHES_PER_WINDOW}-launch cap — muting`);
       }
       continue;
     }
     w.launchCount++;
 
     try {
-      await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendLaunchAlert(chatId, l, w.quote, w.launchCount));
-      console.log(`[o1] alerted launch #${w.launchCount} ${l.symbol} vs ${w.quote.symbol}`);
+      await broadcastAlert(FEATURE.LAUNCH, (chatId) => sendLaunchAlert(chatId, l, w.quote, w.launchCount, c));
+      console.log(`[o1:${chainKey}] alerted launch #${w.launchCount} ${l.symbol} vs ${w.quote.symbol}`);
     } catch (err) {
       console.error("[o1] failed to send launch alert:", err);
     }
   }
 
-  if (seenLaunches.size > 5000) {
-    seenLaunches.clear();
-    for (const l of launches) seenLaunches.add(l.tokenAddress);
+  if (st.seenLaunches.size > 5000) {
+    st.seenLaunches.clear();
+    for (const l of launches) st.seenLaunches.add(l.tokenAddress);
   }
 }
 
-/** Manual test: render the most recent stock-paired o1 launch. */
-export async function sendO1TestPing(chatId: string): Promise<boolean> {
+/** Manual test: render the most recent stock-paired o1 launch on a chain. */
+export async function sendO1TestPing(chatId: string, chainKey: keyof typeof CHAINS = "base"): Promise<boolean> {
+  const c = CHAINS[chainKey];
   const [quotes, launches] = await Promise.all([
-    fetchO1Quotes(CHAIN, false),
-    fetchO1Launches(CHAIN, 30),
+    fetchO1Quotes(c.id, false),
+    fetchO1Launches(c.id, 30),
   ]);
   if (!quotes || !launches) return false;
   const byAddr = new Map(quotes.map((q) => [q.address, q]));
   const hit = launches.find((l) => byAddr.get(l.quoteAddress)?.route === "rwa");
   if (!hit) return false;
-  await sendLaunchAlert(chatId, hit, byAddr.get(hit.quoteAddress)!, 1);
+  await sendLaunchAlert(chatId, hit, byAddr.get(hit.quoteAddress)!, 1, c);
   return true;
 }

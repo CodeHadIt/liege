@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-25 (o1 on Base, via o1's public API)
+**Last updated:** 2026-08-25 (o1 on Base and Robinhood Chain)
 
 ---
 
@@ -197,8 +197,8 @@ be bundled for the Edge runtime.
 | BNB Chain on-chain launches | 20s |
 | pools.fun quote assets | 60s |
 | pools.fun launches | 30s |
-| o1 Base stock pairs | 120s |
-| o1 Base launches | 30s |
+| o1 stock pairs (per chain) | 120s |
+| o1 launches (per chain) | 30s |
 
 Catalog polls are slow (assets are added on the order of days); launch watchers
 are fast, and short-circuit entirely while nothing is being watched.
@@ -983,7 +983,7 @@ state. `MAX_LAUNCHES_PER_WINDOW` (25) bounds a busy window.
 
 ---
 
-## 8b. Base — o1 exchange
+## 8b. o1 Launchpad — Base and Robinhood Chain
 
 | | |
 |---|---|
@@ -1003,8 +1003,9 @@ it for 36h.
 | | |
 |---|---|
 | Base URL | `https://api.launch.o1.exchange/v1` (needs `O1_API_KEY`) |
-| Catalog | `GET /config?chain_id=8453&include=chains,suites,quotes` |
-| Launches | `GET /tokens?chain_id=8453&sort=newest` |
+| Catalog | `GET /config?chain_id=<id>&include=chains,suites,quotes` |
+| Launches | `GET /tokens?chain_id=<id>&sort=newest` |
+| Chains | Base `8453` · Robinhood `4663` — one code path, two chain ids |
 
 **`launch.o1.exchange` cannot be polled.** It sits behind a Vercel checkpoint
 that answers `429 Vercel Security Checkpoint` to every non-browser request, HTML
@@ -1026,9 +1027,22 @@ CRCL, INTC and MSFT outright.
 is fetched (**not** `active_only=true`) so a stock switching on is a visible
 transition rather than an arrival out of nowhere.
 
-On Base that is currently 4 of 13: AAPL, GOOGL, META, NVDA live; AMZN, COIN,
-CRCL, INTC, MSFT, MSTR, SNDK, SPCX, TSLA registered but dormant. Each of those
-nine will announce itself automatically the moment o1 switches it on.
+The two chains look completely different:
+
+| | Base | Robinhood |
+|---|---|---|
+| Quotes | 15 | 196 |
+| Stocks | 13 | 194 |
+| Selectable | **4** | **194** |
+
+Base: AAPL, GOOGL, META, NVDA live; AMZN, COIN, CRCL, INTC, MSFT, MSTR, SNDK,
+SPCX, TSLA registered but dormant. Each of those nine announces itself the moment
+o1 switches it on.
+
+**Robinhood has everything already switched on**, so after its first seed it goes
+quiet until o1 lists a 195th stock. That silence is correct, not a fault — the
+36h window exists for *newly added* pairs, so launches against the existing 194
+are deliberately not reported.
 
 An earlier version inferred this from on-chain `totalSupply`, because all
 thirteen tokens are deployed **and** all have fresh prices — neither separates
@@ -1046,8 +1060,12 @@ an empty catalog — which would read as "every stock went dormant".
 
 - Launch market data is o1's own indexer, so a brand-new pool may report null
   price/liquidity for a few seconds.
-- The same API serves `chain_id=4663`, so the Robinhood side is the same code
-  with a different chain id — not yet scheduled.
+- **State is per chain, deliberately.** o1 lists the same tickers on both at
+  different addresses — AAPL is `0xb2000000…` on Base and `0xaf3d76f1…` on
+  Robinhood. A shared map would let one chain's window answer for the other's
+  launch.
+- Robinhood reports ~12 launches/day, roughly a third stock-paired. Base is
+  busier but has fewer live pairs.
 
 ## 9. Rate limits
 

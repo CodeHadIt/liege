@@ -20,7 +20,7 @@ export async function register() {
     const { maybeRunDailyScan, maybeRefreshMarketCaps } = await import("@/lib/telegram/ath-daily-scan");
     const { pollDeployerLaunches } = await import("@/lib/telegram/deployer-alerts");
     const { pollSolanaAlphaWallets } = await import("@/lib/telegram/solana-alpha-alerts");
-    const { pollO1BaseQuotes, pollO1BaseLaunches } = await import("@/lib/telegram/o1-base-alerts");
+    const { pollO1Quotes, pollO1Launches } = await import("@/lib/telegram/o1-alerts");
 
     // Tier configuration, reported once at boot.
     //
@@ -300,28 +300,35 @@ export async function register() {
       );
     }, DEPLOYER_INTERVAL);
 
-    // o1 exchange on Base. Catalog and launches both come from o1's public API
-    // (needs O1_API_KEY); `selectable` is o1's own flag for a pairable stock.
-    // Stocks are switched on rarely, so 120s is ample.
-    console.log("[instrumentation] Starting o1 Base stock-pair poller (every 120s)");
-    const O1_STOCK_INTERVAL = 120_000;
-    pollO1BaseQuotes().catch((err) =>
-      console.error("[instrumentation] Initial o1 stock poll error:", err)
-    );
-    setInterval(() => {
-      pollO1BaseQuotes().catch((err) => console.error("[instrumentation] o1 stock poll error:", err));
-    }, O1_STOCK_INTERVAL);
+    // o1 Launchpad, on both chains it runs. Catalog and launches come from o1's
+    // public API (needs O1_API_KEY); `selectable` is o1's own flag for a
+    // pairable stock. One code path, two chain ids.
+    //
+    // Robinhood already has all 194 of its stocks selectable, so it seeds once
+    // and then stays quiet until o1 adds a 195th — that silence is correct, not
+    // a fault. Base has 4 of 13 live, so its nine dormant stocks are the ones
+    // most likely to fire first.
+    for (const chainKey of ["base", "rh"] as const) {
+      console.log(`[instrumentation] Starting o1 ${chainKey} stock-pair poller (every 120s)`);
+      pollO1Quotes(chainKey).catch((err: unknown) =>
+        console.error(`[instrumentation] Initial o1 ${chainKey} quote poll error:`, err)
+      );
+      setInterval(() => {
+        pollO1Quotes(chainKey).catch((err: unknown) =>
+          console.error(`[instrumentation] o1 ${chainKey} quote poll error:`, err)
+        );
+      }, 120_000);
 
-    // ...but watch launches tighter, so a token paired to a newly-live stock is
-    // caught while it is still news. One Convex read per pass.
-    console.log("[instrumentation] Starting o1 Base launch watcher (every 30s)");
-    const O1_LAUNCH_INTERVAL = 30_000;
-    pollO1BaseLaunches().catch((err) =>
-      console.error("[instrumentation] Initial o1 launch poll error:", err)
-    );
-    setInterval(() => {
-      pollO1BaseLaunches().catch((err) => console.error("[instrumentation] o1 launch poll error:", err));
-    }, O1_LAUNCH_INTERVAL);
+      console.log(`[instrumentation] Starting o1 ${chainKey} launch watcher (every 30s)`);
+      pollO1Launches(chainKey).catch((err: unknown) =>
+        console.error(`[instrumentation] Initial o1 ${chainKey} launch poll error:`, err)
+      );
+      setInterval(() => {
+        pollO1Launches(chainKey).catch((err: unknown) =>
+          console.error(`[instrumentation] o1 ${chainKey} launch poll error:`, err)
+        );
+      }, 30_000);
+    }
 
     // Solana alpha wallets — hand-picked wallets watched for deploys and buys.
     // One Helius request per wallet per pass, so cost tracks the watchlist
