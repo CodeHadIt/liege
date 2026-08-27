@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-25 (basestonk on Base)
+**Last updated:** 2026-08-27 (TTWO unpinned on StonkFun)
 
 ---
 
@@ -306,17 +306,33 @@ numbered, not just the first.
 A pinned quote is reported in full: **every** coin launched against it, no
 category filter, no 36h window, no launch cap.
 
+**Nothing is pinned right now.** `PINNED_QUOTE_MINTS` is empty, so all four call
+sites are no-ops and this whole subsystem is dormant. The machinery is kept
+intact for the next pin.
+
 | Asset | Mint | Pinned | Removed |
 |---|---|---|---|
-| **TTWO** (Take-Two Interactive) | `TTWofwAge91oFhZs7kpQdyrVRkmevgM88xijGvQFbKo` | 2026-08-21 | — |
+| TTWO (Take-Two Interactive) | `TTWofwAge91oFhZs7kpQdyrVRkmevgM88xijGvQFbKo` | 2026-08-21 | 2026-08-27 |
 | RAY (Raydium) | `4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R` | 2026-08-13 | 2026-08-14 |
 
 Pinning or unpinning is one `[mint, label]` entry in `PINNED_QUOTE_MINTS`
 ([`stonkfun-alerts.ts`](../../src/lib/telegram/stonkfun-alerts.ts)); nothing else
 refers to that map.
 
-**Expected volume for TTWO: ~5.4 launches/day**, measured over the 13 days since
-GTA6 opened the pairing, peaking at 22 on day one. This is a busy pin.
+While it was pinned, TTWO ran **~5.4 launches/day** over 13 days, peaking at 22
+the day GTA6 opened the pairing — a busy pin rather than an occasional one.
+
+#### Unpinning is silent, and that is not an accident
+
+`pollStonkFunQuoteTokens` records every quote in the seen-set **before** deciding
+whether to announce it, so a pinned quote is still a *seen* quote. Dropping TTWO
+from the map therefore makes it an ordinary known asset: no "new quote" alert, no
+36h window, nothing. Verified against the live store before unpinning — TTWO was
+present among the 293 keys in `stonkfun.quotes`.
+
+Had pinned quotes been skipped from the seen-set instead, unpinning one would
+have re-announced it as newly added and opened a 36h window over it — turning
+"stop this feed" into a fresh burst of alerts.
 
 #### A pin is genuinely unrestricted
 
@@ -330,7 +346,7 @@ explicitly taught not to:
 | 3 | `MAX_ALERTS_PER_PASS` (25) | pinned launches are exempt, and the loop `continue`s instead of `break`ing |
 
 Number 1 never came up for RAY, which was `custom` and therefore excluded by the
-category denylist. **TTWO is `backpack`, which is not denied**, so a window could
+category denylist. TTWO was `backpack`, which is not denied, so a window could
 genuinely have opened over it.
 
 Number 3 is the subtle one: that cap is a flood guard for catching up after

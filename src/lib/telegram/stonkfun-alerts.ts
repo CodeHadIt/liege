@@ -181,10 +181,8 @@ export async function sendStonkFunTestPing(chatId: string): Promise<boolean> {
 // filter, no 36h window, no launch cap. Unpinning is deleting its entry below;
 // nothing else refers to this map.
 //
-// Currently pinned:
-//   TTWO — Take-Two Interactive. Requested 2026-08-21. Runs ~5.4 launches/day
-//          measured over 13 days, peaking at 22 the day GTA6 opened it, so this
-//          is a busy pin rather than an occasional one.
+// Currently pinned: nothing. The map is empty and every call site below is a
+// no-op until an entry is added back.
 //
 // A pin is UNRESTRICTED, and three separate mechanisms had to be taught that:
 //
@@ -200,8 +198,21 @@ export async function sendStonkFunTestPing(chatId: string): Promise<boolean> {
 // Any one of those left in place would silently cap a pin that is supposed to
 // be uncapped, which is the one failure pinning exists to prevent.
 //
-// RAY (4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R) was pinned 2026-08-13 by
-// request and removed 2026-08-14, having served its purpose.
+// Previously pinned, kept as a record of what a pin costs and how to restore one:
+//
+//   RAY  (4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R)
+//        pinned 2026-08-13, removed 2026-08-14, having served its purpose.
+//   TTWO (TTWofwAge91oFhZs7kpQdyrVRkmevgM88xijGvQFbKo) — Take-Two Interactive
+//        pinned 2026-08-21, removed 2026-08-27 by request, indefinitely.
+//        Ran ~5.4 launches/day over 13 days, peaking at 22 the day GTA6 opened
+//        it — a busy pin rather than an occasional one.
+//
+// Unpinning TTWO is safe precisely because pollStonkFunQuoteTokens records EVERY
+// quote in the seen-set before the pinned check (it marks first, then decides
+// whether to announce). TTWO is therefore already known, so dropping it here
+// makes it an ordinary seen quote: no "new quote" alert, no 36h window, silence.
+// Had pinned quotes been excluded from the seen-set, unpinning would have
+// re-announced it and opened a window — the opposite of stopping it.
 //
 // If this is revived: detection must NOT go through fetchRecentCreations. That
 // path reconstructs launches from the deployer's TOKEN_MINT transactions, and a
@@ -216,9 +227,7 @@ export async function sendStonkFunTestPing(chatId: string): Promise<boolean> {
 // token, so the match is exact and needs no pool lookup or deepest-pool
 // inference.
 
-const PINNED_QUOTE_MINTS = new Map<string, string>([
-  ["TTWofwAge91oFhZs7kpQdyrVRkmevgM88xijGvQFbKo", "TTWO (Take-Two Interactive)"],
-]);
+const PINNED_QUOTE_MINTS = new Map<string, string>([]);
 
 export function formatPinnedLaunchAlert(l: StonkFunLaunch, launchNumber: number): string {
   const lines: string[] = [];
