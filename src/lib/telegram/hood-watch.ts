@@ -15,27 +15,27 @@ import { escapeHtml } from "./utils/format";
 
 // ── HOOD watch ───────────────────────────────────────────────────────────────
 //
-// Standing question, across EVERY launchpad we watch: has Robinhood's own stock
-// become something you can launch a token against?
+// Standing question: has Robinhood's own stock become something you can launch a
+// token against ON ROBINHOOD CHAIN?
 //
-// The answer on Robinhood's OWN chain is no: its asset registry lists 194
-// tokenized stocks and HOOD is not among them. Robinhood has not tokenized
-// itself, so Long — whose picker derives from that registry — cannot offer it,
-// and Pons has never paired against the one wrapper that does exist there,
-// Ondo's HOODon (`0xfb5b…a79c`).
+// The answer today is no. The asset registry lists 194 tokenized stocks and HOOD
+// is not among them — Robinhood has not tokenized itself. Long's picker derives
+// from that registry so it cannot offer HOOD, and Pons has never paired against
+// the one wrapper that does exist there, Ondo's HOODon (`0xfb5b…a79c`).
 //
-// But the first sweep across ALL platforms found that Robinhood's stock is
-// already a live base pair in three places we had never checked:
+// Scope is Robinhood Chain only, by request. An earlier version swept every
+// catalog in the system and found Robinhood's stock already live as a base pair
+// on three other venues:
 //
 //   HOODB   Flap, BNB Chain      0xa394dcea3fd3847fd793afbfd163e2e3858b7c65
 //   HOODX   StonkFun, Solana     XsvNBAYkrDRNhA7wPHQfX3ZUXZyZLdnCQDfHZ56bzpg
 //   HOOD    Sunrise, Solana      HooDYv5RewLRiMLnEVq3VJqdqxhuE6c5eYvqejMC3e9A
 //
-// Each is a different issuer's wrapper of the same equity, and each was listed
-// before this watch existed — their platform watchers seeded them as part of a
-// backlog and so never announced them. That is precisely why this sweeps every
-// catalog rather than the Robinhood-chain ones: the listing venue is not
-// predictable, and assuming it cost us three live pairs.
+// Three issuers' wrappers of the same equity, each listed before this watch
+// existed. All three were announced once and are recorded in the seen-set; the
+// Solana and BNB sources are now switched off via WATCHED_CHAINS, so they will
+// not be reported again. The code for them is kept and simply not run, because
+// the interesting listing venue may change.
 //
 // A hit is announced in ALL CAPS by request, and pinned for permanent, uncapped
 // launch watching wherever the platform supports pinning, so the memecoins that
@@ -62,6 +62,22 @@ const HOOD_SYMBOLS = new Set(
     "HOODU",
   ].map((s) => s.toUpperCase())
 );
+
+/**
+ * Chains this watch reports on.
+ *
+ * Robinhood Chain only, by request (2026-08-28). The first all-platform sweep
+ * announced Robinhood's stock on Solana (HOODX/StonkFun, HOOD/Sunrise) and BNB
+ * (HOODB/Flap) — those are real listings, but not ones worth pinging about, so
+ * only Robinhood Chain remains.
+ *
+ * The other sources are kept intact below and simply not run: re-enabling a
+ * chain is adding it back to this set, not rebuilding the sweep. Skipping them
+ * also keeps the pass cheap — five catalogs go unqueried every 60s.
+ */
+const WATCHED_CHAINS = new Set(["Robinhood Chain"]);
+
+const watched = (chain: string) => WATCHED_CHAINS.has(chain);
 
 /**
  * Assets already known and already covered — not news.
@@ -155,6 +171,8 @@ interface SourceResult {
   label: string;
   hits: HoodHit[];
   ok: boolean;
+  /** Chain is switched off in WATCHED_CHAINS — not queried at all. */
+  skipped: boolean;
 }
 
 /**
@@ -165,12 +183,20 @@ interface SourceResult {
  * whose whole value is catching one rare event must not be able to sit silently
  * broken — so a fully failed sweep is logged loudly.
  */
-async function source(label: string, fn: () => Promise<HoodHit[]>): Promise<SourceResult> {
+async function source(
+  label: string,
+  chains: string[],
+  fn: () => Promise<HoodHit[]>
+): Promise<SourceResult> {
+  // A source whose chains are all switched off is skipped, not "reachable with
+  // no hits". Reporting the two the same way would make a disabled chain look
+  // like a clean check.
+  if (!chains.some(watched)) return { label, hits: [], ok: true, skipped: true };
   try {
-    return { label, hits: await fn(), ok: true };
+    return { label, hits: await fn(), ok: true, skipped: false };
   } catch (err) {
     console.error(`[hood] ${label} check failed: ${(err as Error).message}`);
-    return { label, hits: [], ok: false };
+    return { label, hits: [], ok: false, skipped: false };
   }
 }
 
@@ -184,7 +210,7 @@ async function source(label: string, fn: () => Promise<HoodHit[]>): Promise<Sour
 async function collectHits(): Promise<SourceResult[]> {
   return Promise.all([
     // ── Robinhood Chain ────────────────────────────────────────────────────
-    source("registry", async () => {
+    source("registry", ["Robinhood Chain"], async () => {
       const stocks = await fetchRobinhoodStockTokens();
       return stocks
         .filter((s) => isRobinhoodStock(s.symbol, s.name))
@@ -202,10 +228,13 @@ async function collectHits(): Promise<SourceResult[]> {
     // Flap runs the same launchpad on Robinhood Chain and BNB Chain against
     // different catalogs, so both are checked. `coming-soon` entries are kept —
     // "listed but not yet selectable" is exactly the early warning worth having.
-    source("flap", async () => {
+    source("flap", ["Robinhood Chain", "BNB Chain"], async () => {
       const all = await fetchFlapPaymentTokens();
       return all
         .filter((t) => isRobinhoodStock(t.symbol, t.name))
+        .filter((t) =>
+          watched(t.chainId === FLAP_ROBINHOOD_CHAIN_ID ? "Robinhood Chain" : "BNB Chain")
+        )
         .map((t) => {
           const chain =
             t.chainId === FLAP_ROBINHOOD_CHAIN_ID
@@ -232,7 +261,7 @@ async function collectHits(): Promise<SourceResult[]> {
     // address rather than listed. Only known HOOD addresses can be asked about;
     // a brand-new HOOD token would be caught by the registry source above first,
     // then probed here on the following pass.
-    source("pools.fun", async () => {
+    source("pools.fun", ["Robinhood Chain"], async () => {
       const hits: HoodHit[] = [];
       for (const [addr, sym] of [["0xfb5b5778d45ae47f15323fb59b666c655174a79c", "HOODon"]] as const) {
         const allowed = await isAllowedPairedAsset(addr);
@@ -251,7 +280,7 @@ async function collectHits(): Promise<SourceResult[]> {
     }),
 
     // ── Solana ─────────────────────────────────────────────────────────────
-    source("stonkfun", async () => {
+    source("stonkfun", ["Solana"], async () => {
       const quotes = await fetchQuoteTokens();
       return quotes
         .filter((q) => isRobinhoodStock(q.symbol, q.name))
@@ -266,7 +295,7 @@ async function collectHits(): Promise<SourceResult[]> {
         }));
     }),
 
-    source("sunrise", async () => {
+    source("sunrise", ["Solana"], async () => {
       const tokens = await fetchSunriseTokens();
       return tokens
         .filter((t) => isRobinhoodStock(t.symbol, t.name))
@@ -281,7 +310,7 @@ async function collectHits(): Promise<SourceResult[]> {
         }));
     }),
 
-    source("pumpfun", async () => {
+    source("pumpfun", ["Solana"], async () => {
       const mints = await fetchWhitelistedQuoteMints();
       if (!mints) return [];
       const hits: HoodHit[] = [];
@@ -305,7 +334,7 @@ async function collectHits(): Promise<SourceResult[]> {
     // basestonk publishes no catalog (§8c), so its pair tokens can only be read
     // off actual launches. That makes this the one source that cannot see a
     // listing before first use — a known limitation, not an oversight.
-    source("basestonk", async () => {
+    source("basestonk", ["Base"], async () => {
       const launches = await fetchBasestonkLaunches(100);
       if (!launches) return [];
       const hits: HoodHit[] = [];
@@ -326,7 +355,7 @@ async function collectHits(): Promise<SourceResult[]> {
     }),
 
     // ── BNB Chain ──────────────────────────────────────────────────────────
-    source("four.meme", async () => {
+    source("four.meme", ["BNB Chain"], async () => {
       const quotes = await fetchFourMemeQuoteTokens();
       return quotes
         .filter((q) => isRobinhoodStock(q.symbol, q.symbol))
@@ -342,13 +371,14 @@ async function collectHits(): Promise<SourceResult[]> {
     }),
 
     // ── o1, both chains ────────────────────────────────────────────────────
-    source("o1", async () => {
+    source("o1", ["Base", "Robinhood Chain"], async () => {
       if (!o1KeyConfigured()) return [];
       const hits: HoodHit[] = [];
       for (const [key, id, chain] of [
         ["base", O1_CHAIN.BASE, "Base"],
         ["rh", O1_CHAIN.ROBINHOOD, "Robinhood Chain"],
       ] as const) {
+        if (!watched(chain)) continue;
         const quotes = await fetchO1Quotes(id, false);
         for (const q of quotes ?? []) {
           if (!isRobinhoodStock(q.symbol, q.symbol)) continue;
@@ -381,18 +411,19 @@ async function collectHits(): Promise<SourceResult[]> {
  */
 export async function pollHoodWatch(): Promise<void> {
   const results = await collectHits();
-  const live = results.filter((r) => r.ok);
+  const active = results.filter((r) => !r.skipped);
+  const live = active.filter((r) => r.ok);
 
   // A sweep where nothing answered is a broken watch, not a quiet market. Say so
   // — the whole value here is catching one rare event, and this must not be able
   // to sit dead while looking identical to "no listing yet".
   if (live.length === 0) {
-    console.error(`[hood] EVERY source failed this pass (${results.map((r) => r.label).join(", ")}) — watch is blind`);
+    console.error(`[hood] EVERY active source failed this pass (${active.map((r) => r.label).join(", ")}) — watch is blind`);
     return;
   }
-  if (live.length < results.length) {
-    const dead = results.filter((r) => !r.ok).map((r) => r.label);
-    console.warn(`[hood] ${dead.length}/${results.length} sources unreachable this pass: ${dead.join(", ")}`);
+  if (live.length < active.length) {
+    const dead = active.filter((r) => !r.ok).map((r) => r.label);
+    console.warn(`[hood] ${dead.length}/${active.length} active sources unreachable this pass: ${dead.join(", ")}`);
   }
 
   const hits = live.flatMap((r) => r.hits);

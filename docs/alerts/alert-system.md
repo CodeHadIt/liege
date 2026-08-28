@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-28 (HOOD watch; Platinum mutes)
+**Last updated:** 2026-08-28 (HOOD watch, Robinhood-only; Platinum mutes)
 
 ---
 
@@ -1202,7 +1202,7 @@ silently counting as crypto.
 | | |
 |---|---|
 | Code | [`hood-watch.ts`](../../src/lib/telegram/hood-watch.ts) |
-| Sources | **9 catalogs, every platform** — see table below |
+| Sources | **Robinhood Chain only** — 4 active of 9 implemented |
 | Poll | 60s |
 | Feature | `launch` (all tiers) |
 | Seen-set | `hood.watch` |
@@ -1210,10 +1210,25 @@ silently counting as crypto.
 A standing, priority watch for one specific event: **Robinhood's own stock (HOOD)
 becoming an asset you can launch a token against.**
 
-### It IS already available — on three platforms we never checked
+### Scope: Robinhood Chain only
 
-The first all-platform sweep (2026-08-28) found Robinhood's stock live as a base
-pair in three places:
+`WATCHED_CHAINS` holds `Robinhood Chain` and nothing else. Sources on other
+chains are implemented and simply not run — re-enabling one is adding its chain
+back to that set, not rebuilding the sweep. Skipping them also keeps each pass
+cheap: five catalogs go unqueried every 60s.
+
+| State | Sources |
+|---|---|
+| **Queried** | Robinhood registry · Flap (RH) · pools.fun · o1 (RH) |
+| **Chain off** | StonkFun · Sunrise · Pump.fun (Solana) · Four.meme (BNB) · basestonk (Base) |
+
+A skipped source reports `skipped`, never "queried, no hits" — a disabled chain
+must not look like a clean check.
+
+### What the all-chain sweep found before it was narrowed
+
+Run once on 2026-08-28, it found Robinhood's stock already live as a base pair on
+three venues, all announced once and recorded in `hood.watch`:
 
 | Symbol | Platform | Chain | Address |
 |---|---|---|---|
@@ -1222,13 +1237,12 @@ pair in three places:
 | **HOOD** | Sunrise | Solana | `HooDYv5RewLRiMLnEVq3VJqdqxhuE6c5eYvqejMC3e9A` |
 
 Different issuers' wrappers of the same equity — Sunrise's is named "Robinhood
-Markets - Backpack Securities". **All three predate this watch**, which is why
-they were never announced: their platform watchers seeded them as part of a
-backlog on first run, and a seeded asset never alerts.
+Markets - Backpack Securities". All three predate the watch, which is why they
+had never been announced: their platform watchers seeded them as backlog on
+first run, and a seeded asset never alerts.
 
-That is the whole argument for sweeping every catalog rather than the
-Robinhood-chain ones. Restricting to RH platforms — the original scope — would
-have missed all three.
+They are kept here because they are the answer to "where else does Robinhood
+stock already trade", even though those chains no longer ping.
 
 ### On Robinhood's own chain it is still absent
 
@@ -1257,7 +1271,9 @@ it."**
 > "Long" by our own attribution. Corroborate the router with the minting factory
 > before trusting a launchpad label. See §14.
 
-### What it watches — every catalog in the system
+### Every source implemented
+
+Four are active; the rest are switched off by `WATCHED_CHAINS` above.
 
 | Source | Chain | Notes |
 |---|---|---|
@@ -1692,10 +1708,11 @@ and the deploy transactions here carry zero token transfers.
   frontend. Under the current rule we would announce both as genuine Long
   launches. Corroborating the router with the minting factory — the way Pons is
   already identified — would close it. See §8d.
-- **Robinhood pairs cannot be pinned on Sunrise or Flap/BNB.** The HOOD watch
-  pins on Robinhood Chain and StonkFun only, because those are the two platforms
-  with pin machinery. HOODB (Flap/BNB) and HOOD (Sunrise) are announced but their
-  launches follow the normal 36h window and 25-launch cap. See §8d.
+- **Only Robinhood Chain and StonkFun support pinning.** Moot while the HOOD
+  watch is Robinhood-only, but if Solana or BNB are re-enabled in
+  `WATCHED_CHAINS`, HOODB (Flap/BNB) and HOOD (Sunrise) would be announced
+  without a pin — their launches would follow the normal 36h window and
+  25-launch cap. See §8d.
 - **Tokenized stocks are in `ath_tokens`.** NVDA and SPCX qualify on market cap
   but are tokenized equities, not launched coins — the same category as the
   WETH/USDG exclusions. They currently produce the only alpha deployer

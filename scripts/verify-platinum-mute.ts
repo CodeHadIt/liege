@@ -61,16 +61,19 @@ async function main() {
 
   console.log("\n=== live HOOD sweep, per source (expect: reachable, 0 hits) ===\n");
   const results = await hoodWatchStatus();
-  console.log("source".padEnd(28) + "reachable".padEnd(12) + "HOOD listings");
-  console.log("-".repeat(60));
+  console.log("source".padEnd(28) + "state".padEnd(16) + "HOOD listings");
+  console.log("-".repeat(62));
   for (const r of results) {
-    console.log(r.label.padEnd(28) + (r.ok ? "yes" : "NO").padEnd(12) + r.hits.length);
+    const state = r.skipped ? "chain off" : r.ok ? "queried" : "UNREACHABLE";
+    console.log(r.label.padEnd(28) + state.padEnd(16) + (r.skipped ? "—" : r.hits.length));
     for (const h of r.hits) console.log(`    → ${h.symbol} on ${h.source} (${h.chain}) live=${h.live} ${h.address ?? ""}`);
   }
-  const dead = results.filter((r) => !r.ok);
+  const active = results.filter((r) => !r.skipped);
+  const dead = active.filter((r) => !r.ok);
   console.log(
-    `\n${results.length - dead.length}/${results.length} sources reachable` +
-      (dead.length ? ` — unreachable: ${dead.map((d) => d.label).join(", ")}` : "")
+    `\n${active.length - dead.length}/${active.length} active sources queried` +
+      ` · ${results.length - active.length} skipped (chain off)` +
+      (dead.length ? ` · unreachable: ${dead.map((d) => d.label).join(", ")}` : "")
   );
 }
 
