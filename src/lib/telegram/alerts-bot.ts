@@ -72,6 +72,43 @@ const FEATURE_TIERS: Record<Feature, readonly Tier[]> = {
 };
 
 /**
+ * Feeds Platinum has muted for itself.
+ *
+ * This is a DELIVERY filter, not an entitlement change. `recipientsFor` still
+ * reports Platinum as entitled, which matters because watchers gate their work
+ * on it — `alpha-watcher` skips an audience's whole confluence evaluation when
+ * nobody is entitled to it. Muting through entitlement would therefore stop the
+ * state machine, not just the pings, and a later unmute would resume from stale
+ * state. Muting at delivery keeps every feed computing exactly as before and
+ * silences only the message.
+ *
+ * Gold is never affected: a mute here applies to Platinum recipients alone, so
+ * confluence keeps flowing to Gold while the owner's copy stays quiet.
+ *
+ * Defaults to the set the owner asked to silence. `ALERTS_PLATINUM_MUTED`
+ * overrides it entirely — a comma-separated list of feature ids, or the literal
+ * `none` to unmute everything without a code change.
+ */
+const DEFAULT_PLATINUM_MUTED: readonly Feature[] = [
+  FEATURE.ALPHA_CONFLUENCE_PLATINUM,
+  FEATURE.ATH_DAILY,
+];
+
+export function mutedForPlatinum(): Set<Feature> {
+  const raw = process.env.ALERTS_PLATINUM_MUTED?.trim();
+  if (raw === undefined || raw === "") return new Set(DEFAULT_PLATINUM_MUTED);
+  if (raw.toLowerCase() === "none") return new Set();
+
+  const known = new Set<string>(Object.values(FEATURE));
+  const out = new Set<Feature>();
+  for (const part of raw.split(",").map((s) => s.trim()).filter(Boolean)) {
+    if (known.has(part)) out.add(part as Feature);
+    else console.warn(`[alerts] ALERTS_PLATINUM_MUTED: unknown feature "${part}" — ignoring`);
+  }
+  return out;
+}
+
+/**
  * chat ID → tier. An ID listed in both vars resolves to platinum, so a mistake
  * in config can never silently demote the owner.
  */
@@ -106,6 +143,27 @@ export function recipientsFor(feature: Feature): string[] {
   const out: string[] = [];
   for (const [id, tier] of subscriberTiers()) {
     if (tiers.includes(tier)) out.push(id);
+  }
+  return out;
+}
+
+/**
+ * Chat IDs that should actually RECEIVE a feature right now — entitlement minus
+ * any mute. This is what `broadcastAlert` delivers to; `recipientsFor` remains
+ * the entitlement question, which is what watchers gate their work on.
+ */
+export function deliveryRecipientsFor(feature: Feature): string[] {
+  const muted = mutedForPlatinum().has(feature);
+  const tiers = FEATURE_TIERS[feature];
+  if (!tiers) {
+    console.error(`[alerts] unknown feature "${feature}" — refusing to send`);
+    return [];
+  }
+  const out: string[] = [];
+  for (const [id, tier] of subscriberTiers()) {
+    if (!tiers.includes(tier)) continue;
+    if (tier === "platinum" && muted) continue;
+    out.push(id);
   }
   return out;
 }
@@ -265,8 +323,10 @@ export async function broadcastAlert(
     }
     return;
   }
-  const ids = recipientsFor(feature);
-  if (ids.length === 0) return; // nobody is entitled to this feed — not an error
+  // Delivery list, not entitlement: a muted feed still runs and still counts
+  // Platinum as entitled, it just doesn't reach them.
+  const ids = deliveryRecipientsFor(feature);
+  if (ids.length === 0) return; // nobody to deliver to — not an error
   for (const id of ids) {
     try {
       await send(id);

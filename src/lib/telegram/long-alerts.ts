@@ -156,11 +156,36 @@ const PINNED_RH_STOCKS = new Map<string, string>([
 ]);
 
 /**
+ * Pins added at runtime by a watcher rather than by an edit here.
+ *
+ * The HOOD watch uses this: the moment Robinhood's own stock appears — in the
+ * asset registry or any launchpad's catalog — it must be watched permanently,
+ * without waiting for a deploy. Kept separate from the hand-written map above so
+ * it is obvious which pins are decisions and which are discoveries.
+ */
+const RUNTIME_PINS = new Map<string, string>();
+
+/** Pin a stock for permanent, uncapped launch watching. Idempotent. */
+export function pinRhStock(address: string, symbol: string): void {
+  const addr = address.toLowerCase();
+  if (PINNED_RH_STOCKS.has(addr) || RUNTIME_PINS.has(addr)) return;
+  RUNTIME_PINS.set(addr, symbol);
+  console.log(`[long] runtime pin added: ${symbol} (${addr})`);
+  ensurePinnedWatches();
+}
+
+/** Whether a stock is already watched permanently. */
+export function isRhStockPinned(address: string): boolean {
+  const addr = address.toLowerCase();
+  return PINNED_RH_STOCKS.has(addr) || RUNTIME_PINS.has(addr);
+}
+
+/**
  * Re-assert pinned watches. Cheap and idempotent, so it runs every pass rather
  * than only at startup — that is what makes a pin survive a restart.
  */
 function ensurePinnedWatches(): void {
-  for (const [addr, symbol] of PINNED_RH_STOCKS) {
+  for (const [addr, symbol] of [...PINNED_RH_STOCKS, ...RUNTIME_PINS]) {
     const existing = watchedStocks.get(addr);
     if (existing?.pinned) continue;
     watchedStocks.set(addr, {
@@ -285,7 +310,9 @@ export async function pollLongOnchainCreations(): Promise<void> {
   // Every stock we know of on this chain, from either source — a pool pairing
   // two of them is not a launch.
   const stockSet = new Set(
-    [...seen, ...flapStockAddresses, ...PINNED_RH_STOCKS.keys()].map((a) => a.toLowerCase())
+    [...seen, ...flapStockAddresses, ...PINNED_RH_STOCKS.keys(), ...RUNTIME_PINS.keys()].map((a) =>
+      a.toLowerCase()
+    )
   );
 
   for (const ev of events) {

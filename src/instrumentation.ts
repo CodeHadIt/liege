@@ -22,6 +22,7 @@ export async function register() {
     const { pollSolanaAlphaWallets } = await import("@/lib/telegram/solana-alpha-alerts");
     const { pollO1Quotes, pollO1Launches } = await import("@/lib/telegram/o1-alerts");
     const { pollBasestonk } = await import("@/lib/telegram/basestonk-alerts");
+    const { pollHoodWatch } = await import("@/lib/telegram/hood-watch");
 
     // Tier configuration, reported once at boot.
     //
@@ -163,6 +164,23 @@ export async function register() {
         console.error("[instrumentation] Flap RH poll error:", err)
       );
     }, FLAP_RH_INTERVAL);
+
+    // HOOD watch — the standing question of whether Robinhood's OWN stock has
+    // become launchable. It polls the asset registry, Flap's catalog and o1's
+    // catalog together, because any one of them could carry it first.
+    //
+    // 60s despite being a rare event: the whole value is being first, and three
+    // catalog reads a minute is nothing. It does NOT seed silently — the list is
+    // empty today, so a hit on the first pass IS the news.
+    console.log("[instrumentation] Starting HOOD watch (every 60s)");
+    pollHoodWatch().catch((err: unknown) =>
+      console.error("[instrumentation] Initial HOOD watch error:", err)
+    );
+    setInterval(() => {
+      pollHoodWatch().catch((err: unknown) =>
+        console.error("[instrumentation] HOOD watch error:", err)
+      );
+    }, 60_000);
 
     // BNB Chain tokenized-stock quotes (Four.meme + Flap). New quote assets are
     // listed on the order of days and both sources are scraped pages rather than

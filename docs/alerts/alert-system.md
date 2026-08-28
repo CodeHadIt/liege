@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-27 (TTWO unpinned on StonkFun)
+**Last updated:** 2026-08-28 (HOOD watch; Platinum mutes)
 
 ---
 
@@ -117,18 +117,48 @@ from a non-allow-listed chat is dropped **without a reply**.
 ### Tiers
 
 Two tiers. Delivery goes through `broadcastAlert(feature, send)`, and
-`recipientsFor(feature)` is the **only** path from a feed to a chat ID — a feed
-cannot reach anyone without declaring which tiers may see it. Feeds must never
-call `alertRecipients()`, which exists solely as the bot's interaction gate.
+`deliveryRecipientsFor(feature)` is the **only** path from a feed to a chat ID —
+a feed cannot reach anyone without declaring which tiers may see it. Feeds must
+never call `alertRecipients()`, which exists solely as the bot's interaction gate.
 
-| Feature | Platinum | Gold |
-|---|---|---|
-| `launch` — all launchpad feeds (§3–§8) | ✅ | ✅ |
-| `alpha.confluence.gold` — confluence over the frozen library | — | ✅ |
-| `alpha.confluence.platinum` — confluence over **all** wallets | ✅ | — |
-| `ath.daily` — the $2M ATH digest and its promotion announcement | ✅ | — |
-| `deployer` — alpha deployer launches (§13) | ✅ | — |
-| `alpha.solana` — Solana alpha wallet deploys and buys (§11b) | ✅ | — |
+| Feature | Platinum | Gold | Muted for Platinum |
+|---|---|---|---|
+| `launch` — all launchpad feeds (§3–§8) | ✅ | ✅ | |
+| `alpha.confluence.gold` — confluence over the frozen library | — | ✅ | |
+| `alpha.confluence.platinum` — confluence over **all** wallets | ✅ | — | 🔇 |
+| `ath.daily` — the $2M ATH digest and its promotion announcement | ✅ | — | 🔇 |
+| `deployer` — alpha deployer launches (§13) | ✅ | — | |
+| `alpha.solana` — Solana alpha wallet deploys and buys (§11b) | ✅ | — | |
+
+#### Platinum mutes — entitlement vs delivery
+
+Platinum has silenced two feeds for itself (2026-08-28, by request): wallet
+confluence and the daily ATH digest with its wallet summaries. Gold is
+unaffected and still receives its own confluence.
+
+The distinction that makes this safe:
+
+| | |
+|---|---|
+| `recipientsFor(feature)` | **Entitlement.** Unchanged by mutes. |
+| `deliveryRecipientsFor(feature)` | Entitlement **minus mutes**. What `broadcastAlert` sends to. |
+
+Muting had to happen at delivery, not entitlement, because watchers gate their
+*work* on entitlement — `alpha-watcher` skips an audience's entire confluence
+evaluation when `recipientsFor(...)` is empty. Muting by emptying entitlement
+would therefore have stopped the state machine rather than the pings, and a
+later unmute would have resumed from stale `alpha_confluence.audience` state.
+Muting at delivery keeps every feed computing exactly as before and silences
+only the message — which is what "keep working in the background, just don't
+ping me" requires.
+
+Configured by `ALERTS_PLATINUM_MUTED`: a comma-separated list of feature ids,
+or the literal `none` to unmute everything. **Unset falls back to the two feeds
+above**, so the requested state needs no environment change; an unknown id logs
+a warning and is ignored rather than muting something unintended.
+
+Verify with `npx tsx scripts/verify-platinum-mute.ts` — it prints entitled vs
+delivered per feature and writes nothing.
 
 The two `alpha.confluence.*` features are deliberately **disjoint**: each tier
 gets its own evaluation of the state machine (§11), so routing both to Platinum
@@ -199,6 +229,7 @@ be bundled for the Edge runtime.
 | Robinhood registry stocks | 60s |
 | Robinhood on-chain first token | 30s |
 | Flap Robinhood-chain quotes | 120s |
+| HOOD watch (registry + Flap + o1) | 60s |
 | BNB Chain stock quotes | 120s |
 | BNB Chain on-chain launches | 20s |
 | pools.fun quote assets | 60s |
@@ -1166,6 +1197,78 @@ silently counting as crypto.
   sets differ — COIN is active on basestonk while dormant on o1 — so neither
   platform's catalog can answer for the other.
 
+## 8d. HOOD watch — is Robinhood's own stock launchable yet?
+
+| | |
+|---|---|
+| Code | [`hood-watch.ts`](../../src/lib/telegram/hood-watch.ts) |
+| Sources | Robinhood asset registry · Flap RH catalog · o1 RH catalog |
+| Poll | 60s |
+| Feature | `launch` (all tiers) |
+| Seen-set | `hood.watch` |
+
+A standing, priority watch for one specific event: **Robinhood's own stock (HOOD)
+becoming an asset you can launch a token against.**
+
+### Why it is not available today
+
+Checked 2026-08-28:
+
+- **HOOD is not in Robinhood's asset registry.** 194 tokenized stocks on chain
+  4663, all `ASSET_STATUS_ACTIVE`, no HOOD. Robinhood has not tokenized itself.
+- The only HOOD exposure on the chain is **Ondo's HOODon**
+  (`0xfb5b5778d45ae47f15323fb59b666c655174a79c`), a third-party wrapper.
+- **No launchpad offers HOODon as a quote.** Long's picker is built from the
+  registry; Pons pairs against registry stocks (DJT, SPCX, PENG) but has never
+  touched HOODon. The 30 HOODon pairs that exist are overwhelmingly Flap's.
+
+### The LongLauncher trap
+
+Two tokens — PEPE (`0xfdaa…1e18`) and RVII (`0xfd00…1e18`) — have pools against
+HOODon whose creating transaction went to **`LongLauncher`**. That is *not*
+evidence Long supports HOODon, and reading it that way was wrong.
+
+`LongLauncher` is permissionless. Anyone can call it directly with arbitrary
+parameters, bypassing the app. Both tokens were minted by
+**DopplerERC20V1Factory** (`0x1b37d3a7…`) — Doppler's generic factory, not
+Long's — and Long's own frontend flags both as **"Fake LONG asset… do not trade
+it."**
+
+> **Router ≠ launchpad.** `ROUTER_PLATFORMS` maps `tx.to` to a brand, which
+> means a spoofed pool routed through `LongLauncher` is currently labelled
+> "Long" by our own attribution. Corroborate the router with the minting factory
+> before trusting a launchpad label. See §14.
+
+### What it watches
+
+| Source | Why it could be first |
+|---|---|
+| Robinhood asset registry | Upstream source of truth; Long's picker derives from it, so a listing here unlocks every registry-driven launchpad at once |
+| Flap RH payment tokens | Flap curates its own list and already carries HOODon, so it could list HOOD independently. `coming-soon` entries are included and reported as *listed, not yet selectable* |
+| o1 RH quote catalog | Separate catalog, same shape |
+
+**Pons is absent by necessity** — it publishes no readable catalog (no API, and
+the site geo-blocks). It is covered indirectly: the moment HOOD is detected it is
+pinned, and the on-chain launch watcher then reports launches against it whoever
+created them, Pons included.
+
+### It does not seed silently
+
+Every other catalog watcher seeds its first pass, because its job is to report
+change against a large existing list. This one must not: the list is **empty
+today**, so a hit on the first pass *is* the news. Seeding would swallow exactly
+the event the watcher exists to catch.
+
+### On a hit
+
+1. The asset is **pinned** via `pinRhStock()` — permanent, never expires, never
+   caps — before the alert is sent, so a launch seconds later is already covered.
+2. An **ALL CAPS** alert goes to every tier, naming the source and whether it is
+   selectable now or merely listed.
+
+Keying is `source:address`, so HOOD appearing on Flap *after* the registry is its
+own event and gets its own ping.
+
 ## 9. Rate limits
 
 Token-bucket per upstream, in
@@ -1545,6 +1648,13 @@ and the deploy transactions here carry zero token transfers.
 
 ## 14. Open items
 
+- **Launchpad attribution trusts the router alone.** `ROUTER_PLATFORMS` maps a
+  pool's `tx.to` to a brand, but `LongLauncher` is permissionless: PEPE
+  (`0xfdaa…1e18`) and RVII (`0xfd00…1e18`) were routed through it, minted by
+  Doppler's generic factory, and are flagged **"Fake LONG asset"** by Long's own
+  frontend. Under the current rule we would announce both as genuine Long
+  launches. Corroborating the router with the minting factory — the way Pons is
+  already identified — would close it. See §8d.
 - **Tokenized stocks are in `ath_tokens`.** NVDA and SPCX qualify on market cap
   but are tokenized equities, not launched coins — the same category as the
   WETH/USDG exclusions. They currently produce the only alpha deployer
