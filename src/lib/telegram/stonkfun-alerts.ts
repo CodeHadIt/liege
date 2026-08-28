@@ -181,8 +181,10 @@ export async function sendStonkFunTestPing(chatId: string): Promise<boolean> {
 // filter, no 36h window, no launch cap. Unpinning is deleting its entry below;
 // nothing else refers to this map.
 //
-// Currently pinned: nothing. The map is empty and every call site below is a
-// no-op until an entry is added back.
+// Currently pinned by hand: nothing. The map below is empty; pins can also
+// arrive at RUNTIME via pinStonkFunQuote — the HOOD watch (§8d) uses that to pin
+// Robinhood's stock the moment it is found in StonkFun's catalog. Check
+// isPinnedQuote, not the map, for that reason.
 //
 // A pin is UNRESTRICTED, and three separate mechanisms had to be taught that:
 //
@@ -228,6 +230,28 @@ export async function sendStonkFunTestPing(chatId: string): Promise<boolean> {
 // inference.
 
 const PINNED_QUOTE_MINTS = new Map<string, string>([]);
+
+/**
+ * Pins added at runtime by a watcher rather than by an edit above.
+ *
+ * The HOOD watch uses this: when Robinhood's own stock is found in StonkFun's
+ * quote catalog it must be watched permanently and uncapped, without waiting for
+ * a deploy. Kept separate so it stays obvious which pins are decisions and which
+ * are discoveries.
+ */
+const RUNTIME_PINNED_QUOTES = new Map<string, string>();
+
+/** Pin a StonkFun quote mint for unrestricted launch reporting. Idempotent. */
+export function pinStonkFunQuote(mint: string, label: string): void {
+  if (PINNED_QUOTE_MINTS.has(mint) || RUNTIME_PINNED_QUOTES.has(mint)) return;
+  RUNTIME_PINNED_QUOTES.set(mint, label);
+  console.log(`[stonkfun] runtime pin added: ${label} (${mint}) — unrestricted`);
+}
+
+/** Whether a quote mint is pinned. The hot path for the launch loop. */
+function isPinnedQuote(mint: string): boolean {
+  return PINNED_QUOTE_MINTS.has(mint) || RUNTIME_PINNED_QUOTES.has(mint);
+}
 
 export function formatPinnedLaunchAlert(l: StonkFunLaunch, launchNumber: number): string {
   const lines: string[] = [];
@@ -279,7 +303,7 @@ const pinnedCounts = new Map<string, number>();
 export async function sendPinnedQuoteTestPing(chatId: string): Promise<boolean> {
   const launches = await fetchStonkFunLaunches();
   if (!launches) return false;
-  const hit = launches.find((l) => PINNED_QUOTE_MINTS.has(l.quoteMint));
+  const hit = launches.find((l) => isPinnedQuote(l.quoteMint));
   if (!hit) return false;
   await sendPinnedAlert(chatId, hit, 1);
   return true;
@@ -439,7 +463,7 @@ function startQuoteWatch(q: QuoteToken): void {
   // window over one would hand it to the windowed branch, which reapplies the
   // launch cap and then goes quiet when the window closes — the opposite of
   // what pinning means.
-  if (PINNED_QUOTE_MINTS.has(q.quoteMint)) {
+  if (isPinnedQuote(q.quoteMint)) {
     console.log(`[stonkfun] ${q.symbol} is pinned — not opening a ${LAUNCH_WINDOW_LABEL} window`);
     return;
   }
@@ -586,7 +610,7 @@ export async function pollStonkFunLaunches(): Promise<void> {
   if (cursor === null) {
     for (const l of launches) {
       seenLaunches.add(l.mint);
-      if (PINNED_QUOTE_MINTS.has(l.quoteMint)) {
+      if (isPinnedQuote(l.quoteMint)) {
         pinnedCounts.set(l.quoteMint, (pinnedCounts.get(l.quoteMint) ?? 0) + 1);
       }
     }
@@ -608,7 +632,7 @@ export async function pollStonkFunLaunches(): Promise<void> {
 
     // Pinned wins over a window. Reading the window first would hand a pinned
     // quote to the capped, expiring branch.
-    const pinned = PINNED_QUOTE_MINTS.has(l.quoteMint);
+    const pinned = isPinnedQuote(l.quoteMint);
     const w = pinned ? undefined : watchedQuotes.get(l.quoteMint);
     if (!w && !pinned) continue; // launched against something we're not watching
 

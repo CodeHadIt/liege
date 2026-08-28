@@ -20,7 +20,7 @@ import {
   subscriberTiers,
   type Feature,
 } from "../src/lib/telegram/alerts-bot";
-import { previewHoodAlert, pollHoodWatch } from "../src/lib/telegram/hood-watch";
+import { previewHoodAlert, hoodWatchStatus } from "../src/lib/telegram/hood-watch";
 
 const LABEL: Record<string, string> = {
   [FEATURE.LAUNCH]: "Stock pairs + launches",
@@ -59,9 +59,19 @@ async function main() {
   console.log("\n=== HOOD alert preview (what fires if Robinhood lists itself) ===\n");
   console.log(previewHoodAlert().replace(/<[^>]+>/g, ""));
 
-  console.log("\n=== live HOOD check (expect: no hits, no alert, no writes) ===");
-  await pollHoodWatch();
-  console.log("pollHoodWatch completed — any hit would have logged '[hood] ALERTED' above.");
+  console.log("\n=== live HOOD sweep, per source (expect: reachable, 0 hits) ===\n");
+  const results = await hoodWatchStatus();
+  console.log("source".padEnd(28) + "reachable".padEnd(12) + "HOOD listings");
+  console.log("-".repeat(60));
+  for (const r of results) {
+    console.log(r.label.padEnd(28) + (r.ok ? "yes" : "NO").padEnd(12) + r.hits.length);
+    for (const h of r.hits) console.log(`    → ${h.symbol} on ${h.source} (${h.chain}) live=${h.live} ${h.address ?? ""}`);
+  }
+  const dead = results.filter((r) => !r.ok);
+  console.log(
+    `\n${results.length - dead.length}/${results.length} sources reachable` +
+      (dead.length ? ` — unreachable: ${dead.map((d) => d.label).join(", ")}` : "")
+  );
 }
 
 main().catch((err) => {

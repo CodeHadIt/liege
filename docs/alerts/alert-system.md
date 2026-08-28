@@ -1202,7 +1202,7 @@ silently counting as crypto.
 | | |
 |---|---|
 | Code | [`hood-watch.ts`](../../src/lib/telegram/hood-watch.ts) |
-| Sources | Robinhood asset registry · Flap RH catalog · o1 RH catalog |
+| Sources | **9 catalogs, every platform** — see table below |
 | Poll | 60s |
 | Feature | `launch` (all tiers) |
 | Seen-set | `hood.watch` |
@@ -1210,15 +1210,33 @@ silently counting as crypto.
 A standing, priority watch for one specific event: **Robinhood's own stock (HOOD)
 becoming an asset you can launch a token against.**
 
-### Why it is not available today
+### It IS already available — on three platforms we never checked
 
-Checked 2026-08-28:
+The first all-platform sweep (2026-08-28) found Robinhood's stock live as a base
+pair in three places:
+
+| Symbol | Platform | Chain | Address |
+|---|---|---|---|
+| **HOODB** | Flap | BNB Chain | `0xa394dcea3fd3847fd793afbfd163e2e3858b7c65` |
+| **HOODX** | StonkFun | Solana | `XsvNBAYkrDRNhA7wPHQfX3ZUXZyZLdnCQDfHZ56bzpg` |
+| **HOOD** | Sunrise | Solana | `HooDYv5RewLRiMLnEVq3VJqdqxhuE6c5eYvqejMC3e9A` |
+
+Different issuers' wrappers of the same equity — Sunrise's is named "Robinhood
+Markets - Backpack Securities". **All three predate this watch**, which is why
+they were never announced: their platform watchers seeded them as part of a
+backlog on first run, and a seeded asset never alerts.
+
+That is the whole argument for sweeping every catalog rather than the
+Robinhood-chain ones. Restricting to RH platforms — the original scope — would
+have missed all three.
+
+### On Robinhood's own chain it is still absent
 
 - **HOOD is not in Robinhood's asset registry.** 194 tokenized stocks on chain
   4663, all `ASSET_STATUS_ACTIVE`, no HOOD. Robinhood has not tokenized itself.
-- The only HOOD exposure on the chain is **Ondo's HOODon**
+- The only HOOD exposure there is **Ondo's HOODon**
   (`0xfb5b5778d45ae47f15323fb59b666c655174a79c`), a third-party wrapper.
-- **No launchpad offers HOODon as a quote.** Long's picker is built from the
+- **No RH launchpad offers HOODon as a quote.** Long's picker is built from the
   registry; Pons pairs against registry stocks (DJT, SPCX, PENG) but has never
   touched HOODon. The 30 HOODon pairs that exist are overwhelmingly Flap's.
 
@@ -1239,18 +1257,29 @@ it."**
 > "Long" by our own attribution. Corroborate the router with the minting factory
 > before trusting a launchpad label. See §14.
 
-### What it watches
+### What it watches — every catalog in the system
 
-| Source | Why it could be first |
-|---|---|
-| Robinhood asset registry | Upstream source of truth; Long's picker derives from it, so a listing here unlocks every registry-driven launchpad at once |
-| Flap RH payment tokens | Flap curates its own list and already carries HOODon, so it could list HOOD independently. `coming-soon` entries are included and reported as *listed, not yet selectable* |
-| o1 RH quote catalog | Separate catalog, same shape |
+| Source | Chain | Notes |
+|---|---|---|
+| Robinhood asset registry | Robinhood | Upstream source of truth; Long's picker derives from it, so a listing here unlocks every registry-driven launchpad at once |
+| Flap payment tokens | Robinhood **+ BNB** | Flap runs the same launchpad on both against different catalogs, so both are checked. `coming-soon` entries included, reported as *listed, not yet selectable* |
+| pools.fun allowlist | Robinhood | On-chain allowlist, so probed **by address** rather than listed |
+| StonkFun quotes | Solana | |
+| Sunrise tokens | Solana | |
+| Pump.fun whitelisted quotes | Solana | Mints resolved to symbols individually |
+| basestonk pair tokens | Base | No catalog exists (§8c), so read off actual launches — the one source that cannot see a listing before first use |
+| Four.meme quotes | BNB | |
+| o1 quotes | Base **+ Robinhood** | |
 
 **Pons is absent by necessity** — it publishes no readable catalog (no API, and
-the site geo-blocks). It is covered indirectly: the moment HOOD is detected it is
-pinned, and the on-chain launch watcher then reports launches against it whoever
-created them, Pons included.
+the site geo-blocks). It is covered indirectly: once HOOD is pinned, the on-chain
+launch watcher reports launches against it whoever created them, Pons included.
+
+Sources are independent, and the outcome of each is **reported rather than
+swallowed**: "no listing anywhere" and "every catalog is down" both produce an
+empty result, so a sweep where nothing answered logs `EVERY source failed …
+watch is blind`. A watch whose whole value is catching one rare event must not
+be able to sit silently broken.
 
 ### It does not seed silently
 
@@ -1261,13 +1290,21 @@ the event the watcher exists to catch.
 
 ### On a hit
 
-1. The asset is **pinned** via `pinRhStock()` — permanent, never expires, never
-   caps — before the alert is sent, so a launch seconds later is already covered.
-2. An **ALL CAPS** alert goes to every tier, naming the source and whether it is
-   selectable now or merely listed.
+1. The asset is **pinned** — permanent, never expires, never caps — *before* the
+   alert is sent, so a launch seconds later is already covered. Two platforms
+   have pin machinery: Robinhood Chain (`pinRhStock`) and StonkFun
+   (`pinStonkFunQuote`). **Sunrise and Flap/BNB have no equivalent**, so a
+   Robinhood pair there is announced but its launches follow that platform's
+   normal 36h-window rules — a real gap, listed in §14.
+2. An **ALL CAPS** alert goes to every tier, naming the platform, chain, and
+   whether it is selectable now or merely listed.
 
-Keying is `source:address`, so HOOD appearing on Flap *after* the registry is its
-own event and gets its own ping.
+Keying is `platform:address`, so HOOD appearing on a second launchpad is its own
+event and gets its own ping.
+
+The first sweep says **"ALREADY A BASE PAIR"** and notes the listing predates the
+watch; later sweeps say **"NOW A BASE PAIR"**. A pre-existing listing is not a
+new one and the copy must not claim otherwise.
 
 ## 9. Rate limits
 
@@ -1655,6 +1692,10 @@ and the deploy transactions here carry zero token transfers.
   frontend. Under the current rule we would announce both as genuine Long
   launches. Corroborating the router with the minting factory — the way Pons is
   already identified — would close it. See §8d.
+- **Robinhood pairs cannot be pinned on Sunrise or Flap/BNB.** The HOOD watch
+  pins on Robinhood Chain and StonkFun only, because those are the two platforms
+  with pin machinery. HOODB (Flap/BNB) and HOOD (Sunrise) are announced but their
+  launches follow the normal 36h window and 25-launch cap. See §8d.
 - **Tokenized stocks are in `ath_tokens`.** NVDA and SPCX qualify on market cap
   but are tokenized equities, not launched coins — the same category as the
   WETH/USDG exclusions. They currently produce the only alpha deployer
