@@ -1254,6 +1254,13 @@ stock already trade", even though those chains no longer ping.
   registry; Pons pairs against registry stocks (DJT, SPCX, PENG) but has never
   touched HOODon. The 30 HOODon pairs that exist are overwhelmingly Flap's.
 
+Quantified over 6,000,000 blocks (51,108 pool creations): **936 pools were routed
+through `LongLauncher`, and 0 of them were paired against HOODon.** Those 936 used
+48 distinct quotes, 47 of which are registry stocks — NVDA (145), SPCX (45), TSLA
+(39), GLD (30), BB (30), DJT (28), AAPL (25)… The remaining pools quote crypto
+(USDG/ETH/WETH), not stocks. Long's offered set *is* the registry, and HOODon is
+not in it.
+
 ### The LongLauncher trap
 
 Two tokens — PEPE (`0xfdaa…1e18`) and RVII (`0xfd00…1e18`) — have pools against
