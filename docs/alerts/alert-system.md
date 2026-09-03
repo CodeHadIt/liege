@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-09-03 (lunch.fun launchpad; on-chain HOOD source)
+**Last updated:** 2026-09-03 (lunch.fun launchpad; parked work recorded)
 
 ---
 
@@ -1772,13 +1772,30 @@ and the deploy transactions here carry zero token transfers.
 
 ## 14. Open items
 
-- **Launchpad attribution trusts the router alone.** `ROUTER_PLATFORMS` maps a
-  pool's `tx.to` to a brand, but `LongLauncher` is permissionless: PEPE
-  (`0xfdaa…1e18`) and RVII (`0xfd00…1e18`) were routed through it, minted by
-  Doppler's generic factory, and are flagged **"Fake LONG asset"** by Long's own
-  frontend. Under the current rule we would announce both as genuine Long
-  launches. Corroborating the router with the minting factory — the way Pons is
-  already identified — would close it. See §8d.
+- **Launchpad attribution trusts the router alone — knowingly, for now.**
+  `ROUTER_PLATFORMS` maps a pool's `tx.to` to a brand, but `LongLauncher` is
+  permissionless: PEPE (`0xfdaa…1e18`) and RVII (`0xfd00…1e18`) were routed
+  through it, minted by Doppler's generic factory, and are flagged **"Fake LONG
+  asset"** by Long's own frontend. Under the current rule we would announce both
+  as genuine Long launches.
+
+  **Decision (2026-09-03): leave it.** Every candidate discriminator was tested
+  against the two known-bad tokens and none separates them from genuine launches:
+
+  | Signal | Genuine (10 sampled) | Known fake | Discriminates? |
+  |---|---|---|---|
+  | Hook | `DopplerHookInitializer` | same | ❌ |
+  | Runtime bytecode | 44 B, sha `967784ab…` | identical | ❌ |
+  | Address suffix | all `…1e18` | `…1e18` | ❌ |
+  | Minting factory | Blockscout **403s** | — | unusable in a hot path |
+
+  The 44-byte bytecode is a minimal clone proxy, so every Doppler-minted token on
+  the chain is byte-identical. The only signal left is the quote asset — over 6M
+  blocks, 936 LongLauncher pools used 48 quotes, 47 of them registry stocks and
+  **0 HOODon** — but the exact allowlist could not be pinned down, and shipping a
+  rule that merely looks right is what produced this entry. Keeping the known
+  imperfect rule until the next false positive, which will say more than
+  guessing does. See §8d.
 - **Only Robinhood Chain and StonkFun support pinning.** Moot while the HOOD
   watch is Robinhood-only, but if Solana or BNB are re-enabled in
   `WATCHED_CHAINS`, HOODB (Flap/BNB) and HOOD (Sunrise) would be announced
@@ -1792,3 +1809,57 @@ and the deploy transactions here carry zero token transfers.
 - **Deployer resolution is not unified.** The daily scan still resolves creators
   via Blockscout while the backfill uses GMGN. Both are needed — GMGN has no
   creator for tokenized stocks — but the split is incidental rather than designed.
+
+---
+
+## 15. Parked work
+
+Deliberately set aside, with the state recorded so it can be resumed without
+re-deriving it. Nothing here is broken — each item is a capability we chose not
+to finish yet.
+
+### lunch.fun — catalog watcher (parked 2026-09-03, blocked on geo)
+
+**What works today and is NOT parked:** launches against lunch.fun's HOOD are
+alerted (pinned, uncapped), and its launches are attributed by router and hook.
+See §5.
+
+**What is parked:** reading lunch.fun's own catalog, which would give new
+stock-pair pings the way StonkFun and o1 do, instead of one hand-pinned quote.
+
+Blocked by a country-based WAF. The chain of causation:
+
+| | |
+|---|---|
+| The block | lunch.fun's WAF rejects by country; its block page ships developer comments describing the rule and a `src/proxy.ts` fallback with "the same country list" |
+| Our egress | **GB** (British Telecommunications) — on their list |
+| Consequence | Cannot read the JS bundle, which is exactly how Flap's catalog is read (Flap has no public API either) |
+| Result | The API endpoints are unknown, so there is no catalog to poll |
+
+Two dead ends already eliminated, so they are not retried:
+
+- **`api.lunch.fun` is not blocked — it does not exist.** Vercel answers
+  `DEPLOYMENT_NOT_FOUND`. Any real API sits under the geo-blocked
+  `lunch.fun/api/…`.
+- **The Wayback Machine has nothing usable.** One snapshot (2026-01-23), a
+  landing page predating the launchpad — no addresses, tickers or API paths — and
+  the JS chunks were never archived.
+
+**To resume:** retry from a non-blocked egress. Read the bundle, extract the API,
+then build it like §8b. **Check Pons at the same time** — it failed identically,
+redirecting to `blocked?country=GB`, so one egress change plausibly unblocks
+both. Production egress (Railway) may already be outside the blocked list, which
+is worth probing before assuming a VPN is needed.
+
+### BNB Chain alpha wallets (parked earlier)
+
+| | |
+|---|---|
+| To run | `supabase/migrations/add_ath_exit_liquidity.sql` |
+| Then | re-run `scripts/backfill-bsc-alpha.ts --write` |
+| Then build | BSC confluence watcher, BSC deployer alerts, BSC daily ATH scan, per-chain `ALPHA_LIBRARY_CUTOFF` |
+
+**Live caveat:** ~1,217 BSC alpha wallets are marked active in the database with
+**no watcher behind them**. They are inert rather than wrong — nothing reads them
+— but any future query over "active alpha wallets" will include a large stale
+BSC population unless it filters by chain.
