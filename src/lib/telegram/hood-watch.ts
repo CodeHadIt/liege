@@ -86,7 +86,20 @@ const watched = (chain: string) => WATCHED_CHAINS.has(chain);
  * this the very first sweep would announce it, because this watcher does not
  * seed silently.
  */
-const ALREADY_KNOWN = new Set(["flap (robinhood chain):0xfb5b5778d45ae47f15323fb59b666c655174a79c"]);
+const ALREADY_KNOWN = new Set([
+  "flap (robinhood chain):0xfb5b5778d45ae47f15323fb59b666c655174a79c",
+  // lunch.fun's tokenized HOOD, found 2026-09-03 and pinned in long-alerts.
+  "on-chain (robinhood chain):0x32ac8c1d7672667d5ebdea22935f7b06fc8d496f",
+]);
+
+/**
+ * Minimum liquidity before an on-chain HOOD quote is believed.
+ *
+ * Anyone can deploy a token called HOOD and open a pool against it. A quote
+ * asset with real depth behind it is a different thing from a ticker squat, and
+ * lunch.fun's HOOD carries ~$340k, so this is far below anything genuine.
+ */
+const MIN_QUOTE_LIQUIDITY_USD = 20_000;
 
 /** Robinhood's own listing, however it is spelled or named. */
 function isRobinhoodStock(symbol: string | null | undefined, name: string | null | undefined): boolean {
@@ -96,6 +109,14 @@ function isRobinhoodStock(symbol: string | null | undefined, name: string | null
   // asset on Robinhood Chain carries.
   const company = (name ?? "").split("•")[0].trim().toLowerCase();
   return /\brobinhood\b/.test(company) && /\b(markets|financial|inc|corp)\b/.test(company);
+}
+
+/** The slice of a DexScreener pair this watcher reads. */
+interface DexPair {
+  chainId?: string;
+  baseToken?: { address?: string; symbol?: string; name?: string };
+  quoteToken?: { address?: string; symbol?: string; name?: string };
+  liquidity?: { usd?: number };
 }
 
 interface HoodHit {
@@ -273,6 +294,76 @@ async function collectHits(): Promise<SourceResult[]> {
           name: "Robinhood (Ondo wrapper)",
           address: addr,
           url: "https://pools.fun",
+          live: true,
+        });
+      }
+      return hits;
+    }),
+
+    // A catalog is not the only way a stock becomes launchable. lunch.fun lists
+    // its own tokenized HOOD (0x32aC8C1D…) that appears in NO catalog we poll —
+    // not Robinhood's registry, not Flap's, not o1's — and 13 tokens launched
+    // against it, two above $1.5M market cap, entirely unseen. Every
+    // catalog-based source above would have missed it indefinitely.
+    //
+    // So this asks the chain instead: is any HOOD-symbol token being USED as a
+    // quote? Being the quote side is the whole event — a memecoin called HOOD is
+    // a base token, a stock people launch against is a quote — and it costs one
+    // search request. A liquidity floor keeps a ticker squat from qualifying.
+    source("on-chain", ["Robinhood Chain"], async () => {
+      // Two stages, because one is not enough. DexScreener's search mostly
+      // returns BASE-side matches, so searching "HOOD" surfaces the token but
+      // not the pools that use it as a quote — searching alone found HOODon and
+      // missed lunch.fun's HOOD entirely. So: discover candidate addresses from
+      // either side of the search, then ask each one directly whether anything
+      // is paired AGAINST it.
+      const res = await fetch("https://api.dexscreener.com/latest/dex/search?q=HOOD", {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!res.ok) throw new Error(`dexscreener search ${res.status}`);
+      const j = (await res.json()) as { pairs?: DexPair[] };
+
+      const candidates = new Map<string, { symbol: string; name: string }>();
+      for (const p of j.pairs ?? []) {
+        if (p?.chainId !== "robinhood") continue;
+        for (const side of [p.baseToken, p.quoteToken]) {
+          const addr = String(side?.address ?? "").toLowerCase();
+          if (!addr || candidates.has(addr)) continue;
+          if (!isRobinhoodStock(side?.symbol, side?.name)) continue;
+          candidates.set(addr, { symbol: side?.symbol ?? "HOOD", name: side?.name ?? "Robinhood" });
+        }
+      }
+
+      const hits: HoodHit[] = [];
+      for (const [addr, meta] of candidates) {
+        const r = await fetch(`https://api.dexscreener.com/token-pairs/v1/robinhood/${addr}`, {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(20_000),
+        });
+        if (!r.ok) continue;
+        const raw = (await r.json()) as DexPair[] | { pairs?: DexPair[] };
+        const pairs = Array.isArray(raw) ? raw : (raw?.pairs ?? []);
+
+        // Used AS a quote is the event: a memecoin called HOOD is a base token,
+        // a stock people launch against is a quote.
+        const asQuote = pairs.filter((p) => String(p.quoteToken?.address ?? "").toLowerCase() === addr);
+        if (asQuote.length === 0) continue;
+        const depth = Math.max(
+          0,
+          ...pairs
+            .filter((p) => String(p.baseToken?.address ?? "").toLowerCase() === addr)
+            .map((p) => Number(p.liquidity?.usd ?? 0) || 0)
+        );
+        if (depth < MIN_QUOTE_LIQUIDITY_USD) continue;
+
+        hits.push({
+          source: "on-chain (Robinhood Chain)",
+          chain: "Robinhood Chain",
+          symbol: meta.symbol,
+          name: meta.name,
+          address: addr,
+          url: null,
           live: true,
         });
       }

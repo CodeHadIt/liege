@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-08-28 (HOOD watch, Robinhood-only; Platinum mutes)
+**Last updated:** 2026-09-03 (lunch.fun launchpad; on-chain HOOD source)
 
 ---
 
@@ -604,7 +604,7 @@ here.
 | Code | [`long-alerts.ts`](../../src/lib/telegram/long-alerts.ts), [`api/long-onchain.ts`](../../src/lib/api/long-onchain.ts), [`api/robinhood-stocks.ts`](../../src/lib/api/robinhood-stocks.ts) |
 | Explorer | `https://robinhoodchain.blockscout.com` |
 
-### Two independent quote sources
+### Three quote sources
 
 1. **Robinhood's official asset registry** — `https://api.robinhood.com/rhj/assets`,
    filtered to assets with a chain-4663 deployment. This is what Long draws its
@@ -612,9 +612,53 @@ here.
 2. **Flap's Robinhood-chain catalog** — read from Flap's app bundle (§6). **Not**
    a subset of the registry: it carries third-party issues such as `HOODon`, so
    it is a genuinely additional source of "a new stock is tradable".
+3. **Pins** — assets watched permanently regardless of catalog. This is the only
+   route for a stock that appears in *no* catalog, which is exactly how
+   lunch.fun's HOOD was missed (below).
 
-Both feed the same on-chain first-token watcher, and stocks from both are
+All feed the same on-chain first-token watcher, and stocks from all three are
 union'd into the set used to ignore stock↔stock pools.
+
+### Launchpads on this chain
+
+Launches are attributed by `resolveLaunchpad` (router → token factory → token
+name → hook → generic).
+
+| Launchpad | Signal | Address |
+|---|---|---|
+| Long | router | `0x22e99278308b393ea1260859b181ad7e78f5eeed` (LongLauncher) |
+| Flap | router | `0x26605f322f7ff986f381bb9a6e3f5dab0beaeb09` (portal proxy) |
+| Pons | token factory | `0x3711cea4feade896c913c68f01eda97cb06d1a42` |
+| pools.trade | zero hook | — |
+| **lunch.fun** | **router + hook** | **`0x6fda94aceedc5a97171469a8873d00fb9983bb8c`**, hook `0x4eb1976978756bd56802d8162f2271844924e0cc` |
+
+#### lunch.fun
+
+Added 2026-09-03, after **13 launches against its HOOD quote went unreported**
+between 2026-08-26 and 2026-09-03 — including SWOLE ($1.5M market cap) and
+FORESKIN ($2.3M).
+
+The failure was not detection. The on-chain watcher saw every one of those pools;
+it discarded them because it only alerts on launches against a **watched** stock,
+and lunch.fun's HOOD is in neither the registry nor Flap's catalog. It is a
+separate issuance of tokenized Robinhood stock:
+
+| | |
+|---|---|
+| Address | `0x32aC8C1D7672667D5EbdEa22935F7B06fC8D496f` |
+| Symbol / decimals | `HOOD` / 18 |
+| Price | ~$125 vs USDG — tracks the real Robinhood share, so it is the equity, not a ticker squat |
+| Liquidity | ~$340k |
+
+It is now **pinned**, so every launch against it is reported, uncapped and
+without a window.
+
+**lunch.fun cannot be polled.** Every page redirects to `/unavailable.html`
+(geo-block) and `api.lunch.fun` answers 404 on every path tried. Its router was
+found on-chain instead, by tracing the pools created against that HOOD quote.
+Both its router and its hook are mapped: the hook arrives free in the `Initialize`
+log data, whereas the router costs a Blockscout request that can answer 403, so
+attribution survives the explorer being unavailable.
 
 ### First-token detection — on-chain
 
@@ -1287,6 +1331,7 @@ Four are active; the rest are switched off by `WATCHED_CHAINS` above.
 | Robinhood asset registry | Robinhood | Upstream source of truth; Long's picker derives from it, so a listing here unlocks every registry-driven launchpad at once |
 | Flap payment tokens | Robinhood **+ BNB** | Flap runs the same launchpad on both against different catalogs, so both are checked. `coming-soon` entries included, reported as *listed, not yet selectable* |
 | pools.fun allowlist | Robinhood | On-chain allowlist, so probed **by address** rather than listed |
+| **on-chain** | Robinhood | **Not a catalog** — asks the chain which HOOD-symbol tokens are actually being used as a quote. See below |
 | StonkFun quotes | Solana | |
 | Sunrise tokens | Solana | |
 | Pump.fun whitelisted quotes | Solana | Mints resolved to symbols individually |
@@ -1297,6 +1342,25 @@ Four are active; the rest are switched off by `WATCHED_CHAINS` above.
 **Pons is absent by necessity** — it publishes no readable catalog (no API, and
 the site geo-blocks). It is covered indirectly: once HOOD is pinned, the on-chain
 launch watcher reports launches against it whoever created them, Pons included.
+
+#### Why there is an on-chain source
+
+A catalog is not the only way a stock becomes launchable, and assuming it was
+cost 13 launches. lunch.fun lists its own tokenized HOOD that appears in **no**
+catalog this watch polls — not Robinhood's registry, not Flap's, not o1's — and
+tokens launched against it for over a week unseen (§5).
+
+So one source asks the chain instead: *is any HOOD-symbol token being used as a
+quote?* Being the quote side is the entire signal — a memecoin called HOOD is a
+base token; a stock people launch against is a quote.
+
+It runs in two stages, because one does not work. DexScreener's search returns
+mostly BASE-side matches, so searching `HOOD` surfaces the token but not the
+pools quoting against it — search alone found HOODon and **missed lunch.fun's
+HOOD entirely**. The source therefore discovers candidate addresses from either
+side of the search, then asks each one directly what is paired against it. A
+`$20k` liquidity floor keeps a ticker squat from qualifying; lunch.fun's carries
+~$340k.
 
 Sources are independent, and the outcome of each is **reported rather than
 swallowed**: "no listing anywhere" and "every catalog is down" both produce an

@@ -12,6 +12,7 @@ import {
   getTokenMeta,
   resolveLaunchpad,
   ZERO_ADDRESS,
+  LUNCHFUN_HOOD,
   type Launchpad,
 } from "@/lib/api/long-onchain";
 import {
@@ -153,6 +154,15 @@ const PINNED_RH_STOCKS = new Map<string, string>([
   // Ondo's tokenized Robinhood stock on Flap. Added 2026-08-24 after its
   // catalog entry was swallowed by a redeploy.
   ["0xfb5b5778d45ae47f15323fb59b666c655174a79c", "HOODon"],
+  // lunch.fun's tokenized Robinhood stock. Added 2026-09-03.
+  //
+  // A pin is the only thing that makes this work: the watcher alerts on launches
+  // against WATCHED stocks, and that set is built from Robinhood's asset registry
+  // plus Flap's catalog. This HOOD is in neither — it is a separate issuance and
+  // the registry has no HOOD at all — so every launch against it was invisible,
+  // including SWOLE ($1.5M mc) and FORESKIN ($2.3M mc). 13 launches were missed
+  // between 2026-08-26 and 2026-09-03 for exactly this reason.
+  [LUNCHFUN_HOOD, "HOOD (lunch.fun)"],
 ]);
 
 /**

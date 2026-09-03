@@ -139,7 +139,31 @@ const HOOK_PLATFORMS: Record<string, Launchpad> = {
   [ZERO_ADDRESS]: { name: "Uniswap V4 (pools.trade)", url: "https://pools.trade/", via: false },
   "0x4e3468951d49f2eea976ed0d6e75ffcb44a9a544": { name: "Doppler", url: null, via: true }, // Long/others build on this
   "0x745d717620052a97a22deee2e5eba59583f3e0cc": { name: "Klik", url: null, via: true },
+  // lunch.fun's hook. Worth having even though its router is mapped below: the
+  // hook arrives free in the Initialize log data, whereas the router costs a
+  // Blockscout request that can (and does) answer 403. This keeps lunch.fun
+  // attributable when the explorer is unavailable.
+  "0x4eb1976978756bd56802d8162f2271844924e0cc": { name: "lunch.fun", url: "https://lunch.fun/", via: false },
 };
+
+/**
+ * lunch.fun's launch router on Robinhood Chain.
+ *
+ * Every pool created against its tokenized-HOOD quote traces back to this
+ * address. Exported because the stock watcher pins that quote and wants to name
+ * the platform without duplicating the constant.
+ */
+export const LUNCHFUN_ROUTER = "0x6fda94aceedc5a97171469a8873d00fb9983bb8c";
+
+/**
+ * lunch.fun's tokenized Robinhood stock — the quote its launches price against.
+ *
+ * NOT the Robinhood asset registry's: the registry has no HOOD at all. This is a
+ * separate issuance, and it is genuinely the equity rather than a memecoin
+ * borrowing the ticker — it trades at ~$125 against USDG with ~$340k liquidity,
+ * tracking the real Robinhood share price.
+ */
+export const LUNCHFUN_HOOD = "0x32ac8c1d7672667d5ebdea22935f7b06fc8d496f";
 
 // Known branded router contract addresses (lowercase) → frontend.
 const ROUTER_PLATFORMS: Record<string, Launchpad> = {
@@ -148,6 +172,11 @@ const ROUTER_PLATFORMS: Record<string, Launchpad> = {
   // TransparentUpgradeableProxy, so its verified name reveals nothing about
   // Flap — only this address identifies it.
   [FLAP_PORTALS[FLAP_ROBINHOOD_CHAIN_ID]]: { name: "Flap", url: "https://flap.sh/launch?chain=robinhood&lang=en", via: false },
+  // lunch.fun. Identified on-chain, not from its site: lunch.fun geo-blocks
+  // (every page redirects to /unavailable.html) and api.lunch.fun answers 404 to
+  // every path, so the router was found by tracing the pools created against its
+  // HOOD quote. See LUNCHFUN_ROUTER below.
+  [LUNCHFUN_ROUTER]: { name: "lunch.fun", url: "https://lunch.fun/", via: false },
 };
 
 // Some launchpads (e.g. Pons) create plain no-hook Uniswap V4 pools via the
