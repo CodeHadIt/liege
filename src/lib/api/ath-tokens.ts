@@ -48,18 +48,37 @@ export async function isContractAddress(address: string): Promise<boolean> {
   const cached = contractCache.get(addr);
   if (cached !== undefined) return cached;
 
-  await rateLimit("robinscan");
+  // Read bytecode over JSON-RPC, not Blockscout.
+  //
+  // This used the explorer, which now answers a Cloudflare challenge — and the
+  // failure path returned FALSE, i.e. "not a contract". So every contract looked
+  // like a wallet and became eligible for promotion. That is not hypothetical:
+  // the Doppler V4 hook (0x4e3468…, 25KB of bytecode) is in alpha_wallets as
+  // RH_statics_sock_76k, promoted by the daily scan. Hooks hold token balances,
+  // so they surface as top traders on every pool they serve.
+  //
+  // On failure this now returns null-ish behaviour via `unknown`: the caller
+  // gets `false` only when the chain positively says there is no code.
+  await rateLimit("rhrpc");
   try {
-    const res = await fetch(`${RH_EXPLORER}/api/v2/addresses/${addr}`, {
-      headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+    const res = await fetch("https://rpc.mainnet.chain.robinhood.com", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getCode", params: [addr, "latest"] }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return false;
     const d = await res.json();
-    const isContract = d?.is_contract === true;
+    const code = typeof d?.result === "string" ? d.result : null;
+    if (code === null) {
+      console.error(`[ath] eth_getCode gave no result for ${addr} — treating as wallet`);
+      return false;
+    }
+    const isContract = code !== "0x" && code.length > 2;
     contractCache.set(addr, isContract);
     return isContract;
-  } catch {
+  } catch (err) {
+    console.error(`[ath] contract check failed for ${addr}: ${(err as Error).message}`);
     return false; // unknown -> treat as a wallet, and say so where it matters
   }
 }
