@@ -13,27 +13,60 @@ export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 const UA = "Mozilla/5.0";
 
+/**
+ * Robinhood Chain JSON-RPC.
+ *
+ * The block number and log reads below used Blockscout, which now answers a
+ * Cloudflare interstitial ("Just a moment…") to server-side callers. That took
+ * the ENTIRE on-chain launch watcher down silently — getLatestBlock returned
+ * null every pass, so the poller returned early and reported nothing, for Long,
+ * Flap, Pons and lunch.fun alike. The health watchdog is what surfaced it.
+ *
+ * The RPC serves both reads directly and is not challenged, so the two calls
+ * that must never fail no longer depend on the explorer. The remaining
+ * Blockscout uses are enrichment (token names, contract names) where a null
+ * degrades a label rather than stopping detection.
+ */
+const RH_RPC = "https://rpc.mainnet.chain.robinhood.com";
+
+async function rpcCall<T>(method: string, params: unknown[]): Promise<T | null> {
+  await rateLimit("rhrpc");
+  try {
+    const res = await fetch(RH_RPC, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "User-Agent": UA,
+        Origin: "https://pools.trade",
+        Referer: "https://pools.trade/",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) return null;
+    const j = await res.json();
+    if (j?.error) {
+      console.error(`[long-onchain] rpc ${method}: ${JSON.stringify(j.error).slice(0, 140)}`);
+      return null;
+    }
+    return (j?.result ?? null) as T | null;
+  } catch (err) {
+    console.error(`[long-onchain] rpc ${method} failed: ${(err as Error).message}`);
+    return null;
+  }
+}
+
 function topicToAddress(topic: string): string {
   return ("0x" + topic.slice(-40)).toLowerCase();
 }
 
-/** Latest block number on Robinhood Chain (via Blockscout), or null on failure. */
+/** Latest block number on Robinhood Chain, or null on failure. */
 export async function getLatestBlock(): Promise<number | null> {
-  await rateLimit("robinscan");
-  try {
-    const res = await fetch(`${RH_EXPLORER}/api?module=block&action=eth_block_number`, {
-      headers: { Accept: "application/json", "User-Agent": UA },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const hex = data?.result;
-    if (typeof hex !== "string") return null;
-    const n = parseInt(hex, 16);
-    return Number.isFinite(n) ? n : null;
-  } catch {
-    return null;
-  }
+  const hex = await rpcCall<string>("eth_blockNumber", []);
+  if (typeof hex !== "string") return null;
+  const n = parseInt(hex, 16);
+  return Number.isFinite(n) ? n : null;
 }
 
 export interface InitializeEvent {
@@ -46,47 +79,49 @@ export interface InitializeEvent {
 }
 
 /**
- * Read PoolManager `Initialize` events in a block range via Blockscout getLogs.
- * Ranges are small under normal polling; the caller caps the span.
+ * Read PoolManager `Initialize` events in a block range, over JSON-RPC.
+ *
+ * Was Blockscout's getLogs; that endpoint is now behind a Cloudflare challenge
+ * and returned an HTML interstitial, which parsed to zero logs. Detection went
+ * silent with no error — every pass reported "no launches" while pools were
+ * being created. The RPC answers the same query and is not challenged.
+ *
+ * Returns null on failure rather than [], so the caller can hold its cursor
+ * instead of advancing past a range it never actually read.
  */
 export async function getInitializeEvents(
   fromBlock: number,
   toBlock: number
-): Promise<InitializeEvent[]> {
-  await rateLimit("robinscan");
-  try {
-    const url =
-      `${RH_EXPLORER}/api?module=logs&action=getLogs` +
-      `&fromBlock=${fromBlock}&toBlock=${toBlock}` +
-      `&address=${POOL_MANAGER}&topic0=${INITIALIZE_TOPIC0}`;
-    const res = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": UA },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    const logs: Array<{ topics?: string[]; data?: string; blockNumber?: string; transactionHash?: string }> =
-      Array.isArray(data?.result) ? data.result : [];
+): Promise<InitializeEvent[] | null> {
+  const logs = await rpcCall<Array<{ topics?: string[]; data?: string; blockNumber?: string; transactionHash?: string }>>(
+    "eth_getLogs",
+    [
+      {
+        address: POOL_MANAGER,
+        fromBlock: "0x" + fromBlock.toString(16),
+        toBlock: "0x" + toBlock.toString(16),
+        topics: [INITIALIZE_TOPIC0],
+      },
+    ]
+  );
+  if (!Array.isArray(logs)) return null;
 
-    const out: InitializeEvent[] = [];
-    for (const lg of logs) {
-      const topics = lg.topics ?? [];
-      if (topics.length < 4) continue;
-      const body = (lg.data ?? "").replace(/^0x/, "");
-      // data words: fee, tickSpacing, hooks, sqrtPriceX96, tick — hooks is word[2]
-      const hooks = body.length >= 192 ? ("0x" + body.slice(128, 192).slice(-40)).toLowerCase() : ZERO_ADDRESS;
-      out.push({
-        blockNumber: parseInt(lg.blockNumber ?? "0x0", 16) || 0,
-        currency0: topicToAddress(topics[2]),
-        currency1: topicToAddress(topics[3]),
-        hooks,
-        txHash: lg.transactionHash ?? "",
-      });
-    }
-    return out.sort((a, b) => a.blockNumber - b.blockNumber);
-  } catch {
-    return [];
+  const out: InitializeEvent[] = [];
+  for (const lg of logs) {
+    const topics = lg.topics ?? [];
+    if (topics.length < 4) continue;
+    const body = (lg.data ?? "").replace(/^0x/, "");
+    // data words: fee, tickSpacing, hooks, sqrtPriceX96, tick — hooks is word[2]
+    const hooks = body.length >= 192 ? ("0x" + body.slice(128, 192).slice(-40)).toLowerCase() : ZERO_ADDRESS;
+    out.push({
+      blockNumber: parseInt(lg.blockNumber ?? "0x0", 16) || 0,
+      currency0: topicToAddress(topics[2]),
+      currency1: topicToAddress(topics[3]),
+      hooks,
+      txHash: lg.transactionHash ?? "",
+    });
   }
+  return out.sort((a, b) => a.blockNumber - b.blockNumber);
 }
 
 export interface OnchainTokenMeta {

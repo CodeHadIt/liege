@@ -23,6 +23,7 @@ export async function register() {
     const { pollO1Quotes, pollO1Launches } = await import("@/lib/telegram/o1-alerts");
     const { pollBasestonk } = await import("@/lib/telegram/basestonk-alerts");
     const { pollHoodWatch } = await import("@/lib/telegram/hood-watch");
+    const { pollFeedHealth } = await import("@/lib/telegram/health-alerts");
 
     // Tier configuration, reported once at boot.
     //
@@ -366,6 +367,22 @@ export async function register() {
         console.error("[instrumentation] basestonk poll error:", err)
       );
     }, 30_000);
+
+    // Monitoring health. Probes every upstream from inside production, because
+    // that is the only vantage point that matters — StonkFun answered a developer
+    // machine perfectly throughout the two days it was dark to the server.
+    //
+    // 10 minutes: an outage matters in hours, not seconds, and probing harder
+    // would add load to the very sources being checked.
+    console.log("[instrumentation] Starting monitoring-health watchdog (every 10m)");
+    pollFeedHealth().catch((err: unknown) =>
+      console.error("[instrumentation] Initial health poll error:", err)
+    );
+    setInterval(() => {
+      pollFeedHealth().catch((err: unknown) =>
+        console.error("[instrumentation] Health poll error:", err)
+      );
+    }, 600_000);
 
     // Solana alpha wallets — hand-picked wallets watched for deploys and buys.
     // One Helius request per wallet per pass, so cost tracks the watchlist

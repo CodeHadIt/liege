@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-09-03 (lunch.fun launchpad; parked work recorded)
+**Last updated:** 2026-09-06 (health watchdog; StonkFun + Blockscout outages fixed)
 
 ---
 
@@ -129,6 +129,7 @@ never call `alertRecipients()`, which exists solely as the bot's interaction gat
 | `ath.daily` — the $2M ATH digest and its promotion announcement | ✅ | — | 🔇 |
 | `deployer` — alpha deployer launches (§13) | ✅ | — | |
 | `alpha.solana` — Solana alpha wallet deploys and buys (§11b) | ✅ | — | |
+| `health` — an upstream source has stopped answering (§16) | ✅ | — | |
 
 #### Platinum mutes — entitlement vs delivery
 
@@ -1809,6 +1810,68 @@ and the deploy transactions here carry zero token transfers.
 - **Deployer resolution is not unified.** The daily scan still resolves creators
   via Blockscout while the backfill uses GMGN. Both are needed — GMGN has no
   creator for tokenized stocks — but the split is incidental rather than designed.
+
+---
+
+## 16. Monitoring the monitors
+
+| | |
+|---|---|
+| Code | [`health-alerts.ts`](../../src/lib/telegram/health-alerts.ts), [`api/feed-health.ts`](../../src/lib/api/feed-health.ts) |
+| Migration | `supabase/migrations/add_feed_health.sql` |
+| Poll | 10 min |
+| Feature | `health` — Platinum, **never muted by default** |
+| Check by hand | `npx tsx scripts/check-feed-health.ts` |
+
+### Why it exists
+
+Both StonkFun feeds stopped answering production on **2026-09-03** and it went
+unnoticed until **09-05**. Nothing in our code was broken — the API simply
+stopped responding — and because a failed fetch returned `[]`, it was
+indistinguishable from "StonkFun added nothing". Two days of new base pairs
+(TAO, FIGUREAI, AMC) passed unreported.
+
+The same sweep immediately found a **second** silent outage: Robinhood's
+Blockscout had gone behind a Cloudflare challenge, so `getLatestBlock` and
+`getInitializeEvents` returned nothing and the entire Robinhood-chain launch
+watcher — Long, Flap, Pons, lunch.fun — had been reporting no launches at all.
+
+### Two design decisions
+
+**It probes the source, not the feed's output.** "No new stocks this week" is
+healthy; the Robinhood registry legitimately goes a fortnight without a listing.
+Alerting on result-staleness would cry wolf constantly, and a watchdog that cries
+wolf gets muted — which is worse than not having one.
+
+**It runs the real fetchers from inside production**, because that is the only
+vantage point that matters. Throughout the StonkFun outage both endpoints
+answered a developer machine perfectly.
+
+### What is probed
+
+| Source | Chain |
+|---|---|
+| `stonkfun.quotes`, `stonkfun.launches` | Solana |
+| `pumpfun.quotes`, `sunrise.tokens` | Solana |
+| `robinhood.registry`, `robinhood.rpc`, `poolsfun.rpc` | Robinhood Chain |
+| `flap.catalog` | Robinhood + BNB |
+| `fourmeme.quotes` | BNB Chain |
+| `basestonk.launches` | Base |
+| `o1.base`, `o1.rh` | Base / Robinhood (skipped without `O1_API_KEY`) |
+
+### Avoiding false alarms
+
+`FAILURES_BEFORE_DOWN = 3` — roughly 30 minutes of genuine unavailability at a
+10-minute cadence. Not 1: these are public endpoints that occasionally time out,
+and a jumpy watchdog gets ignored.
+
+Probes also carry a **per-probe timeout**. o1 honours `Retry-After` with up to
+3 × 30s waits, so the default 60s timeout marked it down every time it was merely
+throttled. Its probes allow 150s.
+
+A source is announced down **once**, and recovery is announced once — the
+recovery message states plainly that anything listed during the outage was not
+alerted, because it wasn't.
 
 ---
 

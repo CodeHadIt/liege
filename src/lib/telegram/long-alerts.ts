@@ -304,6 +304,14 @@ export async function pollLongOnchainCreations(): Promise<void> {
 
   const from = Math.max(lastScannedBlock + 1, latest - MAX_BLOCK_SPAN);
   const events = await getInitializeEvents(from, latest);
+  // Hold the cursor when the read FAILED. It used to advance unconditionally, so
+  // a failed range was skipped permanently — and since the old Blockscout reader
+  // returned [] on a Cloudflare challenge rather than an error, every pass
+  // advanced past blocks it had never actually read.
+  if (events === null) {
+    console.error(`[long] Initialize read failed for ${from}-${latest} — holding cursor at ${lastScannedBlock}`);
+    return;
+  }
   lastScannedBlock = latest;
   if (events.length === 0) return;
 
@@ -502,6 +510,7 @@ export async function sendOnchainFirstTokenTest(
   const stockSet = new Set(stocks.map((s) => s.contractAddress.toLowerCase()));
 
   const events = await getInitializeEvents(fromBlock, toBlock);
+  if (events === null) return false;
   for (const ev of events) {
     const isStock = ev.currency0 === stockAddr || ev.currency1 === stockAddr;
     if (!isStock) continue;

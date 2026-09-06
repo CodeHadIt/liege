@@ -13,6 +13,7 @@ import { fetchRecentCreations, fetchQuoteTokens, STONKFUN_DEPLOYER } from "../sr
 
 async function main() {
   const quotes = await fetchQuoteTokens();
+  if (!quotes) throw new Error('stonkfun quote catalog unavailable');
   const quoteByMint = new Map(quotes.map((q) => [q.quoteMint, q]));
   console.log(`known quote tokens: ${quotes.length}`);
 

@@ -9,6 +9,26 @@ const STANDARD_SUPPLY = 1_000_000_000;
 
 export const STONKFUN_BASE = "https://www.stonkfun.xyz";
 
+/**
+ * A realistic browser user-agent.
+ *
+ * Every request here used a bare "Mozilla/5.0". Both StonkFun feeds stopped
+ * returning data on 2026-09-03 while every other source kept working, which is
+ * the signature of bot filtering rather than an outage. The modules that stayed
+ * up (Flap, Robinhood) all send a full UA string, so this matches them.
+ */
+const UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
+
+const BROWSER_HEADERS = {
+  Accept: "application/json, text/plain, */*",
+  "Accept-Language": "en-US,en;q=0.9",
+  "User-Agent": UA,
+  Referer: `${STONKFUN_BASE}/`,
+  Origin: STONKFUN_BASE,
+};
+
 /** A quote token = an asset you can pair a new StonkFun launch against. */
 export interface QuoteToken {
   quoteMint: string;
@@ -23,14 +43,17 @@ export interface QuoteToken {
  * Fetch the current list of quote tokens available on the StonkFun launch page.
  * Backed by the site's own public JSON API (no scraping needed).
  */
-export async function fetchQuoteTokens(): Promise<QuoteToken[]> {
+export async function fetchQuoteTokens(): Promise<QuoteToken[] | null> {
   await rateLimit("stonkfun");
   try {
     const res = await fetch(`${STONKFUN_BASE}/api/quote-tokens`, {
-      headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+      headers: BROWSER_HEADERS,
       signal: AbortSignal.timeout(15_000),
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.error(`[stonkfun] quote-tokens ${res.status} — quote feed is BLIND this pass`);
+      return null;
+    }
     const data = await res.json();
     const list: unknown[] = Array.isArray(data?.quoteTokens) ? data.quoteTokens : [];
     return list
@@ -48,8 +71,11 @@ export async function fetchQuoteTokens(): Promise<QuoteToken[]> {
         };
       })
       .filter((q) => q.quoteMint.length > 0);
-  } catch {
-    return [];
+  } catch (err) {
+    // null, not []. An unreachable API and an empty catalog are different facts,
+    // and conflating them is why a two-day outage looked like "nothing new".
+    console.error(`[stonkfun] quote-tokens failed: ${(err as Error).message}`);
+    return null;
   }
 }
 
@@ -151,7 +177,7 @@ export async function fetchStonkFunLaunches(
 
     try {
       const res = await fetch(url, {
-        headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+        headers: BROWSER_HEADERS,
         signal: AbortSignal.timeout(15_000),
       });
       if (!res.ok) return null;
@@ -481,7 +507,7 @@ export async function fetchStonkFunInternalLaunches(): Promise<StonkFunAirdropLa
   await rateLimit("stonkfun");
   try {
     const res = await fetch(`${STONKFUN_BASE}/api/launches`, {
-      headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+      headers: BROWSER_HEADERS,
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return null;
@@ -525,7 +551,7 @@ export async function fetchStonkFunAirdrop(mint: string): Promise<StonkFunAirdro
   await rateLimit("stonkfun");
   try {
     const res = await fetch(`${STONKFUN_BASE}/api/public/v1/tokens/${mint}/airdrop`, {
-      headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+      headers: BROWSER_HEADERS,
       signal: AbortSignal.timeout(12_000),
     });
     if (!res.ok) return null;

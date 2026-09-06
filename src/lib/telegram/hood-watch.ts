@@ -373,6 +373,9 @@ async function collectHits(): Promise<SourceResult[]> {
     // ── Solana ─────────────────────────────────────────────────────────────
     source("stonkfun", ["Solana"], async () => {
       const quotes = await fetchQuoteTokens();
+      // Throw rather than return []: `source()` records the failure, and the
+      // sweep reports it instead of concluding StonkFun has no Robinhood listing.
+      if (quotes === null) throw new Error("stonkfun quote catalog unavailable");
       return quotes
         .filter((q) => isRobinhoodStock(q.symbol, q.name))
         .map((q) => ({

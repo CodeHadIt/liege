@@ -385,6 +385,13 @@ async function sendQuoteAlert(chatId: string, q: QuoteToken): Promise<void> {
  */
 export async function pollStonkFunQuoteTokens(): Promise<void> {
   const quotes = await fetchQuoteTokens();
+  // null = the catalog could not be read. Distinct from an empty catalog, and
+  // the distinction is the whole point: this feed was blind from 2026-09-03 to
+  // 09-05 and looked exactly like "StonkFun added nothing".
+  if (quotes === null) {
+    console.error("[stonkfun] quote catalog unavailable — holding, NOT treating as empty");
+    return;
+  }
   if (quotes.length === 0) return;
 
   const state = await resolveSeen(FEED.STONKFUN_QUOTES, seenQuotes);
@@ -425,7 +432,7 @@ export async function pollStonkFunQuoteTokens(): Promise<void> {
 /** Manual test: send the newest existing quote token so the format can be verified. */
 export async function sendQuoteTokenTestPing(chatId: string): Promise<boolean> {
   const quotes = await fetchQuoteTokens();
-  if (quotes.length === 0) return false;
+  if (!quotes || quotes.length === 0) return false;
   await sendQuoteAlert(chatId, quotes[0]);
   return true;
 }
@@ -762,7 +769,7 @@ async function enrichLaunch(l: StonkFunLaunch): Promise<StonkFunTokenDetails> {
  */
 export async function sendStonkFunFirstTokenTestPing(chatId: string, symbol?: string): Promise<boolean> {
   const [launches, quotes] = await Promise.all([fetchStonkFunLaunches(), fetchQuoteTokens()]);
-  if (!launches) return false;
+  if (!launches || !quotes) return false;
   for (const l of launches) {
     const quote = quotes.find((q) => q.quoteMint === l.quoteMint);
     if (!quote) continue;

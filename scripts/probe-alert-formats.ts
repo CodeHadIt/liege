@@ -50,6 +50,7 @@ async function main() {
   );
 
   const quotes = await fetchQuoteTokens();
+  if (!quotes) throw new Error('stonkfun quote catalog unavailable');
   hr("STONKFUN · Solana — new quote token (stock)");
   const stockQuote = quotes.find((x) => x.category === "xstock") ?? quotes[0];
   console.log(formatQuoteTokenAlert(stockQuote));

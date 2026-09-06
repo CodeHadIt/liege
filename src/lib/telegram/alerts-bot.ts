@@ -51,6 +51,14 @@ export const FEATURE = {
    * shared. Move to ["platinum","gold"] below to open it up.
    */
   ALPHA_SOLANA: "alpha.solana",
+  /**
+   * Monitoring health: an upstream source has stopped answering.
+   *
+   * Deliberately NOT in the default mute set. It is the alert that tells you the
+   * other alerts have stopped, so silencing it would recreate the two-day
+   * StonkFun outage it exists to prevent.
+   */
+  HEALTH: "health",
 } as const;
 
 export type Feature = (typeof FEATURE)[keyof typeof FEATURE];
@@ -69,6 +77,7 @@ const FEATURE_TIERS: Record<Feature, readonly Tier[]> = {
   [FEATURE.ATH_DAILY]: ["platinum"],
   [FEATURE.DEPLOYER]: ["platinum"],
   [FEATURE.ALPHA_SOLANA]: ["platinum"],
+  [FEATURE.HEALTH]: ["platinum"],
 };
 
 /**
