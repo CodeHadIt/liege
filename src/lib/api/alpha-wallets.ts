@@ -131,15 +131,27 @@ export async function upsertAlphaWallets(wallets: AlphaWallet[]): Promise<number
 
 /** Active alpha wallets for a chain, as a lowercase address → wallet map. */
 export async function loadAlphaWallets(chain: string): Promise<Map<string, AlphaWallet & { id: string }>> {
-  const { data, error } = await supabase
-    .from("alpha_wallets")
-    .select("*")
-    .eq("chain", chain)
-    .eq("is_active", true);
-  if (error) throw new Error(`load alpha_wallets: ${error.message}`);
+  // Paged. Supabase caps a select at 1000 rows by default and says nothing about
+  // it, so this silently returned 1000 of 1029 active Robinhood wallets. That
+  // matters because the caller uses the result to decide whether a wallet is
+  // NEW: a truncated map makes tracked wallets look unseen, so they get
+  // re-promoted and re-announced as discoveries.
+  const rows: Record<string, unknown>[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("alpha_wallets")
+      .select("*")
+      .eq("chain", chain)
+      .eq("is_active", true)
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`load alpha_wallets: ${error.message}`);
+    rows.push(...((data ?? []) as Record<string, unknown>[]));
+    if ((data?.length ?? 0) < PAGE) break;
+  }
 
   const out = new Map<string, AlphaWallet & { id: string }>();
-  for (const r of data ?? []) {
+  for (const r of rows as any[]) {
     out.set(String(r.address).toLowerCase(), {
       id: r.id,
       label: r.label,
