@@ -136,7 +136,15 @@ export async function loadAlphaWallets(chain: string): Promise<Map<string, Alpha
   // matters because the caller uses the result to decide whether a wallet is
   // NEW: a truncated map makes tracked wallets look unseen, so they get
   // re-promoted and re-announced as discoveries.
-  const rows: Record<string, unknown>[] = [];
+  type Row = {
+    id: string; label: string; address: string; chain: string;
+    token_count: number; tokens: string[] | null;
+    total_pnl_usd: number | null; total_invested_usd: number | null;
+    aggregate_roi_pct: number | null; best_rank: number | null;
+    max_tx_on_a_token: number | null; source: string | null;
+    is_active: boolean; added_at: string | null;
+  };
+  const rows: Row[] = [];
   const PAGE = 1000;
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await supabase
@@ -146,12 +154,12 @@ export async function loadAlphaWallets(chain: string): Promise<Map<string, Alpha
       .eq("is_active", true)
       .range(from, from + PAGE - 1);
     if (error) throw new Error(`load alpha_wallets: ${error.message}`);
-    rows.push(...((data ?? []) as Record<string, unknown>[]));
+    rows.push(...((data ?? []) as unknown as Row[]));
     if ((data?.length ?? 0) < PAGE) break;
   }
 
   const out = new Map<string, AlphaWallet & { id: string }>();
-  for (const r of rows as any[]) {
+  for (const r of rows) {
     out.set(String(r.address).toLowerCase(), {
       id: r.id,
       label: r.label,
