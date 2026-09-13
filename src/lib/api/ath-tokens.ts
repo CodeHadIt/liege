@@ -100,12 +100,36 @@ export async function isContractAddress(address: string): Promise<boolean> {
  * unicode character is a fragile thing to depend on.
  */
 export function isTokenizedStock(symbol: string | null, name: string | null): boolean {
-  const n = (name ?? "").toLowerCase();
-  if (n.includes("robinhood token")) return true;
-  // Other issuers' conventions seen on this chain and on BNB Chain's bStocks.
-  if (/\b(tokenized|xstock|backed by)\b/.test(n)) return true;
-  if (/•\s*(robinhood|ondo|backed)/i.test(name ?? "")) return true;
+  const raw = name ?? "";
+  const n = raw.toLowerCase();
   const s = (symbol ?? "").toUpperCase();
+
+  // The bullet is the giveaway. Issuers on this chain name their assets
+  // "<UNDERLYING> • <issuer> Token": "NVIDIA • Robinhood Token",
+  // "ANTHROPIC • Pre IPO Token". Matching the bullet followed by anything ending
+  // in "Token" catches every issuer at once, including ones not invented yet.
+  //
+  // This used to enumerate issuers (robinhood|ondo|backed), which let
+  // "ANTHROPIC • Pre IPO Token" and "OPENAI • Pre IPO Token" through as
+  // memecoins — they reached $42.5M and $31.5M in a $5M-runner study and had to
+  // be removed by hand. An enumerated list is the wrong shape for a naming
+  // CONVENTION: it fails silently every time a new issuer appears.
+  if (/•\s*[^•]*\btokens?\b/i.test(raw)) return true;
+
+  // Pre-IPO books are equities too — a claim on a private company, not a coin.
+  if (/\bpre[\s-]?ipo\b/i.test(n)) return true;
+
+  // Other issuers' conventions seen on this chain and on BNB Chain's bStocks.
+  if (/\b(tokenized|xstock|st0x|backed by)\b/.test(n)) return true;
+  if (n.includes("robinhood token")) return true;
+
+  // Wrapped equity wrappers: "Wrapped NVIDIA Corporation ST0x", wtNVDA.
+  if (/^wt[A-Z0-9]{1,6}$/.test(symbol ?? "")) return true;
+
+  // Coinbase tokenized-stock convention on Base: TICKERc at 8 decimals. Symbol
+  // alone is weak, so it is only trusted alongside an equity-shaped name.
+  if (/^[A-Z]{1,6}c$/.test(symbol ?? "") && /\b(inc|corp|corporation|plc|ltd|holdings|company)\b/i.test(n)) return true;
+
   return ["NVDA", "SPCX", "AAPL", "TSLA", "MSFT", "META", "GOOGL", "AMZN", "SPY", "QQQ", "GME", "HOOD", "PLTR"].includes(s);
 }
 
