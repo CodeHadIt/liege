@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-09-06 (health watchdog; StonkFun + Blockscout outages fixed)
+**Last updated:** 2026-09-30 (Platinum `/research` command added to the bot)
 
 ---
 
@@ -75,7 +75,7 @@ A separate, private bot from the main Liège command bot.
 |---|---|
 | Code | [`src/lib/telegram/alerts-bot.ts`](../../src/lib/telegram/alerts-bot.ts) |
 | Webhook | `POST /api/telegram/alerts` ([route](../../src/app/api/telegram/alerts/route.ts)) |
-| Commands | `/start`, `/help`, `/status`, `/id` |
+| Commands | `/start`, `/help`, `/status`, `/id`, and `/research` (Platinum only — see [research-command.md](../features/research-command.md)) |
 
 **Environment**
 
@@ -114,6 +114,16 @@ you get" that does not also imply "here is what you don't".
 be told where they stand and can find their own ID to send on. Every other update
 from a non-allow-listed chat is dropped **without a reply**.
 
+**`/research` is Platinum-only and hidden from everyone else.** Entitlement is
+answered by `isEntitled(FEATURE.RESEARCH, id)`, which reads the same
+`FEATURE_TIERS` table the feeds use — a command with its own gate is how two gates
+end up disagreeing. A Gold user who guesses it is answered `🚧 Coming soon.`, never
+"you are not entitled", and the command is registered per chat with
+`setMyCommands` + `BotCommandScopeChat` so it never appears in a Gold user's
+autocomplete. `/help` appends its line only for entitled chats; `/start` and
+`/status` were left untouched, for the reason stated above. Full behaviour:
+[docs/features/research-command.md](../features/research-command.md).
+
 ### Tiers
 
 Two tiers. Delivery goes through `broadcastAlert(feature, send)`, and
@@ -130,6 +140,7 @@ never call `alertRecipients()`, which exists solely as the bot's interaction gat
 | `deployer` — alpha deployer launches (§13) | ✅ | — | |
 | `alpha.solana` — Solana alpha wallet deploys and buys (§11b) | ✅ | — | |
 | `health` — an upstream source has stopped answering (§16) | ✅ | — | |
+| `research` — the `/research` command, not a feed | ✅ | — | |
 
 #### Platinum mutes — entitlement vs delivery
 

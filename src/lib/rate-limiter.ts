@@ -88,6 +88,13 @@ const API_RATE_LIMITS: Record<string, RateLimiterConfig> = {
   // spans the gap.
   pumpfun: { maxTokens: 10, refillRate: 0.5 },
   jupiter: { maxTokens: 30, refillRate: 0.5 },
+  // Public Ethereum mainnet RPCs, used by /research to read a contract's own
+  // state (supply, owner, bytecode selectors, proxy slot). One report is a
+  // handful of calls, and the client rotates endpoints on failure.
+  ethrpc: { maxTokens: 20, refillRate: 5 },
+  // GitHub's REST API. Unauthenticated it allows 60/hour per IP, so this is
+  // sized to keep a single report well inside it rather than to go fast.
+  github: { maxTokens: 10, refillRate: 0.2 },
   moralis: { maxTokens: 20, refillRate: 0.33 },
 };
 

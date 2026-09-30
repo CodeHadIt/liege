@@ -20,8 +20,24 @@ How the Liège Alerts bot's push feeds work, per chain.
 
 Deep dives on non-alert parts of the app.
 
+- [`/research` — on-demand protocol research (Platinum)](features/research-command.md)
+  — how the command resolves an address/URL/repo into a sourced report, and checks
+  a project's docs against its deployed bytecode
 - [Dex Orders — data flow](features/dex-orders-flow.md)
 - [Dune SQL — Pump.fun deploys](features/dune-query-all-deploys.md)
+
+## Research
+
+One-off investigations, kept because the derivation is the value.
+
+- [Send protocol — QUANT's QNT holder rewards](research/send-protocol-holder-rewards-quant.md)
+  — why a sender.family holder-reward market pays nothing until someone calls
+  `collect`, traced against a working market
+- [StonkFun — Airdrop Mode](research/stonkfun-airdrop-mode.md)
+- [StonkFun — H6qOWZ4 funding evidence](research/stonkfun-h6qowz4-funding-evidence.md)
+- [Robinhood Chain — $2M ATHs over 60 days](research/rh-ath-2m-60d.md)
+- [Robinhood Chain — $5M coins, two weeks](research/rh-5m-coins-two-weeks.md)
+- [Schiff ep. 746 — Shiba Inu and memecoins](research/schiff-ep746-shiba-inu-memecoins.md)
 
 ## Reference
 

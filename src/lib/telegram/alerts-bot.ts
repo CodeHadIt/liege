@@ -59,6 +59,14 @@ export const FEATURE = {
    * StonkFun outage it exists to prevent.
    */
   HEALTH: "health",
+  /**
+   * `/research` — on-demand protocol research. A pull command, not a feed.
+   *
+   * It lives in the FEATURE table anyway so that entitlement is answered in the
+   * same place as every push feed. A second gate with its own rules is how one of
+   * them ends up disagreeing with the other.
+   */
+  RESEARCH: "research",
 } as const;
 
 export type Feature = (typeof FEATURE)[keyof typeof FEATURE];
@@ -78,6 +86,7 @@ const FEATURE_TIERS: Record<Feature, readonly Tier[]> = {
   [FEATURE.DEPLOYER]: ["platinum"],
   [FEATURE.ALPHA_SOLANA]: ["platinum"],
   [FEATURE.HEALTH]: ["platinum"],
+  [FEATURE.RESEARCH]: ["platinum"],
 };
 
 /**
@@ -140,6 +149,24 @@ export function subscriberTiers(): Map<string, Tier> {
 export function tierOf(id: string | number | undefined): Tier | null {
   if (id == null) return null;
   return subscriberTiers().get(String(id)) ?? null;
+}
+
+/**
+ * May this chat use this feature?
+ *
+ * The question a COMMAND asks, where `recipientsFor` is the question a feed asks.
+ * Both read the same `FEATURE_TIERS` table, so a command cannot drift out of step
+ * with the feed of the same name — which is the whole point of the table.
+ */
+export function isEntitled(feature: Feature, id: string | number | undefined): boolean {
+  const tier = tierOf(id);
+  if (!tier) return false;
+  const tiers = FEATURE_TIERS[feature];
+  if (!tiers) {
+    console.error(`[alerts] unknown feature "${feature}" — refusing access`);
+    return false;
+  }
+  return tiers.includes(tier);
 }
 
 /** Chat IDs entitled to a given feature. The ONLY way a feed reaches a chat. */
@@ -279,14 +306,40 @@ export async function getAlertsBot(): Promise<Bot<Context>> {
     });
 
     bot.command("help", async (ctx) => {
+      const id = ctx.chat?.id ?? ctx.from?.id;
+      // Only the shared commands are listed by default. A Platinum chat sees its
+      // own extras appended — same rule as the chat-scoped command menu, and the
+      // reason /start and /status were deliberately left alone: a hard-coded list
+      // of everything the bot does is exactly what must not reach a Gold user.
+      const extra = isEntitled(FEATURE.RESEARCH, id)
+        ? `\n/research &lt;address | url&gt; — research a protocol`
+        : "";
       await ctx.reply(
         `<b>Liège Alerts</b> — private alert feed.\n\n` +
           `/start — check your access and begin receiving alerts\n` +
           `/status — whether you are allowed to use this bot\n` +
           `/id — show your Telegram ID\n` +
-          `/help — this message`,
+          `/help — this message` +
+          extra,
         { parse_mode: "HTML" }
       );
+    });
+
+    /**
+     * Platinum-only. A Gold user who guesses the command is told "coming soon"
+     * rather than "you are not entitled": the settled rule is that a Gold user
+     * must not be able to infer which features exist behind the tier line.
+     */
+    bot.command("research", async (ctx) => {
+      const id = ctx.chat?.id ?? ctx.from?.id;
+      if (!isEntitled(FEATURE.RESEARCH, id)) {
+        await ctx.reply("🚧 Coming soon.");
+        return;
+      }
+      const text = ctx.message?.text ?? "";
+      const args = text.replace(/^\/research(@[\w]+)?/i, "").trim();
+      const { handleResearch } = await import("./commands/research");
+      await handleResearch(ctx, args);
     });
 
     bot.command("id", async (ctx) => {
@@ -294,6 +347,32 @@ export async function getAlertsBot(): Promise<Bot<Context>> {
         parse_mode: "HTML",
       });
     });
+
+    // Command menus. The default scope is what a stranger and a Gold user see, so
+     // it lists nothing tier-specific. Platinum chats get their own chat-scoped
+    // menu, which is the one mechanism Telegram offers for a per-user command
+    // list — `setMyCommands` with a `BotCommandScopeChat`.
+    void (async () => {
+      const shared = [
+        { command: "start", description: "Check your access" },
+        { command: "status", description: "Whether you can use this bot" },
+        { command: "id", description: "Show your Telegram ID" },
+        { command: "help", description: "What this bot does" },
+      ];
+      try {
+        await bot.api.setMyCommands(shared);
+        for (const [chatId, tier] of subscriberTiers()) {
+          if (tier !== "platinum") continue;
+          await bot.api.setMyCommands([...shared, { command: "research", description: "Research a protocol" }], {
+            scope: { type: "chat", chat_id: Number(chatId) },
+          });
+        }
+      } catch (err) {
+        // A menu that failed to register costs autocomplete, not function: the
+        // command still works when typed. Never let it stop the bot booting.
+        console.warn("[alerts] setMyCommands failed:", err);
+      }
+    })();
 
     return bot;
   })();
