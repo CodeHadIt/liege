@@ -34,12 +34,17 @@ const USAGE =
   `<code>/research sender.family</code>\n` +
   `<code>/research https://sender.family/docs</code>\n` +
   `<code>/research github.com/uniswap/v4-core</code>\n\n` +
+  `You can pass more than one — an address plus its repo or docs, in any order:\n` +
+  `<code>/research FUuH1auf…fvR3 github.com/org/repo</code>\n\n` +
   `You get a TL;DR first, then the full report: mechanism, fees, supply, rewards, ` +
   `admin powers, security, the docs checked against the deployed code, and what could not be answered.`;
 
 export async function handleResearch(ctx: Context, rawArgs: string): Promise<void> {
   const chatId = String(ctx.chat?.id ?? ctx.from?.id ?? "");
-  const arg = rawArgs.trim().split(/\s+/)[0] ?? "";
+  // Every token, not just the first: people hand over a contract address AND the
+  // repo, or a site AND its docs. The pipeline takes the address as the subject
+  // and uses the rest as hints that skip a discovery step.
+  const arg = rawArgs.trim().replace(/\s+/g, " ");
 
   if (!arg) {
     await ctx.reply(USAGE, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });

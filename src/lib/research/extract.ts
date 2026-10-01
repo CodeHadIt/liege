@@ -41,6 +41,15 @@ export const TOPICS = {
   INTEGRATION: "integration",
   DEPENDENCIES: "dependencies",
   GUARANTEE: "guarantee",
+  // ── the project-with-token side ──────────────────────────────────────────
+  // A research repo or an app has no fee schedule, and asking it for one produces
+  // a report full of absences. These buckets are what its documentation actually
+  // answers.
+  PURPOSE: "purpose",
+  METHOD: "method",
+  FINDINGS: "findings",
+  USAGE: "usage",
+  STATUS: "status",
 } as const;
 
 export type Topic = (typeof TOPICS)[keyof typeof TOPICS];
@@ -187,6 +196,54 @@ const RULES: Rule[] = [
     headingHints: /depend|integrat|oracle|bridge|architecture/i,
   },
   {
+    topic: TOPICS.PURPOSE,
+    patterns: [
+      { re: /\b(aims? to|goal is|purpose|designed to|built to|intended to|exists to|makes? it possible)\b/i, w: 6 },
+      { re: /\bthis (project|repo|repository|tool|library|package)\b/i, w: 5 },
+      { re: /\b(measur|steer|generat|detect|classif|simulat|optimis|optimiz|analys|analyz)\w*\b/i, w: 3 },
+      { re: /\bresearch\b|\bexperiment(s|al)?\b|\bbenchmark\b/i, w: 3 },
+    ],
+    headingHints: /^(about|overview|introduction|what|purpose|motivation|why|summary|abstract)/i,
+  },
+  {
+    topic: TOPICS.METHOD,
+    patterns: [
+      { re: /\b(method|methodology|approach|pipeline|architecture|implementation)\b/i, w: 5 },
+      { re: /\b(model|layer|dataset|prompt|vector|embedding|probe|lens)\b/i, w: 3 },
+      { re: /\b(built (with|on)|written in|uses?|runs? on|powered by)\b/i, w: 4 },
+      { re: /\b(python|typescript|rust|go|solidity|pytorch|tensorflow|react|node)\b/i, w: 3 },
+    ],
+    headingHints: /method|approach|architecture|how|stack|design|models?|implementation/i,
+  },
+  {
+    topic: TOPICS.FINDINGS,
+    patterns: [
+      { re: /\b(finding|result|conclusion|we (found|show|observe)|confirms?|suggests?)\b/i, w: 6 },
+      { re: /\b(null|significant|monotone|correlat|baseline|control)\w*\b/i, w: 3 },
+      { re: /\b\d+(\.\d+)?\s?(%|x)\b/i, w: 2 },
+    ],
+    headingHints: /result|finding|conclusion|evaluation|experiment|exp\d/i,
+  },
+  {
+    topic: TOPICS.USAGE,
+    patterns: [
+      { re: /\b(install|usage|getting started|quick ?start|run (it|the)|to use)\b/i, w: 6 },
+      { re: /\b(requires?|dependenc(y|ies)|prerequisite)\b/i, w: 4 },
+      { re: /\b(cli|command|flag|environment variable|api key)\b/i, w: 3 },
+    ],
+    headingHints: /install|usage|getting started|quick|setup|run/i,
+  },
+  {
+    topic: TOPICS.STATUS,
+    patterns: [
+      { re: /\b(work in progress|wip|experimental|alpha|beta|unstable|prototype|early)\b/i, w: 6 },
+      { re: /\b(roadmap|planned|next steps?|todo|not yet (implemented|supported))\b/i, w: 5 },
+      { re: /\b(deprecated|archived|no longer maintained)\b/i, w: 6 },
+      { re: /\b(ethic(s|al)|licen[cs]e|disclaimer)\b/i, w: 4 },
+    ],
+    headingHints: /status|roadmap|todo|ethic|licen|disclaimer|caveat|limitation/i,
+  },
+  {
     topic: TOPICS.GUARANTEE,
     patterns: [
       // The constraint sentences. Weighted highest in the whole rule set because
@@ -256,18 +313,56 @@ export interface ExtractionResult {
   topicsCovered: Set<Topic>;
 }
 
-export function extractFromDocs(pages: DocPage[], subjectName?: string): ExtractionResult {
+export function extractFromDocs(pages: DocPage[], subjectName?: string, shape?: string): ExtractionResult {
   const evidence: Evidence[] = [];
   const seen = new Set<string>();
 
-  for (const page of pages) {
+  for (const [pageIndex, page] of pages.entries()) {
     if (!page.text) continue;
+    /*
+     * Only the first page may supply the lead description, and only its PURPOSE
+     * sentences carry extra authority.
+     *
+     * For a repo that page is the README. Letting every file claim a lead let
+     * `docs/x_handles.md` and `docs/repo_hosting.md` — operational notes about
+     * hosting and a Twitter dogpile — answer "what is this project for".
+     */
+    const isPrimaryPage = pageIndex === 0;
     let heading: string | undefined;
+    /*
+     * A README's first prose line is the project's own one-sentence description
+     * ("Steering language models into strong negative and positive valence
+     * states, and measuring what they say…"). It names no product, contains no
+     * "is a", and would score near zero on the protocol rules — yet it is the
+     * single most useful sentence in the file, so it is promoted explicitly.
+     */
+    let headingsSeen = 0;
+    let leadTaken = false;
 
     for (const rawLine of page.text.split("\n")) {
       if (rawLine.startsWith("## ")) {
         heading = rawLine.slice(3).trim();
+        headingsSeen++;
         continue;
+      }
+      if (isPrimaryPage && !leadTaken && headingsSeen <= 1 && !isNoise(rawLine) && rawLine.trim().length >= 55) {
+        const lead = rawLine.trim();
+        /*
+         * Skip the banner. READMEs open with a link line — "Live: clanker.church
+         * — the Saw Test, public pages…" — before the sentence that says what the
+         * project does. Taking the first paragraph blindly made the TLDR a
+         * deployment note. A label-and-colon opener, or a domain in the first
+         * breath, means "where to find it", not "what it is".
+         */
+        const isBanner =
+          /^[A-Z][\w ]{0,14}:/.test(lead) ||
+          /^(live|website|site|docs?|status|demo|homepage|install)\b/i.test(lead) ||
+          /\b[a-z0-9-]+\.(com|org|io|xyz|church|dev|app|ai|net)\b/i.test(lead.slice(0, 40));
+        if (!isBanner) {
+          leadTaken = true;
+          evidence.push({ topic: TOPICS.PURPOSE, text: lead, url: page.url, heading, weight: 30, primary: true });
+          seen.add(lead.slice(0, 120).toLowerCase());
+        }
       }
       if (isNoise(rawLine)) continue;
 
@@ -293,9 +388,12 @@ export function extractFromDocs(pages: DocPage[], subjectName?: string): Extract
             const first = subjectName.split(/\s+/)[0];
             if (first.length > 2 && new RegExp(`\\b${escapeRe(first)}\\b`, "i").test(sentence)) weight += 5;
           }
+          // The canonical description lives in the README; a sub-page's take on the
+          // project's purpose is secondary to it.
+          if (rule.topic === TOPICS.PURPOSE && isPrimaryPage) weight += 8;
           if (weight < 6) continue;
 
-          evidence.push({ topic: rule.topic, text: sentence, url: page.url, heading, weight });
+          evidence.push({ topic: rule.topic, text: sentence, url: page.url, heading, weight, primary: isPrimaryPage });
           seen.add(key);
         }
       }
@@ -310,8 +408,8 @@ export function extractFromDocs(pages: DocPage[], subjectName?: string): Extract
     evidence,
     metrics: extractMetrics(pages),
     oneLiner: pickOneLiner(evidence, subjectName),
-    highlights: pickHighlights(evidence),
-    openQuestions: gapsFrom(topicsCovered),
+    highlights: pickHighlightsFor(evidence, shape),
+    openQuestions: gapsFor(topicsCovered, shape),
     topicsCovered,
   };
 }
@@ -473,7 +571,9 @@ export function extractMetrics(pages: DocPage[]): DocMetric[] {
 /** The "what is it" line: the best definitional sentence in the docs. */
 function pickOneLiner(evidence: Evidence[], subjectName?: string): { text: string; url: string } | undefined {
   const candidates = evidence
-    .filter((e) => e.topic === TOPICS.WHAT && e.text.length >= 40 && e.text.length <= 320)
+    // PURPOSE carries a README's lead sentence, which is the best "what is this"
+    // a software project ever offers; WHAT carries a protocol's "X is a …".
+    .filter((e) => (e.topic === TOPICS.WHAT || e.topic === TOPICS.PURPOSE) && e.text.length >= 40 && e.text.length <= 320)
     .sort((a, b) => {
       // Prefer a sentence that opens with the project name — "X is a …".
       const score = (e: Evidence) => {
@@ -488,7 +588,17 @@ function pickOneLiner(evidence: Evidence[], subjectName?: string): { text: strin
       return score(b) - score(a);
     });
   const top = candidates[0];
-  return top ? { text: top.text, url: top.url } : undefined;
+  if (!top) return undefined;
+  /*
+   * One sentence, not the whole opening paragraph.
+   *
+   * The lead-paragraph rule hands over a block, which for a protocol's overview is
+   * four sentences of which only the first answers "what is this". The rest belongs
+   * in the body, where it already appears.
+   */
+  const first = sentences(top.text)[0];
+  const text = first && first.length >= 40 ? first : top.text;
+  return { text, url: top.url };
 }
 
 /**
@@ -499,8 +609,25 @@ function pickOneLiner(evidence: Evidence[], subjectName?: string): { text: strin
  * gets paid), then mechanism, then the rest. One highlight per heading, so a
  * docs page that labours one point cannot fill the whole TLDR.
  */
-function pickHighlights(evidence: Evidence[]): Highlight[] {
-  const PRIORITY: Topic[] = [
+export function pickHighlightsFor(evidence: Evidence[], shape?: string): Highlight[] {
+  /*
+   * A project run must not be offered the protocol priorities. "Naming rules —
+   * never render handles as names" outranked the README's own description purely
+   * because it contains the word "never" and GUARANTEE sits at the head of the
+   * protocol list.
+   */
+  const PROJECT_PRIORITY: Topic[] = [
+    TOPICS.PURPOSE,
+    TOPICS.FINDINGS,
+    TOPICS.METHOD,
+    TOPICS.STATUS,
+    TOPICS.USAGE,
+    TOPICS.SECURITY,
+  ];
+  const PRIORITY: Topic[] = shape && shape !== "protocol" ? PROJECT_PRIORITY : [
+    // Protocol-side first, then project-side. A protocol run never reaches the
+    // tail because the early buckets fill; a project run never matches the head,
+    // so one ordered list serves both without a mode switch here.
     TOPICS.GUARANTEE,
     TOPICS.CUSTODY,
     TOPICS.FEES,
@@ -509,37 +636,64 @@ function pickHighlights(evidence: Evidence[]): Highlight[] {
     TOPICS.MECHANISM,
     TOPICS.BURN,
     TOPICS.GOVERNANCE,
+    TOPICS.PURPOSE,
+    TOPICS.FINDINGS,
+    TOPICS.METHOD,
+    TOPICS.STATUS,
+    TOPICS.USAGE,
   ];
 
   const out: Highlight[] = [];
   const usedHeadings = new Set<string>();
   const usedText = new Set<string>();
 
-  for (const topic of PRIORITY) {
-    const pick = evidence
-      .filter((e) => e.topic === topic)
-      // A table cell ("24% of trading fees, plus half of every launch fee") is a
-      // fact but not a sentence, and a TLDR built from fragments reads like a
-      // spec sheet. Require terminal punctuation, which is what separates prose
-      // from a cell in every docs site we have crawled.
-      .filter((e) => e.text.length >= 55 && e.text.length <= 300 && /[.!?]$/.test(e.text))
-      .sort((a, b) => b.weight - a.weight)
-      .find((e) => {
-        const h = (e.heading ?? "").toLowerCase();
-        return !usedHeadings.has(h) && !usedText.has(e.text.slice(0, 80));
+  /*
+   * Two passes: the primary page first, everything else only to fill.
+   *
+   * Sorting by `primary` inside a topic was not enough — a topic whose only
+   * evidence lives in a sub-page still claimed a slot ahead of the README's other
+   * material, so a GPU cost note reached the TLDR of a research project. The
+   * README gets first refusal on every slot.
+   */
+  for (const pass of [true, false]) {
+    if (out.length >= 5 && pass === false) break;
+    for (const topic of PRIORITY) {
+      if (out.length >= 6) break;
+      const pick = pickOne(evidence, topic, pass, usedHeadings, usedText);
+      if (!pick) continue;
+      usedHeadings.add((pick.heading ?? "").toLowerCase());
+      usedText.add(pick.text.slice(0, 80));
+      out.push({
+        label: pick.heading && pick.heading.length <= 48 ? pick.heading : labelFor(topic),
+        detail: pick.text,
+        url: pick.url,
       });
-    if (!pick) continue;
-    usedHeadings.add((pick.heading ?? "").toLowerCase());
-    usedText.add(pick.text.slice(0, 80));
-    out.push({
-      label: pick.heading && pick.heading.length <= 48 ? pick.heading : labelFor(topic),
-      detail: pick.text,
-      url: pick.url,
-    });
-    if (out.length >= 6) break;
+    }
   }
   return out;
 }
+
+function pickOne(
+  evidence: Evidence[],
+  topic: Topic,
+  primaryOnly: boolean,
+  usedHeadings: Set<string>,
+  usedText: Set<string>
+): Evidence | undefined {
+  return evidence
+    .filter((e) => e.topic === topic)
+    .filter((e) => (primaryOnly ? e.primary === true : true))
+    // A table cell ("24% of trading fees, plus half of every launch fee") is a
+    // fact but not a sentence, and a TLDR built from fragments reads like a spec
+    // sheet. Terminal punctuation is what separates prose from a cell.
+    .filter((e) => e.text.length >= 55 && e.text.length <= 300 && /[.!?]$/.test(e.text))
+    .sort((a, b) => Number(b.primary ?? false) - Number(a.primary ?? false) || b.weight - a.weight)
+    .find((e) => {
+      const h = (e.heading ?? "").toLowerCase();
+      return !usedHeadings.has(h) && !usedText.has(e.text.slice(0, 80));
+    });
+}
+
 
 function labelFor(topic: Topic): string {
   switch (topic) {
@@ -551,6 +705,11 @@ function labelFor(topic: Topic): string {
     case TOPICS.MECHANISM: return "How it works";
     case TOPICS.BURN: return "Burn";
     case TOPICS.GOVERNANCE: return "Admin powers";
+    case TOPICS.PURPOSE: return "What it is for";
+    case TOPICS.METHOD: return "How it is built";
+    case TOPICS.FINDINGS: return "What it found";
+    case TOPICS.USAGE: return "Running it";
+    case TOPICS.STATUS: return "Maturity";
     default: return "Detail";
   }
 }
@@ -563,7 +722,26 @@ function labelFor(topic: Topic): string {
  * audits reads very differently from a documented "unaudited", and this is what
  * keeps the two apart.
  */
-function gapsFrom(covered: Set<Topic>): string[] {
+export function gapsFor(covered: Set<Topic>, shape?: string): string[] {
+  /*
+   * Only a protocol is asked protocol questions.
+   *
+   * Running the mechanism checklist over a research repo produced a report whose
+   * "unanswered" section was mostly "the docs do not state a fee schedule" — true,
+   * and completely uninformative, because nothing about the project implied one.
+   * A checklist that reports absences nobody expected is noise with a serious
+   * face on.
+   */
+  if (shape === "project-with-token" || shape === "token-only") {
+    const PROJECT_REQUIRED: { topic: Topic; question: string }[] = [
+      { topic: TOPICS.PURPOSE, question: "The repository does not state what it is for in prose — the purpose has to be inferred from the code." },
+      { topic: TOPICS.USAGE, question: "No install or usage instructions, so the code's runnability is unverified." },
+      { topic: TOPICS.STATUS, question: "Maturity is unstated: nothing says whether this is experimental, maintained or abandoned." },
+      { topic: TOPICS.FINDINGS, question: "No results or outputs are claimed, so there is nothing to evaluate the work against." },
+    ];
+    return PROJECT_REQUIRED.filter((r) => !covered.has(r.topic)).map((r) => r.question);
+  }
+
   const REQUIRED: { topic: Topic; question: string }[] = [
     { topic: TOPICS.TOKENOMICS, question: "Supply, allocation and any vesting/unlock schedule are not stated in the docs we could read." },
     { topic: TOPICS.FEES, question: "The docs do not state a fee schedule — who pays, how much, and where it goes." },
@@ -586,7 +764,10 @@ function gapsFrom(covered: Set<Topic>): string[] {
 export function topEvidence(evidence: Evidence[], topic: Topic, limit: number): Evidence[] {
   const out: Evidence[] = [];
   const seen = new Set<string>();
-  for (const e of evidence.filter((x) => x.topic === topic)) {
+  const ordered = evidence
+    .filter((x) => x.topic === topic)
+    .sort((a, b) => Number(b.primary ?? false) - Number(a.primary ?? false) || b.weight - a.weight);
+  for (const e of ordered) {
     const key = e.text.slice(0, 60).toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);

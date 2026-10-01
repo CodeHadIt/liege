@@ -316,16 +316,22 @@ export async function inspectSolana(mint: string, budget: Budget): Promise<OnCha
       /* unparseable supply — left undefined rather than guessed */
     }
   }
+  // Both authorities are reported either way. "Revoked" is the fact a holder
+  // actually wants, and only printing the alarming case leaves a clean mint
+  // looking unexamined.
   if (info.mintAuthority) {
     facts.ownerAddress = info.mintAuthority;
     facts.hasMintSelector = true;
-    facts.notes.push(`mint authority is live: ${info.mintAuthority} — supply can be increased`);
+    facts.notes.push(`mint authority is LIVE: ${info.mintAuthority} — supply can be increased at will`);
   } else {
     facts.hasMintSelector = false;
+    facts.notes.push("mint authority is revoked — supply cannot be increased");
   }
-  if (info.freezeAuthority) {
-    facts.notes.push(`freeze authority is live: ${info.freezeAuthority} — balances can be frozen`);
-  }
+  facts.notes.push(
+    info.freezeAuthority
+      ? `freeze authority is LIVE: ${info.freezeAuthority} — balances can be frozen`
+      : "freeze authority is revoked — balances cannot be frozen"
+  );
   return facts;
 }
 

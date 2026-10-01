@@ -15,6 +15,8 @@
 //      model, where a skipped chain must never look like a clean check.
 
 import type { ChainId } from "@/types/chain";
+import type { SubjectProfile } from "./profile";
+import type { TokenShape } from "./token-shape";
 
 /** What the user typed, once we have worked out what it is. */
 export type InputKind =
@@ -61,6 +63,8 @@ export interface Evidence {
   heading?: string;
   /** Higher = more likely to be worth printing. */
   weight: number;
+  /** From the primary page (a repo's README, a docs root) rather than a sub-page. */
+  primary?: boolean;
 }
 
 /** A number pulled out of the docs, with the sentence it came from. */
@@ -153,6 +157,8 @@ export interface GithubFindings {
   hasDocsDir?: boolean;
   hasAuditsDir?: boolean;
   hasTestsDir?: boolean;
+  /** Root-level filenames that look like committed secrets. */
+  suspiciousFiles?: string[];
 }
 
 export interface SocialFindings {
@@ -211,6 +217,10 @@ export interface Subject {
 export interface ResearchReport {
   input: ClassifiedInput;
   subject: Subject;
+  /** protocol | project-with-token | token-only, and why. */
+  profile: SubjectProfile;
+  /** What the token mechanically is, independent of what it is attached to. */
+  tokenShape?: TokenShape;
   highlights: Highlight[];
   docMetrics: DocMetric[];
   market?: TokenMarket;

@@ -13,6 +13,7 @@
 import { escapeHtml, formatCompact } from "@/lib/telegram/utils/format";
 import { TOPICS, topEvidence, type Topic } from "./extract";
 import { verdictSummary } from "./verify";
+import { describeAttachedToken } from "./token-shape";
 import type { Evidence, ResearchReport, RiskFlag } from "./types";
 
 const LIMIT = 3_600; // Telegram's cap is 4096; headroom for the page header.
@@ -72,6 +73,28 @@ export function renderTldr(r: ResearchReport): string {
   if (r.subject.oneLiner) {
     L.push("");
     L.push(`<b>TL;DR</b> — ${escapeHtml(r.subject.oneLiner)}`);
+  }
+
+  /*
+   * The classification line, and the most important sentence in the report when
+   * the subject is a project with a token bolted on. Somebody about to buy needs
+   * to be told, before anything else, that the software and the token are two
+   * separate objects and only one of them has a mechanism.
+   */
+  if (r.profile.shape !== "protocol" && r.tokenShape) {
+    L.push("");
+    L.push(
+      `⚠️ <b>Token ≠ project.</b> ${escapeHtml(
+        describeAttachedToken(r.tokenShape, {
+          projectName: r.github?.repo ?? r.subject.name,
+          purpose: r.subject.oneLiner,
+          mentionedInRepo: r.profile.mentionsToken,
+        }).replace(/\*\*/g, "")
+      )}`
+    );
+  } else if (r.profile.shape === "protocol") {
+    L.push("");
+    L.push(`<b>Shape</b> — ${escapeHtml(r.profile.reason)}`);
   }
 
   if (r.highlights.length) {
@@ -158,8 +181,34 @@ export function renderDetail(r: ResearchReport): string[] {
     sections.push({ title: "Identity", lines });
   }
 
+  // The token, as its own object. First in project mode, because the reader's
+  // question there is "what am I actually buying".
+  const tokenSection = (): Section | undefined => {
+    if (!r.tokenShape) return undefined;
+    const t = r.tokenShape;
+    const lines: string[] = [];
+    lines.push(
+      `<b>Kind</b>: ${escapeHtml(
+        t.kind === "launchpad-standard"
+          ? `standard launchpad mint${t.launchpad ? ` — ${t.launchpad}` : ""}`
+          : t.kind === "standard-erc20"
+            ? "plain ERC-20, no bespoke code"
+            : t.kind === "custom"
+              ? "custom contract"
+              : "could not be established"
+      )}`
+    );
+    lines.push(`<b>Documented mechanics</b>: ${t.mechanics === "documented" ? "yes — see the sections below" : "none found"}`);
+    for (const sig of t.signals) lines.push(`• ${escapeHtml(sig)}`);
+    if (r.profile.shape !== "protocol") {
+      lines.push("");
+      lines.push(`<i>${escapeHtml(r.profile.reason)}</i>`);
+    }
+    return { title: "The token", lines };
+  };
+
   // 2–10: the framework buckets, each quoting the docs.
-  const buckets: { title: string; topic: Topic; limit: number; blurb?: string }[] = [
+  const PROTOCOL_BUCKETS: { title: string; topic: Topic; limit: number; blurb?: string }[] = [
     { title: "How it works", topic: TOPICS.MECHANISM, limit: 5 },
     { title: "Fees and value capture", topic: TOPICS.FEES, limit: 5, blurb: "Who pays, and who is paid." },
     { title: "Supply and tokenomics", topic: TOPICS.TOKENOMICS, limit: 5 },
@@ -172,6 +221,29 @@ export function renderDetail(r: ResearchReport): string[] {
     { title: "External dependencies", topic: TOPICS.DEPENDENCIES, limit: 3 },
     { title: "Integration surface", topic: TOPICS.INTEGRATION, limit: 3 },
   ];
+
+  /*
+   * A software project's documentation answers different questions, so it gets
+   * different sections. Running the protocol buckets over a research repo
+   * produced a report that was mostly empty headings — the information was in the
+   * README all along, under "purpose", "method" and "findings".
+   */
+  const PROJECT_BUCKETS: { title: string; topic: Topic; limit: number; blurb?: string }[] = [
+    { title: "What the project is for", topic: TOPICS.PURPOSE, limit: 4 },
+    { title: "How it works", topic: TOPICS.METHOD, limit: 5, blurb: "Method and stack, as the repo describes them." },
+    { title: "What it has found", topic: TOPICS.FINDINGS, limit: 6, blurb: "Results the project claims for itself." },
+    { title: "Running it", topic: TOPICS.USAGE, limit: 3 },
+    { title: "Maturity and caveats", topic: TOPICS.STATUS, limit: 4 },
+    { title: "Any token mechanics the repo does describe", topic: TOPICS.TOKENOMICS, limit: 3 },
+    { title: "Security notes", topic: TOPICS.SECURITY, limit: 3 },
+  ];
+
+  const isProtocol = r.profile.shape === "protocol";
+  const buckets = isProtocol ? PROTOCOL_BUCKETS : PROJECT_BUCKETS;
+  if (!isProtocol) {
+    const ts = tokenSection();
+    if (ts) sections.push(ts);
+  }
   for (const b of buckets) {
     const ev = topEvidence(r.evidence, b.topic, b.limit);
     if (!ev.length) continue;
@@ -179,6 +251,11 @@ export function renderDetail(r: ResearchReport): string[] {
     if (b.blurb) lines.push(`<i>${escapeHtml(b.blurb)}</i>`);
     for (const e of ev) lines.push(quote(e));
     sections.push({ title: b.title, lines });
+  }
+
+  if (isProtocol) {
+    const ts = tokenSection();
+    if (ts) sections.push(ts);
   }
 
   // Headline numbers, with the line each was read from.
@@ -243,7 +320,13 @@ export function renderDetail(r: ResearchReport): string[] {
       const human = o.decimals !== undefined ? (o.totalSupply / BigInt(10) ** BigInt(o.decimals)).toLocaleString("en-US") : o.totalSupply.toString();
       lines.push(`• totalSupply(): ${escapeHtml(human)}${o.decimals !== undefined ? ` (${o.decimals} dp)` : ""}`);
     }
-    lines.push(`• owner(): ${o.ownerAddress ? `<code>${escapeHtml(o.ownerAddress)}</code>` : "no owner slot exposed"}`);
+    if (o.chain === "solana") {
+      // "owner()" is EVM vocabulary; on an SPL mint the equivalent question is
+      // who holds the authorities, and that is already in the notes below.
+      lines.push(`• mint authority: ${o.ownerAddress ? `🔴 <code>${escapeHtml(o.ownerAddress)}</code>` : "✅ revoked"}`);
+    } else {
+      lines.push(`• owner(): ${o.ownerAddress ? `<code>${escapeHtml(o.ownerAddress)}</code>` : "no owner slot exposed"}`);
+    }
     if (o.chain !== "solana") {
       lines.push(`• mint selector in bytecode: ${o.hasMintSelector === undefined ? "unknown" : o.hasMintSelector ? "🔴 present" : "✅ absent"}`);
       lines.push(`• pause selector in bytecode: ${o.hasPauseSelector === undefined ? "unknown" : o.hasPauseSelector ? "🟠 present" : "✅ absent"}`);

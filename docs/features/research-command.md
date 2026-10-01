@@ -6,11 +6,21 @@ mechanism, fees, supply, rewards, admin powers, security, the project's own
 documentation checked against its deployed bytecode, and an explicit list of what
 it could not answer.
 
-**Last updated:** 2026-09-30 (first release)
+**Last updated:** 2026-10-01 (two subject shapes; repo-as-docs; multi-input)
 
 ---
 
 ## 1. Using it
+
+**More than one input is normal.** People hand over what they have — an address
+*and* the repo, or a site *and* its docs. The address takes the subject slot
+because it anchors the chain reads; every other token becomes a hint that
+short-circuits a discovery step, and the coverage block records it:
+
+```
+/research FUuH1auf…fvR3 https://github.com/org/repo
+```
+
 
 ```
 /research 0x47ACCD13264D8F954105256FaaC8376ce6A55999   contract address (EVM)
@@ -35,7 +45,61 @@ documentation the project publishes.
 
 ---
 
-## 2. What it actually does
+## 2. Two kinds of subject
+
+The command covers two populations, because they need different reports:
+
+| Shape | What it is | What the report leads with |
+|---|---|---|
+| `protocol` | Crypto-native, with a mechanism of its own: fees, supply policy, rewards, admin powers, contracts | the mechanism, checked against the deployed code |
+| `project-with-token` | Software that stands on its own, with a token attached | what the software does, and that the token is a **separate object** with no mechanism |
+| `token-only` | A token with no docs, repo or site | the market data, and the fact that nothing documents it |
+
+Classification is evidence-based, in `profile.ts`. A subject is `protocol` only
+when **two or more mechanism topics appear in crypto context**, or its docs
+publish contract addresses.
+
+The "in crypto context" clause is load-bearing. `fee`, `supply`, `token` and
+`burn` are ordinary English and ordinary ML jargon: an AI-research repo with a
+GPU hosting plan ("*Cost math — if fees are lower than that, run the pod only
+during live sessions*") and LLM tokens ("*110 tokens under each framing*") was
+classified crypto-native on the first pass, and printed a protocol report about a
+project with no protocol. So a mechanism sentence only counts if that sentence
+itself carries a crypto term, and the document as a whole must carry at least
+three distinct ones.
+
+### Naming an attached token for what it is
+
+`token-shape.ts` answers "what is this token mechanically" independently of what
+it is attached to, from three signals it then prints:
+
+1. **The venue** — DexScreener's `dexId` names the launchpad (`pumpfun`,
+   `pumpswap`, `launchlab`, `moonshot`, `fourmeme`, `clanker`…).
+2. **The address** — launchpads vanity-grind their mints (`…pump`, `…bonk`).
+3. **The shape** — 1,000,000,000 supply at 6 decimals with both authorities
+   revoked is pump.fun's fingerprint, not a coincidence.
+
+Custom code outranks all three: an owner, a mint path or a pause switch means it
+is not a stock mint whatever venue it trades on.
+
+In project mode the TLDR then leads with the line that matters most to someone
+about to buy:
+
+> ⚠️ **Token ≠ project.** This is a pump.fun-style token — a stock launchpad mint
+> with no contract, fees, emissions or governance of its own, attached to
+> **ai-torture-chamber**, which describes itself as: "Steering language models
+> into strong negative and positive valence states…". The project's own
+> repository never mentions a token, so the association comes from the token's
+> metadata and socials rather than from the project itself.
+
+That last clause is its own check: the repo is searched for any crypto reference,
+and a project that never mentions a token gets a **high** flag saying the
+association is unverified. "token" alone does not count — in an ML repo it is a
+unit of text.
+
+---
+
+## 3. What it actually does
 
 ```
                     ┌─────────────────────────── classify.ts
@@ -80,10 +144,34 @@ Four routes, tried in order, and the report names which one worked:
 | `link` | a link on the project's own site, scored for docs-ness (`docs.` subdomain, `/docs` path, GitBook/Mintlify/ReadMe hosts, anchor text), with depth penalised and blog/legal paths excluded |
 | `probe` | the conventional locations: `/docs`, `/documentation`, `/developers`, `/whitepaper`, `/litepaper`, `/learn`, plus `docs.<apex>` and `developer.<apex>` |
 | `external` | a docs or whitepaper link published on CoinGecko or in the repo |
+| `repo` | **the repository itself** — README, `docs/*.md`, and root files named like specs (WHITEPAPER, TOKENOMICS, ARCHITECTURE…) |
 
 A candidate is only accepted if the page **reads** like documentation
 (`looksLikeDocs`: ≥800 chars, and either ≥3 headings or ≥3 reference words).
 Single-page apps answer 200 for everything, so "the URL resolved" proves nothing.
+
+The `repo` route exists because a code-first project publishes no docs site: its
+README **is** the specification. The first version skipped the docs stage entirely
+for want of a homepage, which scored a self-documenting project as undocumented —
+exactly backwards. It also runs when a docs site was found but turned out to be a
+stub, since a 900-character landing page should not outrank a real README.
+
+Reading Markdown needed three fixes that HTML never exposed:
+
+- **Hard wrapping.** Markdown wraps prose at 72–80 columns, so one sentence
+  arrives as three lines. Every quote was truncated mid-clause until consecutive
+  prose lines were joined into paragraphs.
+- **Bullet continuations.** An indented line under a bullet belongs to that
+  bullet, not to a new paragraph.
+- **The banner line.** READMEs open with "Live: example.com — …" before the
+  sentence that says what the project does, so the lead-paragraph rule skips
+  label-and-colon openers and lines whose first breath is a domain.
+
+Only the **first** page may supply the lead description, and only its sentences
+carry extra authority for "what is this for". Letting every file claim a lead let
+`docs/x_handles.md` and `docs/repo_hosting.md` — notes about hosting and a Twitter
+dogpile — answer the question instead of the README. For the same reason the
+README gets first refusal on every TLDR slot.
 
 Two details that matter in practice:
 
@@ -131,7 +219,7 @@ visible rather than silent.
 
 ---
 
-## 3. Docs vs deployed code
+## 4. Docs vs deployed code
 
 The section that separates this from a summary of someone's website. Five checks,
 each a claim made in prose that the chain answers in bytecode:
@@ -159,7 +247,7 @@ into the TL;DR.
 
 ---
 
-## 4. Risk flags, and why there is no score
+## 5. Risk flags, and why there is no score
 
 `report.ts` emits a flat list with three severities — `high` (could cost the
 position outright), `medium` (materially changes the risk, or a gap where a claim
@@ -176,7 +264,7 @@ a documented "unaudited", and the report keeps the two apart.
 
 ---
 
-## 5. Budget, failure and coverage
+## 6. Budget, failure and coverage
 
 One wall-clock budget for the whole run (default 110s), each fetch with its own
 timeout, nothing retried more than once. A host that answers 403/429/451 is
@@ -189,7 +277,7 @@ skipped source must never look like a clean check.
 
 ---
 
-## 6. Sources, and what is missing
+## 7. Sources, and what is missing
 
 | Source | Gives | Key |
 |---|---|---|
@@ -213,7 +301,7 @@ skipped source must never look like a clean check.
 
 ---
 
-## 7. Testing it
+## 8. Testing it
 
 ```bash
 # print to stdout, nothing sent
@@ -230,7 +318,7 @@ The script reads only: no seen-sets, no cursors, no database rows.
 
 ---
 
-## 8. Files
+## 9. Files
 
 | File | Role |
 |---|---|

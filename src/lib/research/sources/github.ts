@@ -11,8 +11,8 @@
 // Unauthenticated: 60 requests/hour per IP, which is plenty for one report.
 // `GITHUB_TOKEN` is used when present, purely for the higher limit.
 
-import { getJson, type Budget } from "../fetcher";
-import type { GithubFindings } from "../types";
+import { fetchPage, getJson, markdownToText, type Budget } from "../fetcher";
+import type { DocPage, GithubFindings } from "../types";
 
 const API = "https://api.github.com";
 
@@ -45,6 +45,7 @@ interface ContentEntry {
   name: string;
   type: string;
   path: string;
+  download_url?: string | null;
 }
 
 /** Parse "github.com/owner", "github.com/owner/repo", "owner.github.io". */
@@ -135,5 +136,100 @@ export async function inspectGithub(url: string, budget: Budget): Promise<Github
     hasDocsDir: dirs.has("docs") || dirs.has("documentation") || files.has("docs.md"),
     hasAuditsDir: dirs.has("audits") || dirs.has("audit") || dirs.has("security"),
     hasTestsDir: dirs.has("test") || dirs.has("tests") || dirs.has("spec"),
+    // A repository root is a place people commit things by accident. This is not a
+    // secret scan — it reads filenames only — but a file called `.admin_credentials`
+    // in a public repo is worth a line in a report whatever it turns out to hold.
+    suspiciousFiles: [...files].filter((f) =>
+      /^(\.env(\..*)?|.*credential.*|.*secret.*|id_rsa|.*\.pem|.*\.key|.*keystore.*|\.npmrc|\.pypirc)$/i.test(f)
+    ),
   };
+}
+
+
+/**
+ * The repository AS documentation.
+ *
+ * For a code-first project there is no website and no docs site — the README and
+ * a `docs/` tree are the whole specification. The first version of this pipeline
+ * skipped the docs stage entirely when no homepage existed, which meant a project
+ * that documents itself properly in its repo scored as having no documentation at
+ * all. That is backwards.
+ *
+ * Returns pages in the same shape the HTML crawl produces, so extraction,
+ * verification and rendering do not care which source a sentence came from.
+ */
+export async function fetchRepoDocs(
+  owner: string,
+  repo: string,
+  budget: Budget,
+  opts: { maxFiles?: number } = {}
+): Promise<DocPage[]> {
+  const maxFiles = opts.maxFiles ?? 8;
+  const pages: DocPage[] = [];
+
+  const readme = await getJson<{ content?: string; encoding?: string; html_url?: string }>(
+    `${API}/repos/${owner}/${repo}/readme`,
+    budget,
+    { headers: headers() }
+  );
+  if (readme?.content && readme.encoding === "base64") {
+    const md = safeDecode(readme.content);
+    if (md) pages.push(toPage(readme.html_url ?? `https://github.com/${owner}/${repo}`, md));
+  }
+
+  // Root-level Markdown that is documentation by name, then the docs tree.
+  const root = await getJson<ContentEntry[]>(`${API}/repos/${owner}/${repo}/contents`, budget, {
+    headers: headers(),
+  });
+  const ROOT_DOCS = /^(whitepaper|litepaper|tokenomics|architecture|spec|specification|design|protocol|overview|contributing|security|audit)\b.*\.mdx?$/i;
+  const candidates: { path: string; url?: string }[] = [];
+  for (const e of root ?? []) {
+    if (e.type === "file" && ROOT_DOCS.test(e.name)) candidates.push({ path: e.path, url: e.download_url ?? undefined });
+  }
+
+  const docsDir = (root ?? []).find((e) => e.type === "dir" && /^(docs|documentation)$/i.test(e.name));
+  if (docsDir) {
+    const listing = await getJson<ContentEntry[]>(
+      `${API}/repos/${owner}/${repo}/contents/${encodeURIComponent(docsDir.path)}`,
+      budget,
+      { headers: headers() }
+    );
+    for (const e of listing ?? []) {
+      if (e.type === "file" && /\.mdx?$/i.test(e.name)) candidates.push({ path: e.path, url: e.download_url ?? undefined });
+    }
+  }
+
+  // Biggest-signal first: a file named for a topic beats an index page.
+  candidates.sort((a, b) => topicRank(b.path) - topicRank(a.path));
+
+  for (const c of candidates.slice(0, maxFiles)) {
+    if (!c.url) continue;
+    const res = await fetchPage(c.url, budget, { timeoutMs: 10_000, maxBytes: 400_000 });
+    if (!res || res.binary || !res.body) continue;
+    const page = toPage(`https://github.com/${owner}/${repo}/blob/HEAD/${c.path}`, res.body);
+    if (page.chars >= 300) pages.push(page);
+  }
+
+  return pages;
+}
+
+const DOC_TOPIC_ORDER = ["tokenomic", "whitepaper", "protocol", "architecture", "spec", "design", "overview", "security", "audit"];
+
+function topicRank(path: string): number {
+  const p = path.toLowerCase();
+  const i = DOC_TOPIC_ORDER.findIndex((w) => p.includes(w));
+  return i === -1 ? 0 : DOC_TOPIC_ORDER.length - i;
+}
+
+function toPage(url: string, markdown: string): DocPage {
+  const { title, headings, text } = markdownToText(markdown);
+  return { url, title, headings, text, chars: text.length };
+}
+
+function safeDecode(b64: string): string | null {
+  try {
+    return Buffer.from(b64, "base64").toString("utf8");
+  } catch {
+    return null;
+  }
 }

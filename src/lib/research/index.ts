@@ -22,12 +22,14 @@
 import { getTokenPairs, searchPairs, type DexScreenerPair } from "@/lib/api/dexscreener";
 import type { ChainId } from "@/types/chain";
 import { classifyInput } from "./classify";
-import { extractFromDocs, TOPICS } from "./extract";
+import { extractFromDocs, gapsFor, pickHighlightsFor, TOPICS } from "./extract";
+import { profileSubject } from "./profile";
+import { classifyTokenShape } from "./token-shape";
 import { budgetLeft, newBudget } from "./fetcher";
 import { primaryMarket, synthesiseRisks } from "./report";
 import { coinByContract, coinById, linksOf, searchCoins, type CoinGeckoCoin } from "./sources/coingecko";
-import { crawlDocs, discoverDocs } from "./sources/docs";
-import { inspectGithub, parseGithubUrl } from "./sources/github";
+import { crawlDocs, discoverDocs, extractContracts } from "./sources/docs";
+import { fetchRepoDocs, inspectGithub, parseGithubUrl } from "./sources/github";
 import { detectEvmChain, inspectEvm, inspectSolana } from "./sources/onchain";
 import { verifyAgainstChain } from "./verify";
 import type {
@@ -61,8 +63,38 @@ export interface ResearchOptions {
 export async function runResearch(rawInput: string, opts: ResearchOptions = {}): Promise<ResearchReport> {
   const started = Date.now();
   const budget = newBudget(opts.budgetMs ?? 110_000);
-  const input = classifyInput(rawInput);
   const coverage: SourceStatus[] = [];
+
+  /*
+   * More than one input is the normal case, not an edge case.
+   *
+   * People hand over what they have: a contract address AND the repo, or a site
+   * AND its docs. Taking only the first token threw away the half the user had
+   * gone to the trouble of finding — and the discovery stages, good as they are,
+   * cannot beat somebody telling us where the code lives.
+   *
+   * The address wins the "primary" slot because it is what anchors the chain
+   * reads; every other token becomes a hint that short-circuits a discovery step.
+   */
+  const tokens = rawInput.trim().split(/\s+/).filter(Boolean).slice(0, 4);
+  const classified = tokens.map(classifyInput);
+  const input =
+    classified.find((c) => c.kind === "evm-address" || c.kind === "solana-address") ??
+    classified.find((c) => c.kind.startsWith("url-") && c.kind !== "url-github") ??
+    classified[0] ??
+    classifyInput(rawInput);
+  const hints = classified.filter((c) => c !== input);
+  const ghHint = hints.find((h) => h.kind === "url-github")?.value;
+  const docsHint = hints.find((h) => h.kind === "url-docs" || h.kind === "url-whitepaper")?.value;
+  const siteHint = hints.find((h) => h.kind === "url-website")?.value;
+  if (hints.length) {
+    coverage.push({
+      id: "hints",
+      state: "ok",
+      detail: hints.map((h) => `${h.kind.replace("url-", "")} supplied by the user`).join("; "),
+      count: hints.length,
+    });
+  }
 
   const subject: Subject = { name: "", categories: [] };
   const social: SocialFindings = { otherLinks: [] };
@@ -146,6 +178,12 @@ export async function runResearch(rawInput: string, opts: ResearchOptions = {}):
       onchain.verified ? "verified" : undefined,
       onchain.proxyType,
       onchain.symbol ? `symbol ${onchain.symbol}` : undefined,
+      // An SPL mint exposes none of the above, so without this the coverage line
+      // read "no facts read" on a run that had just read supply, decimals and both
+      // authorities. A source that answered must never report as silent.
+      onchain.totalSupply !== undefined ? `supply read${onchain.decimals !== undefined ? ` (${onchain.decimals} dp)` : ""}` : undefined,
+      onchain.chain === "solana" && onchain.hasMintSelector === false ? "mint authority revoked" : undefined,
+      onchain.chain === "solana" && onchain.hasMintSelector === true ? "mint authority LIVE" : undefined,
     ].filter(Boolean);
     coverage.push({
       id: "chain",
@@ -181,8 +219,10 @@ export async function runResearch(rawInput: string, opts: ResearchOptions = {}):
     entryUrl = entryUrl ?? coin.links?.homepage?.find((h) => /^https?:\/\//.test(h ?? ""));
   }
 
-  // The website, in order of trust: what the user gave us, then what the token's
-  // own DexScreener profile links, then CoinGecko's homepage.
+  // The website, in order of trust: what the user gave us (as the primary input or
+  // as a hint), then what the token's own DexScreener profile links, then
+  // CoinGecko's homepage.
+  entryUrl = entryUrl ?? siteHint ?? docsHint;
   if (!entryUrl) {
     entryUrl = social.otherLinks.find((u) => !/x\.com|twitter\.com|t\.me|discord|github\.com/i.test(u));
   }
@@ -190,8 +230,8 @@ export async function runResearch(rawInput: string, opts: ResearchOptions = {}):
 
   // ── stage 5: documentation ────────────────────────────────────────────────
   if (entryUrl && budgetLeft(budget) > 8_000) {
-    const { found, siteLinks, note } = await discoverDocs(entryUrl, budget, {
-      given: input.kind === "url-docs" || input.kind === "url-whitepaper",
+    const { found, siteLinks, note } = await discoverDocs(docsHint ?? entryUrl, budget, {
+      given: docsHint !== undefined || input.kind === "url-docs" || input.kind === "url-whitepaper",
       externalCandidates: social.otherLinks,
     });
     social.otherLinks.push(...siteLinks);
@@ -215,6 +255,7 @@ export async function runResearch(rawInput: string, opts: ResearchOptions = {}):
 
   // ── stage 6: GitHub ───────────────────────────────────────────────────────
   const ghCandidate =
+    ghHint ??
     (input.kind === "url-github" ? input.value : undefined) ??
     coin?.links?.repos_url?.github?.find((u) => !!u) ??
     social.otherLinks.find((u) => parseGithubUrl(u) !== null);
@@ -234,10 +275,81 @@ export async function runResearch(rawInput: string, opts: ResearchOptions = {}):
     coverage.push({ id: "github", state: "skipped", detail: ghCandidate ? "budget spent" : "no repository linked anywhere we looked" });
   }
 
+  /*
+   * The repository is the documentation, when nothing else is.
+   *
+   * A code-first project publishes no docs site: its README and `docs/` tree ARE
+   * the specification. Skipping the docs stage for want of a homepage scored those
+   * projects as undocumented, which is exactly backwards — they document
+   * themselves better than most sites do.
+   *
+   * Also used when a docs site was found but turned out to be a stub, because a
+   * 900-character landing page should not outrank a real README.
+   */
+  /*
+   * A repo README often names the live site ("Live: clanker.church") where no
+   * other source has a homepage at all — the token has no website in its
+   * metadata, and CoinGecko has never heard of it. Worth one regex.
+   */
+  const siteFromReadme = (text: string): string | undefined => {
+    const m = text.match(/\b(?:live|website|site|demo|homepage|hosted at)\b[^\n]{0,40}?\b([a-z0-9-]+(?:\.[a-z0-9-]+)+)\b/i);
+    const host = m?.[1];
+    if (!host || /github\.com|x\.com|twitter\.com|t\.me|discord|\.(py|ts|js|md|json|toml|yml)$/i.test(host)) return undefined;
+    return `https://${host}`;
+  };
+
+  const docsChars = docs?.pages.reduce((n, p) => n + p.chars, 0) ?? 0;
+  if (github?.repo && docsChars < 4_000 && budgetLeft(budget) > 6_000) {
+    const repoPages = await fetchRepoDocs(github.owner, github.repo, budget);
+    const repoChars = repoPages.reduce((n, p) => n + p.chars, 0);
+    if (repoChars > docsChars) {
+      docs = {
+        rootUrl: github.url,
+        discovery: docs ? "repo (richer than the docs site we found)" : "repo",
+        pages: repoPages,
+        contracts: extractContracts(repoPages),
+      };
+      subject.docsUrl = subject.docsUrl ?? github.url;
+      if (!subject.website) {
+        const fromReadme = siteFromReadme(repoPages.map((p) => p.text).join("\n").slice(0, 4_000));
+        if (fromReadme) {
+          subject.website = fromReadme;
+          coverage.push({ id: "site:readme", state: "ok", detail: `homepage taken from the README: ${fromReadme}` });
+        }
+      }
+      coverage.push({
+        id: "docs:repo",
+        state: "ok",
+        detail: `${repoPages.length} file(s) from the repository, ${repoChars.toLocaleString("en-US")} chars — README${
+          github.hasDocsDir ? " + docs/" : ""
+        }`,
+        count: repoPages.length,
+      });
+    } else if (repoPages.length === 0) {
+      coverage.push({ id: "docs:repo", state: "empty", detail: "repository has no README or docs/ Markdown we could read" });
+    }
+  }
+
   // ── stage 7: extraction, verification, risk ───────────────────────────────
   const extraction = docs
     ? extractFromDocs(docs.pages, subject.name || subject.symbol)
     : { evidence: [], metrics: [], highlights: [], openQuestions: [], oneLiner: undefined, topicsCovered: new Set<string>() };
+
+  /*
+   * Classify the subject, THEN re-derive the gap list.
+   *
+   * The gaps depend on the shape and the shape depends on the evidence, so the
+   * extraction runs once shape-blind and only the cheap, pure part is recomputed.
+   * Re-running extraction would re-walk every page for nothing.
+   */
+  const profile = profileSubject({
+    evidence: extraction.evidence,
+    docs,
+    github,
+    hasToken: markets.length > 0 || onchain?.totalSupply !== undefined,
+  });
+  const tokenShape =
+    address !== undefined ? classifyTokenShape(markets, onchain, profile.mechanicsDocumented) : undefined;
 
   if (extraction.oneLiner) {
     subject.oneLiner = extraction.oneLiner.text;
@@ -264,9 +376,18 @@ export async function runResearch(rawInput: string, opts: ResearchOptions = {}):
 
   const verifications = verifyAgainstChain(extraction.evidence, extraction.metrics, onchain);
   const market = primaryMarket(markets);
-  const risks = synthesiseRisks({ onchain, market, docs, github, evidence: extraction.evidence, verifications });
+  const risks = synthesiseRisks({
+    onchain,
+    market,
+    docs,
+    github,
+    evidence: extraction.evidence,
+    verifications,
+    profile,
+    tokenShape,
+  });
 
-  const openQuestions = [...extraction.openQuestions];
+  const openQuestions = [...gapsFor(extraction.topicsCovered as Set<never>, profile.shape)];
   if (!docs) openQuestions.unshift("No documentation was found, so nothing in this report about the mechanism is sourced from the project.");
   if (onchain?.implementation && !extraction.topicsCovered.has(TOPICS.UPGRADE)) {
     openQuestions.push(
@@ -277,7 +398,10 @@ export async function runResearch(rawInput: string, opts: ResearchOptions = {}):
   return {
     input,
     subject,
-    highlights: extraction.highlights,
+    profile,
+    tokenShape,
+    // Recomputed now that the shape is known — same reason as the gap list.
+    highlights: pickHighlightsFor(extraction.evidence, profile.shape),
     docMetrics: extraction.metrics,
     market,
     markets,

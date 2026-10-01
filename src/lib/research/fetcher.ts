@@ -327,3 +327,100 @@ export function extractUrlsFromText(html: string, baseUrl: string): string[] {
   }
   return [...out];
 }
+
+/**
+ * Markdown → the same shape `htmlToText` produces.
+ *
+ * A code-first project's documentation is its repository: a README, a `docs/`
+ * tree, sometimes a WHITEPAPER.md. Those are Markdown, not HTML, so they need
+ * their own reader — and it has to emit the SAME "## heading" convention, because
+ * the extraction stage attributes every sentence to the heading above it.
+ *
+ * Fenced code goes first and unconditionally. A Python repo's docs are mostly
+ * code by volume, and code that survives into the text competes with prose for
+ * every topic bucket.
+ */
+export function markdownToText(md: string): ExtractedHtml {
+  let s = md;
+  s = s.replace(/```[\s\S]*?```/g, " ");
+  s = s.replace(/~~~[\s\S]*?~~~/g, " ");
+  s = s.replace(/<!--[\s\S]*?-->/g, " ");
+  // Inline HTML badges and images carry no prose.
+  s = s.replace(/<img[^>]*>/gi, " ");
+  s = s.replace(/!\[[^\]]*\]\([^)]*\)/g, " ");
+  // Links keep their label, drop their target.
+  s = s.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+
+  const headings: string[] = [];
+  const out: string[] = [];
+  let title: string | undefined;
+  let paragraph: string[] = [];
+  let lastWasBullet = false;
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    out.push(paragraph.join(" ").replace(/ {2,}/g, " ").trim());
+    paragraph = [];
+  };
+
+  for (const raw of s.split("\n")) {
+    const line = raw.replace(/\t/g, " ").trimEnd();
+    const h = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
+    if (h) {
+      flushParagraph();
+      const text = h[2].replace(/[#*`_]+/g, "").replace(/\s+/g, " ").trim();
+      if (!text) continue;
+      if (!title && h[1].length === 1) title = text;
+      if (text.length <= 140) headings.push(text);
+      out.push(`## ${text}`);
+      continue;
+    }
+    // Table rows become "cell — cell" so the metric reader sees a labelled row.
+    if (/^\s*\|.*\|\s*$/.test(line)) {
+      flushParagraph();
+      const cells = line.split("|").map((c) => c.trim()).filter(Boolean);
+      if (cells.length >= 2 && !/^[-: ]+$/.test(cells[0])) out.push(cells.join(" — "));
+      continue;
+    }
+    const clean = line
+      .replace(/^\s*[-*+]\s+/, "• ")
+      .replace(/^\s*>\s?/, "")
+      .replace(/[*_`]+/g, "")
+      .replace(/ {2,}/g, " ")
+      .trim();
+
+    /*
+     * Markdown hard-wraps prose at 72–80 columns, so one sentence arrives as three
+     * lines. Emitting them as separate lines truncated every quote mid-clause —
+     * the first README read gave "Steering language models into strong negative and
+     * positive valence states," with the verb still to come. Consecutive prose
+     * lines are therefore joined into a paragraph, and a blank line, heading,
+     * bullet or table row closes it.
+     */
+    if (!clean) {
+      flushParagraph();
+      lastWasBullet = false;
+      continue;
+    }
+    if (clean.startsWith("• ")) {
+      flushParagraph();
+      out.push(clean);
+      lastWasBullet = true;
+      continue;
+    }
+    /*
+     * An indented line under a bullet is that bullet's continuation, not a new
+     * paragraph. Treating it as one produced quotes that begin mid-clause —
+     * "expected pain vocabulary (per user's point…)" with its subject three
+     * lines up.
+     */
+    if (lastWasBullet && /^\s{2,}\S/.test(raw) && out.length > 0) {
+      out[out.length - 1] = `${out[out.length - 1]} ${clean}`;
+      continue;
+    }
+    lastWasBullet = false;
+    paragraph.push(clean);
+  }
+  flushParagraph();
+
+  return { title, headings, text: out.join("\n") };
+}

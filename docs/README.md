@@ -21,8 +21,9 @@ How the Liège Alerts bot's push feeds work, per chain.
 Deep dives on non-alert parts of the app.
 
 - [`/research` — on-demand protocol research (Platinum)](features/research-command.md)
-  — how the command resolves an address/URL/repo into a sourced report, and checks
-  a project's docs against its deployed bytecode
+  — how the command resolves an address/URL/repo into a sourced report, checks a
+  project's docs against its deployed bytecode, and tells a protocol apart from a
+  project with a launchpad token bolted on
 - [Dex Orders — data flow](features/dex-orders-flow.md)
 - [Dune SQL — Pump.fun deploys](features/dune-query-all-deploys.md)
 

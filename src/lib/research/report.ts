@@ -23,8 +23,12 @@ import type {
   VerificationCheck,
 } from "./types";
 import { TOPICS, topEvidence } from "./extract";
+import type { SubjectProfile } from "./profile";
+import type { TokenShape } from "./token-shape";
 
 export interface RiskInputs {
+  profile?: SubjectProfile;
+  tokenShape?: TokenShape;
   onchain?: OnChainFacts;
   market?: TokenMarket;
   docs?: DocsFindings;
@@ -37,17 +41,59 @@ const DAY = 86_400_000;
 
 export function synthesiseRisks(input: RiskInputs): RiskFlag[] {
   const out: RiskFlag[] = [];
-  const { onchain, market, docs, github, evidence, verifications } = input;
+  const { onchain, market, docs, github, evidence, verifications, profile, tokenShape } = input;
+
+  // ── the token-vs-project distinction ───────────────────────────────────────
+  if (profile?.shape === "project-with-token") {
+    out.push({
+      severity: tokenShape?.kind === "launchpad-standard" ? "medium" : "info",
+      label: "Token has no mechanism of its own",
+      detail:
+        `${tokenShape?.launchpad ? `A ${tokenShape.launchpad} mint` : "A standard token"}` +
+        " with no documented fees, emissions, governance or revenue share. Its price is a bet on attention to the project, not on a cash flow.",
+    });
+    if (profile.mentionsToken === false) {
+      out.push({
+        severity: "high",
+        label: "The project never mentions the token",
+        detail:
+          "The repository and its documentation contain no reference to a token, ticker or contract address. The association comes from the token's own metadata and socials — treat any claim of official endorsement as unverified.",
+      });
+    }
+  }
+  if (profile?.shape === "token-only") {
+    out.push({
+      severity: "high",
+      label: "Nothing documents this token",
+      detail: "No docs, no repository and no site we could reach. There is nothing to research beyond the market data below.",
+    });
+  }
+  for (const f of github?.suspiciousFiles ?? []) {
+    out.push({
+      severity: "medium",
+      label: `Possible committed secret: ${f}`,
+      detail: `The repository root contains \`${f}\`. Filename only — the contents were not read — but credentials in a public repo are worth checking before trusting the project's operational hygiene.`,
+    });
+  }
+  if (github && !github.license) {
+    out.push({
+      severity: "info",
+      label: "No recognised licence",
+      detail: `${github.owner}/${github.repo} publishes no SPDX licence GitHub recognises, so reuse rights are unclear.`,
+    });
+  }
 
   // ── documentation ──────────────────────────────────────────────────────────
-  if (!docs) {
+  // Only a protocol is faulted for having no documentation site: a code-first
+  // project's README IS its documentation, and `docs` already carries it.
+  if (!docs && profile?.shape === "protocol") {
     out.push({
       severity: "high",
       label: "No documentation found",
       detail:
         "Nothing at the conventional locations (/docs, docs.<domain>, whitepaper links). Every claim about how this works is then unsourced.",
     });
-  } else if (docs.pages.reduce((n, p) => n + p.chars, 0) < 4_000) {
+  } else if (docs && profile?.shape === "protocol" && docs.pages.reduce((n, p) => n + p.chars, 0) < 4_000) {
     out.push({
       severity: "medium",
       label: "Documentation is thin",
