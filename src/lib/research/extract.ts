@@ -257,6 +257,20 @@ const RULES: Rule[] = [
   },
 ];
 
+/**
+ * A stripped navigation bar reads as one long line of Title Case with no verb:
+ * "Rules Launches Launch a token Docs My vault X @hoookedpad ↗". It satisfied
+ * every prose test and became a project's "description" in the TL;DR, so it is
+ * tested for directly: no sentence punctuation, and mostly capitalised fragments.
+ */
+function isNavLine(s: string): boolean {
+  if (/[.!?]/.test(s)) return false;
+  const words = s.split(/\s+/).filter(Boolean);
+  if (words.length < 4) return false;
+  const capped = words.filter((w) => /^[A-Z@#↗]/.test(w)).length;
+  return capped / words.length >= 0.4;
+}
+
 /** Lines that are navigation, legal furniture or code, not prose. */
 function isNoise(line: string): boolean {
   const s = line.trim();
@@ -357,7 +371,8 @@ export function extractFromDocs(pages: DocPage[], subjectName?: string, shape?: 
         const isBanner =
           /^[A-Z][\w ]{0,14}:/.test(lead) ||
           /^(live|website|site|docs?|status|demo|homepage|install)\b/i.test(lead) ||
-          /\b[a-z0-9-]+\.(com|org|io|xyz|church|dev|app|ai|net)\b/i.test(lead.slice(0, 40));
+          /\b[a-z0-9-]+\.(com|org|io|xyz|church|dev|app|ai|net)\b/i.test(lead.slice(0, 40)) ||
+          isNavLine(lead);
         if (!isBanner) {
           leadTaken = true;
           evidence.push({ topic: TOPICS.PURPOSE, text: lead, url: page.url, heading, weight: 30, primary: true });

@@ -41,7 +41,10 @@ export function composeTldr(r: ResearchReport): string[] {
       .map(String);
     if (covered.length) identity.push(`documents ${covered.join(", ")}`);
     if (r.docs?.contracts.length) identity.push(`${r.docs.contracts.length} contracts published`);
-    identity.push(r.onchain?.verified ? "source verified" : "source not verified");
+    // Only speak to verification when a contract was actually read. With no
+    // address in the input there is no source to verify, and "source not verified"
+    // read as a finding about the project rather than an absence of input.
+    if (r.onchain) identity.push(r.onchain.verified ? "source verified" : "source not verified");
   } else {
     const g = r.github;
     const lang = g?.language ? `${g.language} ` : "";

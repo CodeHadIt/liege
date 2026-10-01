@@ -364,6 +364,31 @@ export async function runResearch(rawInput: string, opts: ResearchOptions = {}):
       subject.oneLinerUrl = `https://www.coingecko.com/en/coins/${coin.id}`;
     }
   }
+  /*
+   * Name it from its own site, not from the URL that was typed.
+   *
+   * A website input with no token resolves no name, and the report was titled
+   * "RESEARCH — https://www.hookedpad.com/". The docs page title is the project's
+   * own name; the host is the fallback.
+   */
+  if (!subject.name) {
+    // Titles are "Docs · Hooked", "Hooked — Documentation", "Hooked | Home": split
+    // on the separator and keep the segment that is a name rather than a section.
+    const GENERIC = /^(docs?|documentation|home|blog|overview|introduction|guide|app|site)$/i;
+    const segments = (docs?.pages[0]?.title ?? "")
+      .split(/\s*[|·•–—]\s*/)
+      .map((x) => x.trim())
+      .filter((x) => x.length > 1 && !GENERIC.test(x));
+    const title = segments.sort((a, b) => a.length - b.length)[0];
+    if (title && title.length <= 60) subject.name = title;
+  }
+  if (!subject.name && subject.website) {
+    try {
+      subject.name = new URL(subject.website).hostname.replace(/^www\./, "");
+    } catch {
+      /* fall through to the raw input */
+    }
+  }
   if (!subject.name) subject.name = subject.symbol ?? input.value;
 
   // A ready-made X search is the honest answer to "what is being said about this
