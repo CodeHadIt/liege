@@ -232,6 +232,19 @@ async function enrichFromExplorer(
       // worth printing ("LaunchToken" rather than "unnamed proxy").
       if (sc.implementations?.[0]?.name && (!facts.contractName || facts.proxyType)) {
         facts.contractName = sc.implementations[0].name;
+        /*
+         * And it counts as verified.
+         *
+         * Blockscout answers is_verified=false for a minimal-proxy clone — the
+         * clone's own 45 bytes are not verified source — while the implementation
+         * it delegates every call to is fully verified. Reporting that as "source
+         * not verified" told the reader the opposite of the truth about the code
+         * that actually runs.
+         */
+        if (facts.verified !== true) {
+          facts.verified = true;
+          facts.notes.push("verified via the implementation contract; the clone itself carries no source");
+        }
       }
     }
     const addr = await getJson<{

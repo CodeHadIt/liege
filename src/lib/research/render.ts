@@ -14,6 +14,7 @@ import { escapeHtml, formatCompact } from "@/lib/telegram/utils/format";
 import { TOPICS, topEvidence, type Topic } from "./extract";
 import { verdictSummary } from "./verify";
 import { describeAttachedToken } from "./token-shape";
+import { clip, composeTldr } from "./summary";
 import type { Evidence, ResearchReport, RiskFlag } from "./types";
 
 const LIMIT = 3_600; // Telegram's cap is 4096; headroom for the page header.
@@ -33,8 +34,11 @@ function link(url: string, label: string): string {
 /** A quoted sentence with a superscript source link. */
 function quote(e: Evidence, sourceIndex?: number): string {
   const src = sourceIndex !== undefined ? ` ${link(e.url, `[${sourceIndex}]`)}` : "";
-  const where = e.heading ? `<i>${escapeHtml(e.heading)}</i> — ` : "";
-  return `• ${where}${escapeHtml(e.text)}${src}`;
+  // Headings are dropped when they repeat the section they sit under, and quotes
+  // are capped: a 400-character paragraph is a section's worth of space for one
+  // sentence, and the URL is there for anyone who wants the rest.
+  const where = e.heading && e.heading.length <= 34 ? `<i>${escapeHtml(e.heading)}</i> — ` : "";
+  return `• ${where}${escapeHtml(clip(e.text, 230))}${src}`;
 }
 
 function usd(n: number | undefined): string {
@@ -70,9 +74,11 @@ export function renderTldr(r: ResearchReport): string {
   ].filter(Boolean);
   if (chainBits.length) L.push(chainBits.join(" · "));
 
-  if (r.subject.oneLiner) {
+  const summary = composeTldr(r);
+  if (summary.length) {
     L.push("");
-    L.push(`<b>TL;DR</b> — ${escapeHtml(r.subject.oneLiner)}`);
+    L.push(`<b>TL;DR</b> — ${escapeHtml(summary[0])}`);
+    for (const line of summary.slice(1)) L.push(escapeHtml(line));
   }
 
   /*
@@ -87,21 +93,21 @@ export function renderTldr(r: ResearchReport): string {
       `⚠️ <b>Token ≠ project.</b> ${escapeHtml(
         describeAttachedToken(r.tokenShape, {
           projectName: r.github?.repo ?? r.subject.name,
-          purpose: r.subject.oneLiner,
           mentionedInRepo: r.profile.mentionsToken,
         }).replace(/\*\*/g, "")
       )}`
     );
-  } else if (r.profile.shape === "protocol") {
-    L.push("");
-    L.push(`<b>Shape</b> — ${escapeHtml(r.profile.reason)}`);
   }
 
   if (r.highlights.length) {
     L.push("");
     L.push("<b>What stands out</b>");
-    for (const h of r.highlights.slice(0, 5)) {
-      L.push(`▸ <b>${escapeHtml(h.label)}</b> — ${escapeHtml(trim(h.detail, 220))}`);
+    // The TLDR already quotes the project's own one-liner; printing it again as a
+    // highlight wasted the first and most-read slot on a repeat.
+    const lead = (r.subject.oneLiner ?? "").slice(0, 60).toLowerCase();
+    const picks = r.highlights.filter((h) => !lead || !h.detail.toLowerCase().startsWith(lead)).slice(0, 3);
+    for (const h of picks) {
+      L.push(`▸ <b>${escapeHtml(h.label)}</b> — ${escapeHtml(trim(h.detail, 150))}`);
     }
   }
 
@@ -120,18 +126,20 @@ export function renderTldr(r: ResearchReport): string {
   }
 
   const verdict = verdictSummary(r.verifications);
+  const mismatch = r.verifications.find((v) => v.verdict === "mismatch");
   if (verdict) {
     L.push("");
-    L.push(`<b>Docs vs deployed code</b> — ${escapeHtml(verdict)}`);
-    const mismatch = r.verifications.find((v) => v.verdict === "mismatch");
-    if (mismatch) L.push(`🔴 ${escapeHtml(trim(mismatch.claim, 120))} → ${escapeHtml(mismatch.observed)}`);
+    L.push(`<b>Docs vs code</b> — ${escapeHtml(verdict)}`);
+    if (mismatch) L.push(`🔴 ${escapeHtml(trim(mismatch.claim, 110))} → ${escapeHtml(trim(mismatch.observed, 90))}`);
   }
 
   const topRisks = r.risks.filter((f) => f.severity !== "info").slice(0, 4);
   if (topRisks.length) {
     L.push("");
     L.push("<b>Flags</b>");
-    for (const f of topRisks) L.push(`${SEVERITY_ICON[f.severity]} <b>${escapeHtml(f.label)}</b> — ${escapeHtml(trim(f.detail, 160))}`);
+    // Labels only in the TLDR. The detail is one scroll away in the risk register,
+    // and printing both made the flag block longer than everything above it.
+    for (const f of topRisks) L.push(`${SEVERITY_ICON[f.severity]} ${escapeHtml(f.label)}`);
   }
 
   const links: string[] = [];
@@ -146,7 +154,7 @@ export function renderTldr(r: ResearchReport): string {
   }
 
   L.push("");
-  L.push(`<i>Full report follows. ${r.coverage.filter((c) => c.state === "ok").length}/${r.coverage.length} sources answered in ${(r.elapsedMs / 1000).toFixed(1)}s.</i>`);
+  L.push(`<i>Detail follows · ${r.coverage.filter((c) => c.state === "ok").length}/${r.coverage.length} sources · ${(r.elapsedMs / 1000).toFixed(1)}s</i>`);
 
   return L.join("\n");
 }
@@ -164,19 +172,15 @@ export function renderDetail(r: ResearchReport): string[] {
   // 1. Identity and provenance — how we got here, so nothing downstream is magic.
   {
     const lines: string[] = [];
-    lines.push(`Input: <code>${escapeHtml(r.input.value)}</code>`);
-    lines.push(`Read as: ${escapeHtml(r.input.reason)}`);
-    if (r.subject.symbol) lines.push(`Ticker: <b>$${escapeHtml(r.subject.symbol)}</b>`);
     if (r.subject.categories.length) lines.push(`Categories: ${escapeHtml(r.subject.categories.join(", "))}`);
     if (r.onchain) {
-      lines.push(`Chain: ${chainName(r.onchain.chain)}`);
-      lines.push(`Address: <code>${escapeHtml(r.onchain.address)}</code>`);
-      if (r.onchain.contractName) lines.push(`Verified source: <code>${escapeHtml(r.onchain.contractName)}</code>${r.onchain.verified ? " ✅" : ""}`);
+      lines.push(`<code>${escapeHtml(r.onchain.address)}</code> · ${chainName(r.onchain.chain)}`);
+      if (r.onchain.contractName) lines.push(`Source: <code>${escapeHtml(r.onchain.contractName)}</code>${r.onchain.verified ? " ✅ verified" : ""}`);
       if (r.onchain.proxyType) lines.push(`Proxy: ${escapeHtml(r.onchain.proxyType)} → <code>${escapeHtml(r.onchain.implementation ?? "?")}</code>`);
       if (r.onchain.creator) lines.push(`Deployed by: <code>${escapeHtml(shortAddr(r.onchain.creator))}</code>`);
       if (r.onchain.holderCount) lines.push(`Holders: ${r.onchain.holderCount.toLocaleString("en-US")}`);
     }
-    if (r.docs) lines.push(`Docs: ${link(r.docs.rootUrl, r.docs.rootUrl)} (found by ${escapeHtml(r.docs.discovery)})`);
+    if (r.docs) lines.push(`Docs: ${link(r.docs.rootUrl, "source")} (via ${escapeHtml(r.docs.discovery)}, ${r.docs.pages.length} page(s))`);
     if (r.subject.whitepaperUrl) lines.push(`Whitepaper: ${link(r.subject.whitepaperUrl, "linked")}`);
     sections.push({ title: "Identity", lines });
   }
@@ -209,17 +213,17 @@ export function renderDetail(r: ResearchReport): string[] {
 
   // 2–10: the framework buckets, each quoting the docs.
   const PROTOCOL_BUCKETS: { title: string; topic: Topic; limit: number; blurb?: string }[] = [
-    { title: "How it works", topic: TOPICS.MECHANISM, limit: 5 },
-    { title: "Fees and value capture", topic: TOPICS.FEES, limit: 5, blurb: "Who pays, and who is paid." },
-    { title: "Supply and tokenomics", topic: TOPICS.TOKENOMICS, limit: 5 },
-    { title: "Rewards and emissions", topic: TOPICS.REWARDS, limit: 5, blurb: "The documented reason to hold." },
-    { title: "Burn and buybacks", topic: TOPICS.BURN, limit: 3 },
-    { title: "Admin powers and governance", topic: TOPICS.GOVERNANCE, limit: 5, blurb: "What someone else can change." },
-    { title: "What cannot change", topic: TOPICS.GUARANTEE, limit: 5, blurb: "The checkable claims." },
-    { title: "Custody and locks", topic: TOPICS.CUSTODY, limit: 4 },
-    { title: "Security and testing", topic: TOPICS.SECURITY, limit: 4 },
-    { title: "External dependencies", topic: TOPICS.DEPENDENCIES, limit: 3 },
-    { title: "Integration surface", topic: TOPICS.INTEGRATION, limit: 3 },
+    { title: "How it works", topic: TOPICS.MECHANISM, limit: 3 },
+    { title: "Fees and value capture", topic: TOPICS.FEES, limit: 3 },
+    { title: "Supply and tokenomics", topic: TOPICS.TOKENOMICS, limit: 3 },
+    { title: "Rewards and emissions", topic: TOPICS.REWARDS, limit: 3 },
+    { title: "Burn and buybacks", topic: TOPICS.BURN, limit: 2 },
+    { title: "Admin powers and governance", topic: TOPICS.GOVERNANCE, limit: 3 },
+    { title: "What cannot change", topic: TOPICS.GUARANTEE, limit: 3 },
+    { title: "Custody and locks", topic: TOPICS.CUSTODY, limit: 2 },
+    { title: "Security and testing", topic: TOPICS.SECURITY, limit: 2 },
+    { title: "External dependencies", topic: TOPICS.DEPENDENCIES, limit: 2 },
+    { title: "Integration surface", topic: TOPICS.INTEGRATION, limit: 2 },
   ];
 
   /*
@@ -229,13 +233,13 @@ export function renderDetail(r: ResearchReport): string[] {
    * README all along, under "purpose", "method" and "findings".
    */
   const PROJECT_BUCKETS: { title: string; topic: Topic; limit: number; blurb?: string }[] = [
-    { title: "What the project is for", topic: TOPICS.PURPOSE, limit: 4 },
-    { title: "How it works", topic: TOPICS.METHOD, limit: 5, blurb: "Method and stack, as the repo describes them." },
-    { title: "What it has found", topic: TOPICS.FINDINGS, limit: 6, blurb: "Results the project claims for itself." },
-    { title: "Running it", topic: TOPICS.USAGE, limit: 3 },
-    { title: "Maturity and caveats", topic: TOPICS.STATUS, limit: 4 },
-    { title: "Any token mechanics the repo does describe", topic: TOPICS.TOKENOMICS, limit: 3 },
-    { title: "Security notes", topic: TOPICS.SECURITY, limit: 3 },
+    { title: "What the project is for", topic: TOPICS.PURPOSE, limit: 2 },
+    { title: "How it works", topic: TOPICS.METHOD, limit: 3 },
+    { title: "What it has found", topic: TOPICS.FINDINGS, limit: 4, blurb: "Claimed by the project." },
+    { title: "Running it", topic: TOPICS.USAGE, limit: 2 },
+    { title: "Maturity and caveats", topic: TOPICS.STATUS, limit: 3 },
+    { title: "Token mechanics in the repo", topic: TOPICS.TOKENOMICS, limit: 2 },
+    { title: "Security notes", topic: TOPICS.SECURITY, limit: 2 },
   ];
 
   const isProtocol = r.profile.shape === "protocol";
@@ -260,16 +264,17 @@ export function renderDetail(r: ResearchReport): string[] {
 
   // Headline numbers, with the line each was read from.
   if (r.docMetrics.length) {
-    const lines = r.docMetrics.map(
-      (m) => `• <b>${escapeHtml(m.label)}</b>: ${escapeHtml(m.value)}${m.context ? `\n   <i>${escapeHtml(trim(m.context, 150))}</i>` : ""}`
-    );
-    sections.push({ title: "Numbers, as the docs state them", lines });
+    // One line per number. The source line each was read from stays in the JSON
+    // (`--json`) for tuning, where it belongs — in a Telegram report it doubled
+    // the section's length to repeat what the value already said.
+    const lines = [r.docMetrics.map((m) => `${escapeHtml(m.label)}: <b>${escapeHtml(m.value)}</b>`).join(" · ")];
+    sections.push({ title: "Numbers, per the docs", lines });
   }
 
   // Docs vs chain — the differentiator.
   if (r.verifications.length) {
     const lines: string[] = [];
-    lines.push("<i>Each claim below was read from the docs and then checked against the deployed contract.</i>");
+    lines.push("<i>Docs claim → what the chain says.</i>");
     // Grouped by claim: one sentence can carry several checkable assertions
     // ("supply is fixed, with no mint, no owner and no pause" is three), and
     // repeating it once per check reads as the report stuttering.
@@ -287,7 +292,7 @@ export function renderDetail(r: ResearchReport): string[] {
       lines.push(`${worst} <b>Claim:</b> ${escapeHtml(trim(claim, 200))}`);
       for (const c of checks) {
         lines.push(`     <b>Chain:</b> ${escapeHtml(c.observed)}`);
-        if (c.note) lines.push(`     <i>${escapeHtml(c.note)}</i>`);
+        if (c.note) lines.push(`     <i>${escapeHtml(clip(c.note, 150))}</i>`);
       }
     }
     sections.push({ title: "Docs vs deployed code", lines });
@@ -296,7 +301,7 @@ export function renderDetail(r: ResearchReport): string[] {
   // Market.
   if (r.markets.length) {
     const lines: string[] = [];
-    for (const m of [...r.markets].sort((a, b) => (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, 6)) {
+    for (const m of [...r.markets].sort((a, b) => (b.liquidityUsd ?? 0) - (a.liquidityUsd ?? 0)).slice(0, 3)) {
       const bits = [
         m.pairLabel ? `<b>${escapeHtml(m.pairLabel)}</b>` : undefined,
         `${escapeHtml(m.chain)}/${escapeHtml(m.dexId ?? "?")}`,
@@ -338,7 +343,7 @@ export function renderDetail(r: ResearchReport): string[] {
   // Published contract set — the map of the protocol.
   if (r.docs?.contracts.length) {
     const lines = r.docs.contracts
-      .slice(0, 16)
+      .slice(0, 10)
       .map((c) => `• ${escapeHtml(c.label)}: <code>${escapeHtml(c.address)}</code>`);
     sections.push({ title: "Contracts the docs publish", lines });
   }
@@ -376,15 +381,14 @@ export function renderDetail(r: ResearchReport): string[] {
     if (r.social.telegram) lines.push(`Telegram: ${link(r.social.telegram, "channel")}`);
     if (r.social.discord) lines.push(`Discord: ${link(r.social.discord, "server")}`);
     if (r.social.caSearchUrl) {
-      lines.push(`Mentions of the address on X: ${link(r.social.caSearchUrl, "open live search")}`);
-      lines.push("<i>Not read here — the timeline needs an X API key this bot does not hold, so the search is linked rather than summarised.</i>");
+      lines.push(`${link(r.social.caSearchUrl, "X search for the address")} <i>(not read — no X API key)</i>`);
     }
     if (lines.length) sections.push({ title: "Social", lines });
   }
 
   // Risk register.
   if (r.risks.length) {
-    const lines = r.risks.map((f) => `${SEVERITY_ICON[f.severity]} <b>${escapeHtml(f.label)}</b> — ${escapeHtml(trim(f.detail, 300))}`);
+    const lines = r.risks.map((f) => `${SEVERITY_ICON[f.severity]} <b>${escapeHtml(f.label)}</b> — ${escapeHtml(trim(f.detail, 180))}`);
     sections.push({ title: "Risk register", lines });
   }
 
@@ -396,9 +400,14 @@ export function renderDetail(r: ResearchReport): string[] {
 
   // Coverage — which source answered, and which did not.
   {
-    const lines = r.coverage.map((c) => `${STATE_ICON[c.state]} <b>${escapeHtml(c.id)}</b> — ${escapeHtml(c.detail)}`);
+    // A source that worked needs its name and a tick; only a miss needs explaining.
+    const lines = r.coverage.map((c) =>
+      c.state === "ok"
+        ? `${STATE_ICON[c.state]} ${escapeHtml(c.id)}`
+        : `${STATE_ICON[c.state]} <b>${escapeHtml(c.id)}</b> — ${escapeHtml(clip(c.detail, 110))}`
+    );
     lines.push("");
-    lines.push(`<i>Generated ${new Date(r.generatedAt).toISOString().replace("T", " ").slice(0, 19)}Z in ${(r.elapsedMs / 1000).toFixed(1)}s. Quotes are the project's own words; on-chain values were read at generation time.</i>`);
+    lines.push(`<i>${new Date(r.generatedAt).toISOString().replace("T", " ").slice(0, 16)}Z · quotes are the project's own words · chain values read at generation time</i>`);
     sections.push({ title: "Sources and coverage", lines });
   }
 

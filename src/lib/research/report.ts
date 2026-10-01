@@ -49,15 +49,15 @@ export function synthesiseRisks(input: RiskInputs): RiskFlag[] {
       severity: tokenShape?.kind === "launchpad-standard" ? "medium" : "info",
       label: "Token has no mechanism of its own",
       detail:
-        `${tokenShape?.launchpad ? `A ${tokenShape.launchpad} mint` : "A standard token"}` +
-        " with no documented fees, emissions, governance or revenue share. Its price is a bet on attention to the project, not on a cash flow.",
+        `${tokenShape?.launchpad ? `${tokenShape.launchpad} mint` : "Standard token"}` +
+        ": no fees, emissions, governance or revenue share. A bet on attention, not on cash flow.",
     });
     if (profile.mentionsToken === false) {
       out.push({
         severity: "high",
         label: "The project never mentions the token",
         detail:
-          "The repository and its documentation contain no reference to a token, ticker or contract address. The association comes from the token's own metadata and socials — treat any claim of official endorsement as unverified.",
+          "No reference to a token, ticker or contract address anywhere in it. The link comes from the token's metadata — treat any claim of endorsement as unverified.",
       });
     }
   }
@@ -65,21 +65,21 @@ export function synthesiseRisks(input: RiskInputs): RiskFlag[] {
     out.push({
       severity: "high",
       label: "Nothing documents this token",
-      detail: "No docs, no repository and no site we could reach. There is nothing to research beyond the market data below.",
+      detail: "No docs, repo or site reachable — nothing to research beyond the market data.",
     });
   }
   for (const f of github?.suspiciousFiles ?? []) {
     out.push({
       severity: "medium",
       label: `Possible committed secret: ${f}`,
-      detail: `The repository root contains \`${f}\`. Filename only — the contents were not read — but credentials in a public repo are worth checking before trusting the project's operational hygiene.`,
+      detail: "In the repo root. Filename only, contents not read — but worth checking.",
     });
   }
-  if (github && !github.license) {
+  if (github && (!github.license || /^(noassertion|other)$/i.test(github.license))) {
     out.push({
       severity: "info",
       label: "No recognised licence",
-      detail: `${github.owner}/${github.repo} publishes no SPDX licence GitHub recognises, so reuse rights are unclear.`,
+      detail: "No SPDX licence GitHub recognises — reuse rights unclear.",
     });
   }
 
@@ -91,13 +91,13 @@ export function synthesiseRisks(input: RiskInputs): RiskFlag[] {
       severity: "high",
       label: "No documentation found",
       detail:
-        "Nothing at the conventional locations (/docs, docs.<domain>, whitepaper links). Every claim about how this works is then unsourced.",
+        "Nothing at /docs, docs.<domain> or any whitepaper link — every claim about the mechanism is unsourced.",
     });
   } else if (docs && profile?.shape === "protocol" && docs.pages.reduce((n, p) => n + p.chars, 0) < 4_000) {
     out.push({
       severity: "medium",
       label: "Documentation is thin",
-      detail: `Only ${docs.pages.reduce((n, p) => n + p.chars, 0).toLocaleString("en-US")} characters of readable docs across ${docs.pages.length} page(s) — not enough to describe a mechanism.`,
+      detail: `${docs.pages.reduce((n, p) => n + p.chars, 0).toLocaleString("en-US")} chars across ${docs.pages.length} page(s) — not enough to describe a mechanism.`,
     });
   }
 
@@ -117,7 +117,7 @@ export function synthesiseRisks(input: RiskInputs): RiskFlag[] {
       severity: "medium",
       label: "No audit statement anywhere",
       detail:
-        "Neither the docs nor the repository mention an audit, tests or a bug bounty. Absence of a claim is not a claim of absence — but nothing here supports the code having been reviewed.",
+        "No audit, test or bug-bounty claim in the docs or the repo. Nothing supports the code having been reviewed.",
     });
   }
 
@@ -127,7 +127,7 @@ export function synthesiseRisks(input: RiskInputs): RiskFlag[] {
       severity: "high",
       label: "Bytecode contains a mint selector",
       detail:
-        "Supply may not be fixed. The selector could sit behind a check that always reverts, which only reading the verified source will settle.",
+        "Supply may not be fixed. It could sit behind a check that always reverts — only the source settles it.",
     });
   }
   for (const note of onchain?.notes ?? []) {
@@ -141,7 +141,7 @@ export function synthesiseRisks(input: RiskInputs): RiskFlag[] {
     out.push({
       severity: "high",
       label: "Upgradeable proxy",
-      detail: `${onchain.proxyType} → ${onchain.implementation}. The code you read today can be replaced by whoever holds the upgrade key.`,
+      detail: `${onchain.proxyType} → ${onchain.implementation}. Today's code can be replaced by whoever holds the key.`,
     });
   }
   if (onchain?.ownerAddress) {
@@ -151,21 +151,21 @@ export function synthesiseRisks(input: RiskInputs): RiskFlag[] {
       label: "Contract has an owner",
       detail: ownerPowers
         ? `owner() = ${onchain.ownerAddress}. Documented powers: ${ownerPowers.text}`
-        : `owner() = ${onchain.ownerAddress}, and the docs do not enumerate what it can do. Assume it can do whatever the source allows until you have read it.`,
+        : `owner() = ${onchain.ownerAddress}; the docs do not say what it can do.`,
     });
   }
   if (onchain?.hasPauseSelector) {
     out.push({
       severity: "medium",
       label: "Pausable",
-      detail: "The bytecode contains a pause/unpause selector — trading or transfers may be stoppable.",
+      detail: "Pause/unpause selector in the bytecode — trading or transfers may be stoppable.",
     });
   }
   if (onchain && onchain.verified === false) {
     out.push({
       severity: "high",
       label: "Contract source is not verified",
-      detail: "There is no published source to check the docs against. Everything about the mechanism is taken on trust.",
+      detail: "No published source to check the docs against.",
     });
   }
 
@@ -175,13 +175,13 @@ export function synthesiseRisks(input: RiskInputs): RiskFlag[] {
       out.push({
         severity: "high",
         label: "Very thin liquidity",
-        detail: `$${Math.round(market.liquidityUsd).toLocaleString("en-US")} in the deepest pool. An exit moves the price against you.`,
+        detail: `$${Math.round(market.liquidityUsd).toLocaleString("en-US")} in the deepest pool — an exit moves the price against you.`,
       });
     } else if (market.liquidityUsd < 75_000) {
       out.push({
         severity: "medium",
         label: "Thin liquidity",
-        detail: `$${Math.round(market.liquidityUsd).toLocaleString("en-US")} in the deepest pool — size positions against the depth, not the market cap.`,
+        detail: `$${Math.round(market.liquidityUsd).toLocaleString("en-US")} in the deepest pool — size against depth, not market cap.`,
       });
     }
   }
@@ -191,7 +191,7 @@ export function synthesiseRisks(input: RiskInputs): RiskFlag[] {
       out.push({
         severity: "info",
         label: "Young market",
-        detail: `The deepest pair is ${Math.max(0, Math.round(ageDays))} day(s) old. There is no track record to read yet.`,
+        detail: `Deepest pair ${Math.max(0, Math.round(ageDays))}d old — no track record yet.`,
       });
     }
   }
@@ -203,7 +203,7 @@ export function synthesiseRisks(input: RiskInputs): RiskFlag[] {
       out.push({
         severity: "medium",
         label: "Repository looks abandoned",
-        detail: `Last push ${Math.round(staleDays)} days ago (${github.owner}/${github.repo}).`,
+        detail: `Last push ${Math.round(staleDays)}d ago.`,
       });
     }
   }

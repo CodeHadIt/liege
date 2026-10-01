@@ -6,7 +6,7 @@ mechanism, fees, supply, rewards, admin powers, security, the project's own
 documentation checked against its deployed bytecode, and an explicit list of what
 it could not answer.
 
-**Last updated:** 2026-10-01 (two subject shapes; repo-as-docs; multi-input)
+**Last updated:** 2026-10-01 (composed TL;DR; verbosity pass)
 
 ---
 
@@ -96,6 +96,47 @@ That last clause is its own check: the repo is searched for any crypto reference
 and a project that never mentions a token gets a **high** flag saying the
 association is unverified. "token" alone does not count — in an ML repo it is a
 unit of text.
+
+---
+
+### The TL;DR is composed, not quoted
+
+The first version printed the README's opening sentence as the TL;DR. That is a
+description of the project by the project — useful, but not an answer to "what did
+you find out". The TL;DR is now assembled from facts the run established:
+
+```
+TL;DR — Python project with a pump.fun token attached — 143★, 7d old, active —
+        no tests, no clear licence.
+Their words: "Steering language models into strong negative and positive
+        valence states, and measuring what they say…"
+Token: no mechanism of its own, $6k liquidity, $6k FDV, $1.4M 24h vol, pair 1d old.
+Watch: the project never mentions the token; very thin liquidity.
+```
+
+Line 1 is ours, in facts. The project's own sentence still appears, on line 2 and
+marked as theirs. Protocol runs get the same frame with mechanism coverage,
+published contract count and verification status in place of repo health.
+
+This is synthesis without paraphrase — the line the pipeline holds everywhere:
+facts get rearranged and compressed, sentences never get rewritten.
+
+### Detailed, not verbose
+
+Every section is capped, and anything that repeated itself was cut:
+
+| | |
+|---|---|
+| TLDR flags | labels only; the detail is one scroll away in the risk register |
+| Highlights | 3, capped at 150 chars, and never a repeat of the quoted one-liner |
+| Evidence per section | 2–4 quotes, each capped at 230 chars |
+| Headings on quotes | dropped when longer than 34 chars |
+| Numbers section | one line, no source-line echo (that stays in `--json` for tuning) |
+| Market | 3 deepest pairs |
+| Coverage | a tick for a source that worked; a reason only for one that did not |
+| Token ≠ project line | no self-description, no long caveat — both are already in the TLDR |
+
+The guiding rule: a fact appears **once**, in the place a reader would look for it.
 
 ---
 

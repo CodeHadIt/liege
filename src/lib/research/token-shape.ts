@@ -146,34 +146,24 @@ export function describeAttachedToken(
   shape: TokenShape,
   opts: { projectName?: string; purpose?: string; mentionedInRepo?: boolean }
 ): string {
-  const venue = shape.launchpad ?? "a standard launchpad";
+  const venue = shape.launchpad ?? "standard launchpad";
   const base =
     shape.kind === "launchpad-standard"
-      ? `This is a **${venue}-style token** — a stock launchpad mint with no contract, fees, emissions or governance of its own`
+      ? `${venue} mint — no contract, fees, emissions or governance of its own`
       : shape.kind === "standard-erc20"
-        ? `This is a **plain ERC-20** with no mechanism of its own — no fees, emissions or governance`
-        : `This token's mechanics could not be established`;
+        ? `plain ERC-20 — no fees, emissions or governance`
+        : `mechanics could not be established`;
 
   /*
-   * The project's purpose is QUOTED, never grafted into "which aims to …".
-   * A README's self-description is often a gerund phrase ("Steering language
-   * models into …"), and splicing it after "aims to" produced "which aims to
-   * steering language models into …". Quoting is both grammatical and more
-   * honest: it is their sentence, not our paraphrase.
+   * No self-description here, and no long caveat.
+   *
+   * Both were already in the TL;DR two lines above — the project's own sentence is
+   * the first thing the report says. Repeating it inside this line made the single
+   * most important sentence in the report something a reader skims past.
    */
-  const attach = opts.projectName
-    ? `, attached to **${opts.projectName}**${opts.purpose ? `, which describes itself as: "${trimSentence(opts.purpose)}"` : ""}`
-    : "";
-
-  const caveat =
-    opts.mentionedInRepo === false
-      ? " The project's own repository never mentions a token, so the association comes from the token's metadata and socials rather than from the project itself."
-      : "";
+  const attach = opts.projectName ? `, attached to **${opts.projectName}**` : "";
+  const caveat = opts.mentionedInRepo === false ? " The repo never mentions a token." : "";
 
   return `${base}${attach}.${caveat}`;
 }
 
-function trimSentence(s: string): string {
-  const t = s.replace(/\s+/g, " ").trim().replace(/[,;]$/, "");
-  return t.length <= 180 ? t : `${t.slice(0, 177)}…`;
-}
