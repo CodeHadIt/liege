@@ -37,6 +37,7 @@ import {
   ordinal,
 } from "./launch-window";
 import { escapeHtml, formatCompact, formatPrice } from "./utils/format";
+import { stockFeedDeprecated } from "./deprecations";
 
 const CHAIN_LABEL = "Robinhood Chain";
 const PLATFORM = "pools.fun";
@@ -129,6 +130,8 @@ async function sendQuoteAlert(chatId: string, a: WatchedAsset): Promise<void> {
  * first listing that didn't match it.
  */
 export async function pollPoolsFunQuoteAssets(): Promise<void> {
+  // Retired as a product feature; the code is kept. See ./deprecations.ts.
+  if (stockFeedDeprecated("poolsfun.quotes")) return;
   const latest = await getLatestBlock();
   if (latest === null) return;
 
@@ -256,6 +259,8 @@ async function sendLaunchAlert(
  * been averaging a few hundred launches a day, essentially all against WETH.
  */
 export async function pollPoolsFunLaunches(): Promise<void> {
+  // Retired as a product feature; the code is kept. See ./deprecations.ts.
+  if (stockFeedDeprecated("poolsfun.launches")) return;
   const now = Date.now();
   for (const [addr, w] of watchedAssets) {
     if (now - w.openedAt > LAUNCH_WINDOW_MS) {

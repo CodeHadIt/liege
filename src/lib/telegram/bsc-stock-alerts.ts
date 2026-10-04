@@ -24,6 +24,7 @@ import {
   ordinal,
 } from "./launch-window";
 import { escapeHtml, formatCompact, formatPrice } from "./utils/format";
+import { stockFeedDeprecated } from "./deprecations";
 
 // ── Tokenized-stock quote assets on BNB Chain ─────────────────────────────────
 // Two launchpads let you create a token priced in a tokenized stock rather than
@@ -310,6 +311,8 @@ async function sendFirstTokenAlert(
  * silently on the first run so the existing catalog never pings.
  */
 export async function pollBscStockQuotes(): Promise<void> {
+  // Retired as a product feature; the code is kept. See ./deprecations.ts.
+  if (stockFeedDeprecated("bsc.quotes")) return;
   const quotes = await fetchAllQuotes();
   if (quotes.length === 0) return;
 
@@ -378,6 +381,8 @@ const MAX_BLOCK_SPAN = 5_000;
 let lastScannedBlock: number | null = null;
 
 export async function pollBscOnchainLaunches(): Promise<void> {
+  // Retired as a product feature; the code is kept. See ./deprecations.ts.
+  if (stockFeedDeprecated("bsc.launches")) return;
   const latest = await getLatestBscBlock();
   if (latest == null) return;
 

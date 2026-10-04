@@ -11,6 +11,7 @@ import { getLatestBlock as poolsFunLatestBlock } from "@/lib/api/pools-fun";
 import { getAlertsBot, broadcastAlert, FEATURE } from "./alerts-bot";
 import { loadHealth, recordProbe, setDownAlerted, type HealthRow } from "@/lib/api/feed-health";
 import { fetchWebhookInfo, judgeWebhook } from "@/lib/api/telegram-webhook";
+import { stockFeedsEnabled } from "./deprecations";
 import { escapeHtml } from "./utils/format";
 
 // ── Monitoring the monitors ──────────────────────────────────────────────────
@@ -56,6 +57,7 @@ const PROBES: Probe[] = [
     source: "stonkfun.quotes",
     label: "StonkFun quote catalog",
     chain: "Solana",
+    skip: () => !stockFeedsEnabled(),
     run: async () => {
       const q = await fetchQuoteTokens();
       return q !== null && q.length > 0;
@@ -65,6 +67,7 @@ const PROBES: Probe[] = [
     source: "stonkfun.launches",
     label: "StonkFun launches feed",
     chain: "Solana",
+    skip: () => !stockFeedsEnabled(),
     run: async () => {
       const l = await fetchStonkFunLaunches();
       return l !== null && l.length > 0;
@@ -74,6 +77,7 @@ const PROBES: Probe[] = [
     source: "pumpfun.quotes",
     label: "Pump.fun quote whitelist",
     chain: "Solana",
+    skip: () => !stockFeedsEnabled(),
     run: async () => {
       const m = await fetchWhitelistedQuoteMints();
       return m !== null && m.length > 0;
@@ -83,12 +87,14 @@ const PROBES: Probe[] = [
     source: "sunrise.tokens",
     label: "Sunrise asset list",
     chain: "Solana",
+    skip: () => !stockFeedsEnabled(),
     run: async () => (await fetchSunriseTokens()).length > 0,
   },
   {
     source: "robinhood.registry",
     label: "Robinhood asset registry",
     chain: "Robinhood Chain",
+    skip: () => !stockFeedsEnabled(),
     run: async () => (await fetchRobinhoodStockTokens()).length > 0,
   },
   {
@@ -101,24 +107,28 @@ const PROBES: Probe[] = [
     source: "poolsfun.rpc",
     label: "pools.fun factory reads",
     chain: "Robinhood Chain",
+    skip: () => !stockFeedsEnabled(),
     run: async () => (await poolsFunLatestBlock()) !== null,
   },
   {
     source: "flap.catalog",
     label: "Flap payment tokens (RH + BNB)",
     chain: "multi",
+    skip: () => !stockFeedsEnabled(),
     run: async () => (await fetchFlapPaymentTokens()).length > 0,
   },
   {
     source: "fourmeme.quotes",
     label: "Four.meme quote tokens",
     chain: "BNB Chain",
+    skip: () => !stockFeedsEnabled(),
     run: async () => (await fetchFourMemeQuoteTokens()).length > 0,
   },
   {
     source: "basestonk.launches",
     label: "basestonk launch feed",
     chain: "Base",
+    skip: () => !stockFeedsEnabled(),
     run: async () => {
       const l = await fetchBasestonkLaunches(10);
       return l !== null && l.length > 0;
@@ -128,7 +138,7 @@ const PROBES: Probe[] = [
     source: "o1.base",
     label: "o1 quote catalog (Base)",
     chain: "Base",
-    skip: () => !o1KeyConfigured(),
+    skip: () => !stockFeedsEnabled() || !o1KeyConfigured(),
     timeoutMs: 150_000,
     run: async () => {
       const q = await fetchO1Quotes(O1_CHAIN.BASE, false);
@@ -180,7 +190,7 @@ const PROBES: Probe[] = [
     source: "o1.rh",
     label: "o1 quote catalog (Robinhood)",
     chain: "Robinhood Chain",
-    skip: () => !o1KeyConfigured(),
+    skip: () => !stockFeedsEnabled() || !o1KeyConfigured(),
     timeoutMs: 150_000,
     run: async () => {
       const q = await fetchO1Quotes(O1_CHAIN.ROBINHOOD, false);

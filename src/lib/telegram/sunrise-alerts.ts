@@ -7,6 +7,7 @@ import {
 import { getAlertsBot, broadcastAlert, FEATURE } from "./alerts-bot";
 import { escapeHtml } from "./utils/format";
 import { FEED, resolveSeen, markSeen } from "@/lib/api/feed-seen";
+import { stockFeedDeprecated } from "./deprecations";
 
 // Which asset classes to alert on. Sunrise's focus (and the user's) is tokenized
 // stocks — but this is the single place to widen coverage later if desired.
@@ -75,6 +76,8 @@ async function sendAlert(chatId: string, t: SunriseToken): Promise<void> {
  * list silently on first run.
  */
 export async function pollSunriseStocks(): Promise<void> {
+  // Retired as a product feature; the code is kept. See ./deprecations.ts.
+  if (stockFeedDeprecated("sunrise.stocks")) return;
   const tokens = await fetchSunriseTokens();
   if (tokens.length === 0) return;
 

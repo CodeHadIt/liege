@@ -8,7 +8,28 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-10-05 (inbound-path watchdog: webhook probes + boot handler check)
+**Last updated:** 2026-10-05 (stock-pair feeds retired; inbound-path watchdog)
+
+> ## ⚠️ §3–§8 are RETIRED
+>
+> The stock-pair launch feeds — **every chain**: StonkFun, Sunrise, Long, Flap,
+> Pons, pools.fun, Four.meme, o1, basestonk, Pump.fun, and the HOOD watch (§8d) —
+> were retired as a product feature on **2026-10-05**. So was their monitoring.
+>
+> **The code is untouched and still correct.** Nothing was deleted: every
+> watcher, formatter, cursor, seen-set and verification script is where it was,
+> and §3–§8 below remain accurate descriptions of how each feed behaves. They are
+> kept because the launch-window machinery is what any future platform watcher is
+> built from, and because the per-platform knowledge in them — which API is dead,
+> which catalog is geo-blocked, which router lies about its own launches — cost
+> more to learn than it costs to keep.
+>
+> **What is off:** the pollers return immediately, the health probes are skipped,
+> and `FEATURE.LAUNCH` resolves to nobody.
+> **To restore:** `ALERTS_STOCK_FEEDS=on`, then read §15.5 first.
+>
+> Still live: the alpha feeds (§11–§13), the monitoring watchdog (§16) and the
+> Platinum `/research` command.
 
 ---
 
@@ -133,7 +154,7 @@ never call `alertRecipients()`, which exists solely as the bot's interaction gat
 
 | Feature | Platinum | Gold | Muted for Platinum |
 |---|---|---|---|
-| `launch` — all launchpad feeds (§3–§8) | ✅ | ✅ | |
+| `launch` — all launchpad feeds (§3–§8) | ~~✅~~ | ~~✅~~ | **RETIRED — resolves to nobody** |
 | `alpha.confluence.gold` — confluence over the frozen library | — | ✅ | |
 | `alpha.confluence.platinum` — confluence over **all** wallets | ✅ | — | 🔇 |
 | `ath.daily` — the $2M ATH digest and its promotion announcement | ✅ | — | 🔇 |
@@ -1871,6 +1892,12 @@ answered a developer machine perfectly.
 | `o1.base`, `o1.rh` | Base / Robinhood (skipped without `O1_API_KEY`) |
 | `telegram.webhook.alerts`, `telegram.webhook.main` | infra — **inbound** delivery, see below |
 
+Every stock-source probe above is **skipped** while §3–§8 are retired: there is no
+point alerting that a catalog stopped answering when nothing reads it. What still
+runs is `robinhood.rpc` (the alpha-wallet watcher needs it) and the two webhook
+probes. A skipped probe reports `skipped`, never `ok` — a retired source must not
+read as a clean check.
+
 ### Avoiding false alarms
 
 `FAILURES_BEFORE_DOWN = 3` — roughly 30 minutes of genuine unavailability at a
@@ -1945,6 +1972,33 @@ needs something outside the deployment; the cheap version is a cron'd
 Deliberately set aside, with the state recorded so it can be resumed without
 re-deriving it. Nothing here is broken — each item is a capability we chose not
 to finish yet.
+
+### 15.5 Stock-pair feeds — retired 2026-10-05, code kept
+
+Not parked pending a fix: **retired as a product decision.** §3–§8 and §8d, every
+chain, plus their health probes.
+
+| | |
+|---|---|
+| Switch | [`deprecations.ts`](../../src/lib/telegram/deprecations.ts) — `stockFeedsEnabled()`, default **off** |
+| Restore | `ALERTS_STOCK_FEEDS=on` and restart. No code change. |
+| Pollers | guarded at the top of each `poll*` function — returns before any fetch, logs once per process |
+| Delivery | `recipientsFor(FEATURE.LAUNCH)` returns `[]` while off, so no caller can reach a chat |
+| Monitoring | the eleven stock-source probes carry `skip: () => !stockFeedsEnabled()` |
+| Untouched | `robinhood.rpc` stays probed — the §11 alpha-wallet watcher reads the same RPC |
+
+**Three layers, deliberately.** The poller guard stops the work, the probe skip
+stops the noise, and the `recipientsFor` gate is the one that matters: it is the
+single path from a feed to a chat id, so a script, a stray `setInterval` or a
+future caller cannot resurrect a retired feed by accident.
+
+**Before you turn it back on.** The launch watchers resume from **durable
+cursors** (§3) and the catalog watchers from **persisted seen-sets** (§2). The
+seen-sets are safe — a known asset never re-alerts — but a launch cursor will
+replay from the block or timestamp where it stopped, so a feed that has been dark
+for weeks has a backlog to work through on its first pass, and it will announce
+all of it. Either accept the burst or advance the cursors first; the same reasoning
+is in §3's note on resuming from a cursor.
 
 ### lunch.fun — catalog watcher (parked 2026-09-03, blocked on geo)
 

@@ -16,6 +16,7 @@ import {
   ordinal,
 } from "./launch-window";
 import { escapeHtml, formatCompact, formatPrice, formatTimeAgo } from "./utils/format";
+import { stockFeedDeprecated } from "./deprecations";
 
 // ── o1 exchange on Base ──────────────────────────────────────────────────────
 //
@@ -197,6 +198,8 @@ function missingKey(): boolean {
  * swallowing a stock that went live while the process was down.
  */
 export async function pollO1Quotes(chainKey: keyof typeof CHAINS): Promise<void> {
+  // Retired as a product feature; the code is kept. See ./deprecations.ts.
+  if (stockFeedDeprecated("o1.quotes")) return;
   if (missingKey()) return;
   const c = CHAINS[chainKey];
   const st = stateFor(chainKey);
@@ -246,6 +249,8 @@ export async function pollO1Quotes(chainKey: keyof typeof CHAINS): Promise<void>
  * burst that follows a new pair is the signal.
  */
 export async function pollO1Launches(chainKey: keyof typeof CHAINS): Promise<void> {
+  // Retired as a product feature; the code is kept. See ./deprecations.ts.
+  if (stockFeedDeprecated("o1.launches")) return;
   if (missingKey()) return;
   const c = CHAINS[chainKey];
   const st = stateFor(chainKey);

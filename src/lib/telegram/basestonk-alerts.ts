@@ -14,6 +14,7 @@ import {
   ordinal,
 } from "./launch-window";
 import { escapeHtml, formatCompact, formatPrice, formatTimeAgo } from "./utils/format";
+import { stockFeedDeprecated } from "./deprecations";
 
 // ── basestonk on Base ────────────────────────────────────────────────────────
 //
@@ -163,6 +164,8 @@ async function resolvePairs(launches: BasestonkLaunch[]): Promise<Map<string, Pa
  * than being dropped for arriving a pass too early.
  */
 export async function pollBasestonk(): Promise<void> {
+  // Retired as a product feature; the code is kept. See ./deprecations.ts.
+  if (stockFeedDeprecated("basestonk")) return;
   const now = Date.now();
 
   for (const [addr, w] of watchedPairs) {

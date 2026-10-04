@@ -32,6 +32,7 @@ import {
 } from "./launch-window";
 import { escapeHtml, formatCompact, formatTimeAgo } from "./utils/format";
 import { FEED, resolveSeen, markSeen } from "@/lib/api/feed-seen";
+import { stockFeedDeprecated } from "./deprecations";
 
 const CHAIN_LABEL = "Solana";
 const PLATFORM = "Pump.fun";
@@ -134,6 +135,8 @@ async function sendQuoteAlert(chatId: string, q: QuoteMintMeta): Promise<void> {
  * match it — the exact failure mode the StonkFun denylist was written to avoid.
  */
 export async function pollPumpFunQuoteMints(): Promise<void> {
+  // Retired as a product feature; the code is kept. See ./deprecations.ts.
+  if (stockFeedDeprecated("pumpfun.quotes")) return;
   const mints = await fetchWhitelistedQuoteMints();
   // null means the account couldn't be read. Holding state is essential here:
   // treating a failed read as an empty catalog would re-announce every quote as
@@ -266,6 +269,8 @@ async function sendLaunchAlert(
  * therefore covers every launch that could interest us, by construction.
  */
 export async function pollPumpFunLaunches(): Promise<void> {
+  // Retired as a product feature; the code is kept. See ./deprecations.ts.
+  if (stockFeedDeprecated("pumpfun.launches")) return;
   const now = Date.now();
   for (const [mint, w] of watchedQuotes) {
     if (now - w.openedAt > LAUNCH_WINDOW_MS) {

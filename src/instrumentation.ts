@@ -32,6 +32,16 @@ export async function register() {
     // for a day because ALERTS_GOLD_IDS / ALPHA_LIBRARY_CUTOFF were incomplete
     // there and nothing said so. This makes the resolved configuration the first
     // thing in the log.
+    // Retired features, reported at boot so the log says what is NOT running.
+    // A feed that silently stopped being scheduled is indistinguishable from a
+    // feed that broke, which is the confusion this line exists to prevent.
+    const { stockFeedsEnabled } = await import("@/lib/telegram/deprecations");
+    console.log(
+      stockFeedsEnabled()
+        ? "[instrumentation] stock-pair feeds: ENABLED via ALERTS_STOCK_FEEDS"
+        : "[instrumentation] stock-pair feeds: RETIRED (§3–§8) — pollers no-op, probes skipped, delivery resolves to nobody. ALERTS_STOCK_FEEDS=on restores them."
+    );
+
     const { subscriberTiers, recipientsFor, FEATURE } = await import("@/lib/telegram/alerts-bot");
     {
       const tiers = subscriberTiers();

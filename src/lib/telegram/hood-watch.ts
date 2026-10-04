@@ -12,6 +12,7 @@ import { FEED, resolveSeen, markSeen } from "@/lib/api/feed-seen";
 import { pinRhStock } from "./long-alerts";
 import { pinStonkFunQuote } from "./stonkfun-alerts";
 import { escapeHtml } from "./utils/format";
+import { stockFeedDeprecated } from "./deprecations";
 
 // ── HOOD watch ───────────────────────────────────────────────────────────────
 //
@@ -504,6 +505,8 @@ async function collectHits(): Promise<SourceResult[]> {
  * exists instead, naming the one asset that is genuinely old news.
  */
 export async function pollHoodWatch(): Promise<void> {
+  // Retired as a product feature; the code is kept. See ./deprecations.ts.
+  if (stockFeedDeprecated("hood.watch")) return;
   const results = await collectHits();
   const active = results.filter((r) => !r.skipped);
   const live = active.filter((r) => r.ok);

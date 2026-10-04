@@ -31,6 +31,7 @@ import {
 } from "./launch-window";
 import { escapeHtml, formatCompact, formatPrice } from "./utils/format";
 import { FEED, resolveSeen, markSeen } from "@/lib/api/feed-seen";
+import { stockFeedDeprecated } from "./deprecations";
 
 // Currency symbols that indicate a stock's own price pool (not a token launched
 // against it) — used to skip when the "other" side of an Initialize is a currency.
@@ -89,6 +90,8 @@ async function sendAlert(chatId: string, t: RhStockToken): Promise<void> {
  * (the pool Long draws its base pairs from). Seeds the existing list silently.
  */
 export async function pollLongStocks(): Promise<void> {
+  // Retired as a product feature; the code is kept. See ./deprecations.ts.
+  if (stockFeedDeprecated("rh.long.stocks")) return;
   const stocks = await fetchRobinhoodStockTokens();
   if (stocks.length === 0) return;
 
@@ -287,6 +290,8 @@ async function sendLaunchAlert(
  * stock, then it stops watching.
  */
 export async function pollLongOnchainCreations(): Promise<void> {
+  // Retired as a product feature; the code is kept. See ./deprecations.ts.
+  if (stockFeedDeprecated("rh.long.launches")) return;
   const latest = await getLatestBlock();
   if (latest == null) return;
 
@@ -438,6 +443,8 @@ async function sendFlapRhAlert(chatId: string, t: FlapPaymentToken): Promise<voi
  * Seeds silently on first run.
  */
 export async function pollFlapRobinhoodStocks(): Promise<void> {
+  // Retired as a product feature; the code is kept. See ./deprecations.ts.
+  if (stockFeedDeprecated("rh.flap.stocks")) return;
   ensurePinnedWatches();
   const all = await fetchFlapPaymentTokens();
   const stocks = all.filter(

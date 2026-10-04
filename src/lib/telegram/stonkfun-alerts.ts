@@ -20,6 +20,7 @@ import {
 } from "./launch-window";
 import { escapeHtml, formatCompact, formatPrice, formatTimeAgo, jupiterBuyUrl } from "./utils/format";
 import { FEED, resolveSeen, markSeen } from "@/lib/api/feed-seen";
+import { stockFeedDeprecated } from "./deprecations";
 
 // StonkFun runs on Solana; every alert here is labelled with that so the feed
 // reads consistently next to the multi-chain launchpads (Flap in particular
@@ -125,6 +126,8 @@ async function sendAlert(chatId: string, details: StonkFunTokenDetails): Promise
  * by re-scheduling it in instrumentation.ts — nothing else references it.
  */
 export async function pollStonkFunCreations(): Promise<void> {
+  // Retired as a product feature; the code is kept. See ./deprecations.ts.
+  if (stockFeedDeprecated("stonkfun.creations")) return;
   const creations = await fetchRecentCreations(25);
   if (creations.length === 0) return;
 
@@ -384,6 +387,8 @@ async function sendQuoteAlert(chatId: string, q: QuoteToken): Promise<void> {
  * Seeds the existing list silently on first run.
  */
 export async function pollStonkFunQuoteTokens(): Promise<void> {
+  // Retired as a product feature; the code is kept. See ./deprecations.ts.
+  if (stockFeedDeprecated("stonkfun.quotes")) return;
   const quotes = await fetchQuoteTokens();
   // null = the catalog could not be read. Distinct from an empty catalog, and
   // the distinction is the whole point: this feed was blind from 2026-09-03 to
@@ -585,6 +590,8 @@ const MAX_ALERTS_PER_PASS = 25;
  * regardless, so a future overlap would produce one alert, not two.
  */
 export async function pollStonkFunLaunches(): Promise<void> {
+  // Retired as a product feature; the code is kept. See ./deprecations.ts.
+  if (stockFeedDeprecated("stonkfun.launches")) return;
   const now = Date.now();
   for (const [mint, w] of watchedQuotes) {
     if (now - w.openedAt > LAUNCH_WINDOW_MS) {

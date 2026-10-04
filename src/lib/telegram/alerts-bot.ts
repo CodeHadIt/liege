@@ -1,5 +1,6 @@
 import { Bot } from "grammy";
 import type { Context } from "grammy";
+import { stockFeedsEnabled } from "./deprecations";
 
 // ── Liège Alerts — a private sister bot dedicated to push alerts ───────────────
 // The main Liège bot (see ./bot.ts) handles interactive commands. This second
@@ -34,7 +35,13 @@ export type Tier = "platinum" | "gold";
  * resolves chat IDs itself, which is what keeps the tier rules in one place.
  */
 export const FEATURE = {
-  /** Launch feeds — shared by every tier. */
+  /**
+   * Launch feeds — the stock-pair watchers on every chain.
+   *
+   * **Retired 2026-10-05.** The id stays so the feature table still describes
+   * the system, and so `ALERTS_STOCK_FEEDS=on` restores delivery without a code
+   * change. While it is off this resolves to nobody — see `recipientsFor`.
+   */
   LAUNCH: "launch",
   /** Alpha confluence over the frozen wallet library — Gold's view. */
   ALPHA_CONFLUENCE_GOLD: "alpha.confluence.gold",
@@ -171,6 +178,17 @@ export function isEntitled(feature: Feature, id: string | number | undefined): b
 
 /** Chat IDs entitled to a given feature. The ONLY way a feed reaches a chat. */
 export function recipientsFor(feature: Feature): string[] {
+  /*
+   * A retired feed reaches nobody, whoever asks.
+   *
+   * The guards inside each poller already stop the work, but this is the layer
+   * that matters: `recipientsFor` is the single path from a feed to a chat id, so
+   * putting the check here means a script, a stray scheduler or a future caller
+   * cannot resurrect a retired feed by accident. The safety rule that made this
+   * the only path is what makes one line here sufficient.
+   */
+  if (feature === FEATURE.LAUNCH && !stockFeedsEnabled()) return [];
+
   const tiers = FEATURE_TIERS[feature];
   if (!tiers) {
     console.error(`[alerts] unknown feature "${feature}" — refusing to send`);
@@ -189,6 +207,7 @@ export function recipientsFor(feature: Feature): string[] {
  * the entitlement question, which is what watchers gate their work on.
  */
 export function deliveryRecipientsFor(feature: Feature): string[] {
+  if (feature === FEATURE.LAUNCH && !stockFeedsEnabled()) return [];
   const muted = mutedForPlatinum().has(feature);
   const tiers = FEATURE_TIERS[feature];
   if (!tiers) {
