@@ -348,8 +348,22 @@ export async function getAlertsBot(): Promise<Bot<Context>> {
       });
     });
 
+    /*
+     * Fetch the bot's identity before any update is handled.
+     *
+     * grammy's `handleUpdate` throws "Bot not initialized!" until `init()` has
+     * run — it needs `botInfo` to match `/command@thisbot` against itself. The
+     * webhook route is fire-and-forget, so that throw landed in a `.catch` that
+     * only logs, and every inbound command to this bot failed silently. The main
+     * bot has always called this (`bot.ts`); the alerts bot never did, which went
+     * unnoticed because its job is pushing alerts, and pushing never calls
+     * `handleUpdate`.
+     */
+    await bot.init();
+    console.log("[alerts] initialized as @" + bot.botInfo.username);
+
     // Command menus. The default scope is what a stranger and a Gold user see, so
-     // it lists nothing tier-specific. Platinum chats get their own chat-scoped
+    // it lists nothing tier-specific. Platinum chats get their own chat-scoped
     // menu, which is the one mechanism Telegram offers for a per-user command
     // list — `setMyCommands` with a `BotCommandScopeChat`.
     void (async () => {
