@@ -8,7 +8,7 @@ is detected, what triggers a ping, and where each feed's accuracy ends.
 > how the feeds behave — a stale entry here is worse than no entry, because the
 > limitations sections are what tell you whether an alert can be trusted.
 
-**Last updated:** 2026-09-30 (Platinum `/research` command added to the bot)
+**Last updated:** 2026-10-05 (inbound-path watchdog: webhook probes + boot handler check)
 
 ---
 
@@ -1869,6 +1869,7 @@ answered a developer machine perfectly.
 | `fourmeme.quotes` | BNB Chain |
 | `basestonk.launches` | Base |
 | `o1.base`, `o1.rh` | Base / Robinhood (skipped without `O1_API_KEY`) |
+| `telegram.webhook.alerts`, `telegram.webhook.main` | infra — **inbound** delivery, see below |
 
 ### Avoiding false alarms
 
@@ -1883,6 +1884,59 @@ throttled. Its probes allow 150s.
 A source is announced down **once**, and recovery is announced once — the
 recovery message states plainly that anything listed during the outage was not
 alerted, because it wasn't.
+
+### The inbound path — the half nothing was watching
+
+Every probe above asks "can we **read** an upstream". Nothing asked "can Telegram
+**reach us**", and two independent faults lived in that gap. Both are now covered.
+
+**1. Webhook delivery** (`telegram.webhook.alerts`, `telegram.webhook.main`).
+Polls Telegram's `getWebhookInfo` on the normal 10-minute tick and reports down
+when any of these holds:
+
+| Condition | Why |
+|---|---|
+| No `url` registered | Telegram has nowhere to deliver |
+| `last_error_date` within **20 min** (`RECENT_ERROR_WINDOW_MS`) | deliveries are failing *now* |
+| `pending_update_count` ≥ **5** (`PENDING_BACKLOG`) | Telegram holds updates it cannot hand over |
+
+The 20-minute window is load-bearing. Telegram keeps `last_error_date` forever, so
+without it a single blip weeks ago would read as a permanent outage and never
+clear — the main bot currently carries an old `Connection timed out` and correctly
+reads healthy. It probes Telegram's API rather than our own route, because
+Telegram is the party that knows whether delivery succeeded; hitting our endpoint
+would only prove the server is up, which was never the broken part.
+
+It is read-only. It never calls `setWebhook` — a watchdog that reconfigures what
+it watches turns a diagnosable fault into a moving target.
+
+**What it would have caught:** the alerts bot's webhook was registered without a
+`secret_token` while `TELEGRAM_ALERTS_WEBHOOK_SECRET` was set, so Telegram sent no
+`x-telegram-bot-api-secret-token` header, the route answered **401** to every
+update, and `/research`, `/start`, `/status` and `/id` were all dead. Push alerts
+were unaffected throughout — broadcasting never touches the webhook — so nothing
+looked wrong until someone waited on a command. `getWebhookInfo` does not report
+whether a secret is registered, which is why the fault was invisible from the
+Telegram side too.
+
+**2. Handler liveness** (`verifyInboundPath()`, once at boot). Replays a synthetic
+update through `handleUpdate` and alerts if it throws. Not a poll: it can only
+break when the code changes.
+
+The update is addressed to chat id `1` with a command no handler matches, so the
+allow-list middleware drops it — nothing is sent to anybody and no Telegram API
+call is made. All it exercises is `handleUpdate` → middleware, which is exactly
+where the fault was: `alerts-bot.ts` never called `bot.init()`, and grammy's
+`handleUpdate` throws `Bot not initialized!` without it. The webhook route is
+fire-and-forget by design, so that throw landed in a `.catch` that only logs. No
+inbound command to the alerts bot had ever worked.
+
+### Known limitation: the watchdog shares the process it watches
+
+Both checks run inside the app. If the container stops, nothing probes and nothing
+alerts — a dead watchdog is indistinguishable from a quiet one. Catching that
+needs something outside the deployment; the cheap version is a cron'd
+`getWebhookInfo` from a machine that is not Railway.
 
 ---
 

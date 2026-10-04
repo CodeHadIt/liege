@@ -23,7 +23,7 @@ export async function register() {
     const { pollO1Quotes, pollO1Launches } = await import("@/lib/telegram/o1-alerts");
     const { pollBasestonk } = await import("@/lib/telegram/basestonk-alerts");
     const { pollHoodWatch } = await import("@/lib/telegram/hood-watch");
-    const { pollFeedHealth } = await import("@/lib/telegram/health-alerts");
+    const { pollFeedHealth, verifyInboundPath } = await import("@/lib/telegram/health-alerts");
 
     // Tier configuration, reported once at boot.
     //
@@ -375,6 +375,15 @@ export async function register() {
     // 10 minutes: an outage matters in hours, not seconds, and probing harder
     // would add load to the very sources being checked.
     console.log("[instrumentation] Starting monitoring-health watchdog (every 10m)");
+
+    // Once, at boot: can an inbound update be handled at all? This can only break
+    // when the code changes, so polling it would be waste — but nothing was
+    // checking it, and a missing bot.init() left every command to the alerts bot
+    // failing silently for as long as the bot has existed.
+    verifyInboundPath().catch((err: unknown) =>
+      console.error("[instrumentation] Inbound self-check error:", err)
+    );
+
     pollFeedHealth().catch((err: unknown) =>
       console.error("[instrumentation] Initial health poll error:", err)
     );

@@ -10,6 +10,7 @@ import { getLatestBlock as rhLatestBlock } from "@/lib/api/long-onchain";
 import { getLatestBlock as poolsFunLatestBlock } from "@/lib/api/pools-fun";
 import { getAlertsBot, broadcastAlert, FEATURE } from "./alerts-bot";
 import { loadHealth, recordProbe, setDownAlerted, type HealthRow } from "@/lib/api/feed-health";
+import { fetchWebhookInfo, judgeWebhook } from "@/lib/api/telegram-webhook";
 import { escapeHtml } from "./utils/format";
 
 // ── Monitoring the monitors ──────────────────────────────────────────────────
@@ -132,6 +133,47 @@ const PROBES: Probe[] = [
     run: async () => {
       const q = await fetchO1Quotes(O1_CHAIN.BASE, false);
       return q !== null && q.length > 0;
+    },
+  },
+  /*
+   * The inbound half of the bot.
+   *
+   * Every other probe here asks "can we READ an upstream". These two ask "can
+   * Telegram REACH us", which nothing watched until the webhook spent an unknown
+   * length of time answering 401 to every update — the alerts bot's commands had
+   * never once worked, and the feeds kept pushing happily throughout because
+   * broadcasting never touches the webhook.
+   *
+   * Probing Telegram's own API rather than our route, because Telegram is the one
+   * that knows whether delivery succeeded. Hitting our own endpoint would only
+   * prove the server is up, which is the part that was never broken.
+   */
+  {
+    source: "telegram.webhook.alerts",
+    label: "Telegram inbound webhook (alerts bot)",
+    chain: "infra",
+    skip: () => !process.env.TELEGRAM_ALERTS_API_KEY,
+    timeoutMs: 30_000,
+    run: async () => {
+      const info = await fetchWebhookInfo(process.env.TELEGRAM_ALERTS_API_KEY as string);
+      if (info === null) throw new Error("getWebhookInfo did not answer");
+      const verdict = judgeWebhook(info);
+      if (!verdict.healthy) throw new Error(verdict.reason ?? "webhook unhealthy");
+      return true;
+    },
+  },
+  {
+    source: "telegram.webhook.main",
+    label: "Telegram inbound webhook (main bot)",
+    chain: "infra",
+    skip: () => !process.env.TELEGRAM_API_KEY,
+    timeoutMs: 30_000,
+    run: async () => {
+      const info = await fetchWebhookInfo(process.env.TELEGRAM_API_KEY as string);
+      if (info === null) throw new Error("getWebhookInfo did not answer");
+      const verdict = judgeWebhook(info);
+      if (!verdict.healthy) throw new Error(verdict.reason ?? "webhook unhealthy");
+      return true;
     },
   },
   {
@@ -279,4 +321,59 @@ export async function healthSnapshot(): Promise<{ source: string; label: string;
       }
     })
   );
+}
+
+/**
+ * Prove at boot that an inbound update can actually be handled.
+ *
+ * This is not a poll. It can only break when the code changes, so it runs once
+ * per process — and it exists because of a fault no poll would have found:
+ * `alerts-bot.ts` never called `bot.init()`, so grammy's `handleUpdate` threw
+ * "Bot not initialized!" on the first line of every inbound update. The webhook
+ * route is fire-and-forget, so the throw landed in a `.catch` that only logs, and
+ * the symptom was silence.
+ *
+ * The synthetic update is addressed to chat id 1 with a command no handler
+ * matches: the allow-list middleware drops it, so nothing is sent to anybody and
+ * no Telegram API call is made. All it exercises is the path from `handleUpdate`
+ * to a middleware decision — which is exactly where the fault was.
+ */
+export async function verifyInboundPath(): Promise<boolean> {
+  if (!process.env.TELEGRAM_ALERTS_API_KEY) {
+    console.log("[health] inbound self-check skipped — TELEGRAM_ALERTS_API_KEY not set");
+    return true;
+  }
+
+  const update = {
+    update_id: 0,
+    message: {
+      message_id: 0,
+      date: Math.floor(Date.now() / 1000),
+      chat: { id: 1, type: "private" as const },
+      from: { id: 1, is_bot: false, first_name: "healthcheck" },
+      text: "/liege_selfcheck",
+      entities: [{ type: "bot_command" as const, offset: 0, length: 16 }],
+    },
+  };
+
+  try {
+    const bot = await getAlertsBot();
+    await bot.handleUpdate(update as Parameters<typeof bot.handleUpdate>[0]);
+    console.log("[health] inbound self-check OK — handleUpdate accepts updates");
+    return true;
+  } catch (e) {
+    const msg = (e as Error).message;
+    console.error("[health] ⚠ INBOUND SELF-CHECK FAILED — no command will work:", msg);
+    try {
+      const text =
+        `🔴 <b>BOT COMMANDS ARE DEAD</b>\n\n` +
+        `<i>An inbound update could not be handled at boot, so every command to this bot will fail silently.</i>\n\n` +
+        `💬 <code>${escapeHtml(msg.slice(0, 200))}</code>\n\n` +
+        `<i>Alert feeds are unaffected — pushing never touches this path.</i>`;
+      await broadcastAlert(FEATURE.HEALTH, (chatId) => send(chatId, text));
+    } catch (sendErr) {
+      console.error("[health] could not report the inbound failure:", sendErr);
+    }
+    return false;
+  }
 }
