@@ -44,7 +44,11 @@ export function composeTldr(r: ResearchReport): string[] {
     // Only speak to verification when a contract was actually read. With no
     // address in the input there is no source to verify, and "source not verified"
     // read as a finding about the project rather than an absence of input.
-    if (r.onchain) identity.push(r.onchain.verified ? "source verified" : "source not verified");
+    // EVM only: an SPL mint has no verified-source concept, so saying "source not
+    // verified" about one states a shortcoming that cannot exist.
+    if (r.onchain && r.onchain.chain !== "solana") {
+      identity.push(r.onchain.verified ? "source verified" : "source not verified");
+    }
   } else {
     const g = r.github;
     const lang = g?.language ? `${g.language} ` : "";
@@ -66,12 +70,20 @@ export function composeTldr(r: ResearchReport): string[] {
   // Their own words, clearly attributed and trimmed to one sentence.
   if (r.subject.oneLiner) lines.push(`Their words: "${clip(stripTrailing(r.subject.oneLiner), 170)}"`);
 
-  // The token, mechanically, plus where the market actually is.
+  /*
+   * The token, mechanically, plus where the market actually is.
+   *
+   * The launchpad fact is stated even when the project documents a mechanism.
+   * kairo publishes a real fee split — 70% treasury, 30% rewards — which made it
+   * read as a protocol, and the TLDR then never mentioned that $JELLY is a
+   * pump.fun mint whose "mechanism" is the team routing creator fees off-chain.
+   * Both facts are true and a reader needs both.
+   */
   const tokenBits: string[] = [];
   if (r.tokenShape) {
     tokenBits.push(
       r.tokenShape.kind === "launchpad-standard"
-        ? "no mechanism of its own"
+        ? `${r.tokenShape.launchpad ?? "launchpad"} mint${r.tokenShape.mechanics === "documented" ? ", mechanics documented off-chain" : ", no mechanism of its own"}`
         : r.tokenShape.kind === "custom"
           ? "custom contract"
           : r.tokenShape.kind === "standard-erc20"

@@ -388,6 +388,16 @@ export function extractFromDocs(pages: DocPage[], subjectName?: string, shape?: 
         // launch fee"). Quoting it here strands the number; `extractMetrics`
         // reassembles the row and reports it with its label instead.
         if (sentence.length < 70 && !/[.!?:]$/.test(sentence)) continue;
+        /*
+         * A value that never loaded is not a fact.
+         *
+         * Live-updating pages render "—" where a number will go. kairo's fee split
+         * read as "split on the spot: — goes to the treasury ... and — goes to the
+         * rewards pool", which is a sentence about fees with the fees removed —
+         * actively misleading, where omitting it costs nothing: the same numbers
+         * are picked up from the page that states them statically.
+         */
+        if (/(?::|\band)\s+[—–]\s+[a-z]/.test(sentence)) continue;
         const key = sentence.slice(0, 120).toLowerCase();
         if (seen.has(key)) continue;
 

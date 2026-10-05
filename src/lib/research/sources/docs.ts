@@ -27,6 +27,7 @@ import {
   type Budget,
 } from "../fetcher";
 import type { DocPage, DocsFindings } from "../types";
+import { looksClientRendered, renderPage } from "./rendered";
 
 /** Conventional docs locations, tried against the project's own origin. */
 const PROBE_PATHS = [
@@ -130,6 +131,15 @@ export interface DocsDiscovery {
   rootUrl: string;
   discovery: string;
   firstPage: DocPage;
+  /**
+   * The markup the first page was read from.
+   *
+   * Carried rather than re-fetched because for a client-rendered docs site the
+   * static HTML has no links at all: kairollm.live's reference is "page 1 of 14"
+   * and every other page is a client route, so re-fetching the root found nothing
+   * to crawl and the report described one fourteenth of the documentation.
+   */
+  firstPageHtml?: string;
   /** Links seen on the entry page, reused by the caller to find GitHub/socials. */
   seenLinks: string[];
 }
@@ -150,7 +160,7 @@ export async function discoverDocs(
     const page = await readDocPage(entryUrl, budget);
     if (page) {
       return {
-        found: { rootUrl: page.url, discovery: "given", firstPage: page, seenLinks: [] },
+        found: { rootUrl: page.url, discovery: "given", firstPage: page, firstPageHtml: page.html, seenLinks: [] },
         siteLinks: [],
         note: "docs URL supplied by the user",
       };
@@ -179,7 +189,7 @@ export async function discoverDocs(
       const page = await readDocPage(cand.href, budget);
       if (page && looksLikeDocs(page.text, page.headings)) {
         return {
-          found: { rootUrl: page.url, discovery: "link", firstPage: page, seenLinks: links },
+          found: { rootUrl: page.url, discovery: "link", firstPage: page, firstPageHtml: page.html, seenLinks: links },
           siteLinks,
           note: `docs found by link from ${entryUrl}`,
         };
@@ -210,7 +220,7 @@ export async function discoverDocs(
     const page = await readDocPage(probe, budget, { quick: true });
     if (page && looksLikeDocs(page.text, page.headings)) {
       return {
-        found: { rootUrl: page.url, discovery: "probe", firstPage: page, seenLinks: siteLinks },
+        found: { rootUrl: page.url, discovery: "probe", firstPage: page, firstPageHtml: page.html, seenLinks: siteLinks },
         siteLinks,
         note: `docs found by probing ${new URL(probe).pathname || "subdomain"}`,
       };
@@ -223,21 +233,41 @@ export async function discoverDocs(
     const page = await readDocPage(cand, budget);
     if (page && looksLikeDocs(page.text, page.headings)) {
       return {
-        found: { rootUrl: page.url, discovery: "external", firstPage: page, seenLinks: siteLinks },
+        found: { rootUrl: page.url, discovery: "external", firstPage: page, firstPageHtml: page.html, seenLinks: siteLinks },
         siteLinks,
         note: "docs found via a link published off-site (CoinGecko/GitHub)",
       };
     }
   }
 
-  return { found: null, siteLinks, note: "no documentation found at the conventional locations" };
+  /*
+   * No docs is not nothing to report.
+   *
+   * A project's landing page routinely carries what a reader wants — what it is,
+   * what the token does, the supply, the roadmap — and the first version threw it
+   * away, mining the entry page for links and then discarding its text. "No
+   * documentation found" was reported as though the site had been empty.
+   *
+   * So the site becomes the source, marked `site` rather than `docs` so the report
+   * never implies a reference that does not exist.
+   */
+  const landing = await readDocPage(entryUrl, budget);
+  if (landing && landing.chars >= 300) {
+    return {
+      found: { rootUrl: landing.url, discovery: landing.rendered ? "site (rendered)" : "site", firstPage: landing, firstPageHtml: landing.html, seenLinks: siteLinks },
+      siteLinks,
+      note: `no docs section found — read the site itself (${landing.chars.toLocaleString("en-US")} chars${landing.rendered ? ", client-rendered" : ""})`,
+    };
+  }
+
+  return { found: null, siteLinks, note: "no documentation found, and the site itself carried no readable text" };
 }
 
 async function readDocPage(
   url: string,
   budget: Budget,
-  opts: { quick?: boolean } = {}
-): Promise<DocPage | null> {
+  opts: { quick?: boolean; allowRender?: boolean } = {}
+): Promise<(DocPage & { html?: string }) | null> {
   const res = await fetchPage(url, budget, { timeoutMs: opts.quick ? 8_000 : 15_000 });
   if (!res || res.status >= 400) return null;
   if (res.binary) {
@@ -246,7 +276,25 @@ async function readDocPage(
     return { url: res.finalUrl, title: "(binary document)", headings: [], text: "", chars: 0 };
   }
   const { title, headings, text } = htmlToText(res.body);
-  return { url: res.finalUrl, title, headings, text, chars: text.length };
+
+  /*
+   * An empty shell gets a second chance in a browser.
+   *
+   * Only when the static read came back thin AND the markup says the page would
+   * have filled itself — rendering everything would turn a 1s pipeline into a 20s
+   * one for no gain on the server-rendered majority.
+   */
+  if (opts.allowRender !== false && looksClientRendered(res.body, text.length)) {
+    const rendered = await renderPage(res.finalUrl, budget);
+    if (rendered) {
+      const r = htmlToText(rendered);
+      if (r.text.length > text.length) {
+        return { url: res.finalUrl, title: r.title ?? title, headings: r.headings, text: r.text, chars: r.text.length, rendered: true, html: rendered };
+      }
+    }
+  }
+
+  return { url: res.finalUrl, title, headings, text, chars: text.length, html: res.body };
 }
 
 /**
@@ -268,18 +316,23 @@ export async function crawlDocs(
   const pages: DocPage[] = [start.firstPage];
   let chars = start.firstPage.chars;
 
+  // A site read is one page by definition: expanding from a landing page would
+  // crawl the marketing site, where a docs root expands into its own reference.
+  if (start.discovery.startsWith("site")) {
+    return { rootUrl: start.rootUrl, discovery: start.discovery, pages, contracts: extractContracts(pages) };
+  }
+
   const rootUrl = new URL(start.rootUrl);
   const prefix = rootUrl.pathname.replace(/\/$/, "");
   const visited = new Set([start.rootUrl]);
 
-  // Re-fetch the root's HTML for its links. `readDocPage` kept the text, not the
-  // markup; one extra fetch is cheaper than threading raw HTML through the
-  // discovery result for the single case that needs it.
-  const rootRaw = await fetchPage(start.rootUrl, budget);
+  // Links come from the markup the first page was actually read from — rendered
+  // when it had to be — falling back to a fetch only when none was carried.
+  const rootHtml = start.firstPageHtml ?? (await fetchPage(start.rootUrl, budget))?.body;
   const queue: string[] = [];
-  if (rootRaw && !rootRaw.binary && rootRaw.body) {
-    const hints = anchorHints(rootRaw.body, rootRaw.finalUrl);
-    const links = extractLinks(rootRaw.body, rootRaw.finalUrl);
+  if (rootHtml) {
+    const hints = anchorHints(rootHtml, start.rootUrl);
+    const links = extractLinks(rootHtml, start.rootUrl);
     const inDocs = links.filter((href) => {
       try {
         const u = new URL(href);

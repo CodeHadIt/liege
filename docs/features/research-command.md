@@ -6,7 +6,7 @@ mechanism, fees, supply, rewards, admin powers, security, the project's own
 documentation checked against its deployed bytecode, and an explicit list of what
 it could not answer.
 
-**Last updated:** 2026-10-01 (composed TL;DR; verbosity pass)
+**Last updated:** 2026-10-05 (client-rendered sites; the site as a source)
 
 ---
 
@@ -186,6 +186,7 @@ Four routes, tried in order, and the report names which one worked:
 | `probe` | the conventional locations: `/docs`, `/documentation`, `/developers`, `/whitepaper`, `/litepaper`, `/learn`, plus `docs.<apex>` and `developer.<apex>` |
 | `external` | a docs or whitepaper link published on CoinGecko or in the repo |
 | `repo` | **the repository itself** — README, `docs/*.md`, and root files named like specs (WHITEPAPER, TOKENOMICS, ARCHITECTURE…) |
+| `site` | **the landing page**, when there is no docs section at all — see below |
 
 A candidate is only accepted if the page **reads** like documentation
 (`looksLikeDocs`: ≥800 chars, and either ≥3 headings or ≥3 reference words).
@@ -213,6 +214,53 @@ carry extra authority for "what is this for". Letting every file claim a lead le
 `docs/x_handles.md` and `docs/repo_hosting.md` — notes about hosting and a Twitter
 dogpile — answer the question instead of the README. For the same reason the
 README gets first refusal on every TLDR slot.
+
+### When the page builds itself in the browser
+
+A static GET is still the default — most documentation is server-rendered, and a
+fetch costs milliseconds where a browser costs seconds. But a growing share of
+project sites ship an empty shell, and the first version reported those as having
+no documentation at all.
+
+`kairollm.live` answers 200 with **1,998 bytes** of HTML containing one line of
+text; everything a reader wants is inside an 856 KB JS bundle. So a page is
+re-read in a headless browser when **both** hold: the static text came back under
+600 characters, **and** the markup shows a script or a `#root`/`#app` mount that
+would have filled it. Either signal alone is useless — short pages exist, and
+script tags are universal.
+
+It reuses the Chromium launcher the GMGN scraper already runs on Railway
+(`getScrapingBrowser`), so there is one browser configuration, not two that drift.
+Images, fonts and media are blocked: nothing here reads a picture, and blocking
+them is usually the difference between a 4-second render and a 15-second one.
+
+Three things that render needed beyond "load the page":
+
+- **Wait for the text to settle, not for a timer.** Poll `innerText.length` until
+  it stops growing. `networkidle` is the obvious choice and the wrong one — these
+  pages hold a socket open for live data, so it routinely never fires.
+- **Give live-injected values a second chance.** Pages render `—` where a number
+  will go and fill it from their own server. kairo's fee split first extracted as
+  *"split on the spot: — goes to the treasury … and — goes to the rewards pool"*.
+- **Refuse to quote a value that never arrived.** If the placeholder is still
+  there, the sentence is dropped. A fee split with its numbers missing is worse
+  than no sentence at all, and it costs nothing: the same figures come from the
+  page that states them statically.
+- **Crawl the rendered DOM, not a fresh fetch.** The static HTML of an SPA has no
+  links, so re-fetching the root to find sub-pages found nothing. kairo's reference
+  is "page 1 of 14" with every other page a client route — the report described one
+  fourteenth of the documentation until the crawler started mining the markup the
+  page was actually read from. That one change took the read from 1 page / 1,777
+  chars to 8 pages / 17,266.
+
+### No docs is not nothing to report
+
+When no docs section exists, the **site itself becomes the source**, marked `site`
+rather than `docs` so the report never implies a reference that is not there. The
+first version mined the landing page for links and then threw its text away, which
+is how a project whose homepage explains itself perfectly well got reported as
+undocumented. A site read is deliberately one page — expanding from a landing page
+crawls a marketing site, where expanding from a docs root finds a reference.
 
 Two details that matter in practice:
 

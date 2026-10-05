@@ -42,6 +42,18 @@ export async function warmupBrowser(): Promise<void> {
 let browserInstance: Browser | null = null;
 let browserLaunchPromise: Promise<Browser> | null = null;
 
+/**
+ * The one place that decides how Chromium launches here.
+ *
+ * Exported so the research pipeline can render client-side pages without a second
+ * copy of this configuration — system binary on Railway, @sparticuz bundle on
+ * serverless, plain launch locally. Two copies would drift, and the one that
+ * drifted would be the one nobody tested.
+ */
+export async function getScrapingBrowser(): Promise<Browser> {
+  return getBrowser();
+}
+
 async function getBrowser(): Promise<Browser> {
   if (browserInstance?.isConnected()) return browserInstance;
   if (browserLaunchPromise) return browserLaunchPromise;

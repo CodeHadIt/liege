@@ -131,6 +131,8 @@ export interface DocsFindings {
 
 export interface DocPage {
   url: string;
+  /** True when a headless browser had to assemble the text. */
+  rendered?: boolean;
   title?: string;
   /** Section headings in document order. */
   headings: string[];
